@@ -1,0 +1,15 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.10.11, pytest-9.0.2, pluggy-1.6.0 -- /Applications/Thonny.app/Contents/Frameworks/Python.framework/Versions/3.10/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/hof/Library/CloudStorage/Dropbox/Arbeit/Informatik/Programme/python/Kurs/30-KI/Gemini-API/03-Gemini+JSON-19.6.8/CommSCI
+plugins: anyio-4.12.1
+collecting ... collected 6 items
+
+test_comm_sci_fix13_all_fix1.py::test_mixed_command_is_not_executed PASSED [ 16%]
+test_comm_sci_fix13_all_fix1.py::test_invalid_numeric_code_blocks_only_for_known_index PASSED [ 33%]
+test_comm_sci_fix13_all_fix1.py::test_date_like_input_is_not_blocked_by_numeric_guard PASSED [ 50%]
+test_comm_sci_fix13_all_fix1.py::test_sci_pending_contextual_query_returns_menu_without_llm_call PASSED [ 66%]
+test_comm_sci_fix13_all_fix1.py::test_sci_pending_timeout_assumes_variant_A_after_two_non_selections PASSED [ 83%]
+test_comm_sci_fix13_all_fix1.py::test_one_repair_pass_is_applied_once_when_validator_reports_hard_violations PASSED [100%]
+
+============================== 6 passed in 0.59s ===============================
