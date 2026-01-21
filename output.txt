@@ -1,7 +1,7 @@
 ============================= test session starts ==============================
-platform darwin -- Python 3.10.11, pytest-9.0.2, pluggy-1.6.0 -- /Applications/Thonny.app/Contents/Frameworks/Python.framework/Versions/3.10/bin/python3
+platform darwin -- Python 3.10.11, pytest-9.0.2, pluggy-1.6.0 -- .../python3
 cachedir: .pytest_cache
-rootdir: /Users/hof/Library/CloudStorage/Dropbox/Arbeit/Informatik/Programme/python/Kurs/30-KI/Gemini-API/03-Gemini+JSON-19.6.8/CommSCI
+rootdir: /Users/.../CommSCI
 plugins: anyio-4.12.1
 collecting ... collected 15 items
 
