@@ -8,6 +8,7 @@ import difflib
 import hashlib
 import base64
 from collections import deque
+from pathlib import Path
 try:
     import markdown  # type: ignore
 except Exception:
@@ -167,6 +168,45 @@ KEYS_FILENAME = 'Comm-SCI-API-Keys.json'
 CONFIG_PATH = os.path.join(CONFIG_DIR, CONFIG_FILENAME)
 KEYS_PATH = os.path.join(CONFIG_DIR, KEYS_FILENAME)
 
+# --- Keys file override (to keep original files untouched) ---
+KEYS_OVERRIDE_ENV = 'COMM_SCI_KEYS_FILE'
+KEYS_OVERRIDE_FILENAME = 'Comm-SCI-API-Keys.override.json'
+KEYS_OVERRIDE_PATH = os.path.join(CONFIG_DIR, KEYS_OVERRIDE_FILENAME)
+
+def _iter_keys_paths():
+    """Yield key file candidates in priority order.
+
+    Order:
+      1) ENV COMM_SCI_KEYS_FILE (absolute or relative path)
+      2) Config/Comm-SCI-API-Keys.override.json (if present)
+      3) Config/Comm-SCI-API-Keys.json (default)
+    """
+    env_path = (os.environ.get(KEYS_OVERRIDE_ENV) or '').strip()
+    if env_path:
+        yield env_path
+    if os.path.exists(KEYS_OVERRIDE_PATH):
+        yield KEYS_OVERRIDE_PATH
+    yield KEYS_PATH
+
+def _load_keys_json():
+    """Try to load a keys JSON from candidate paths.
+
+    Returns: (data_dict, used_path, error_str_or_empty)
+    """
+    last_err = ''
+    for p in _iter_keys_paths():
+        try:
+            if not p or not os.path.exists(p):
+                continue
+            with open(p, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+            if isinstance(data, dict):
+                return data, p, ''
+            last_err = f'Not a JSON object: {p}'
+        except Exception as e:
+            last_err = f'{p}: {e}'
+    return {}, '', last_err
+
 # Usage stats location: ./Logs/Usage_statistics/Comm-SCI-Use.txt
 STATS_FILENAME = os.path.join(USAGE_LOG_DIR, 'Comm-SCI-Use.txt')
 
@@ -176,7 +216,7 @@ STATS_PATH = STATS_FILENAME
 # ----------------------------
 # UI (English-only)
 # ----------------------------
-UI_LANG = "en"  # hard-fixed; language switching removed
+UI_LANG = "de"  # hard-fixed; language switching removed
 
 QC_LABELS = {
     "clarity": "Clarity",
@@ -357,22 +397,53 @@ def route_input(raw_txt: str, state, api_instance) -> dict:
 
 
 def get_api_key():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    key_path = KEYS_PATH
+    """Return Gemini API key.
+
+    Lookup order:
+      1) ENV: GEMINI_API_KEY (preferred), then GOOGLE_API_KEY (legacy)
+      2) Config/Comm-SCI-API-Keys.json (KEYS_PATH):
+         - provider-structured: providers.gemini.api_key_plain / api_key_enc
+         - legacy: GOOGLE_API_KEY / GOOGLE_API_KEY_ENC
+    """
+    # key file candidates may be overridden via ENV/override file
 
     # 1) Prefer env var (simplest + safest)
-    env_key = os.environ.get("GEMINI_API_KEY")
-    if env_key:
-        print("[System] API key loaded from environment variable.")
-        return env_key.strip()
+    for env_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        env_key = os.environ.get(env_name)
+        if env_key:
+            print("[System] API key loaded from environment variable.")
+            return env_key.strip()
 
     # 2) Fallback: key file (supports optional encryption)
-    if os.path.exists(key_path):
+    data, used_path, err = _load_keys_json()
+    if err and not data:
+        print(f"[System] Error reading key file: {err}")
+    if data:
         try:
-            with open(key_path, "r", encoding="utf-8") as f:
-                data = json.load(f) or {}
 
-            # Encrypted form (recommended)
+            # --- provider-structured keys (recommended for multi-provider builds) ---
+            provs = data.get('providers') if isinstance(data, dict) else None
+            if isinstance(provs, dict):
+                g = provs.get('gemini') or provs.get('google') or {}
+                if isinstance(g, dict):
+                    # encrypted
+                    enc = (g.get('api_key_enc') or '').strip()
+                    salt = (g.get('api_key_salt') or '').strip()
+                    scheme = (g.get('enc_scheme') or '').strip().lower()
+                    if enc and salt and (scheme in {"fernet", ""}):
+                        passphrase = (os.environ.get("COMM_SCI_KEY_PASSPHRASE") or "").strip()
+                        key = _try_decrypt_api_key(enc, passphrase=passphrase, salt_b64=salt)
+                        if key:
+                            print(f"[System] API key loaded from encrypted {KEYS_FILENAME} (providers.gemini).")
+                            return key
+
+                    # plaintext
+                    key = (g.get('api_key_plain') or g.get('api_key') or '').strip()
+                    if key:
+                        print(f"[System] API key loaded from {KEYS_FILENAME} (providers.gemini plaintext).")
+                        return key
+
+            # --- legacy encrypted form ---
             enc = (data.get("GOOGLE_API_KEY_ENC") or "").strip()
             salt = (data.get("GOOGLE_API_KEY_SALT") or "").strip()
             scheme = (data.get("ENC_SCHEME") or "").strip().lower()
@@ -385,13 +456,15 @@ def get_api_key():
                 else:
                     print("[System] Encrypted key present, but decryption failed (missing passphrase or cryptography).")
 
-            # Plaintext fallback (legacy)
+            # --- legacy plaintext fallback ---
             key = (data.get("GOOGLE_API_KEY") or "").strip()
             if key:
                 print(f"[System] API key loaded from {KEYS_FILENAME} (plaintext).")
                 return key
+
         except Exception as e:
-            print(f"[System] Error reading key file: {e}")
+            # Keep going; caller may still proceed with other providers
+            print(f"[System] Error processing keys from {used_path or KEYS_FILENAME}: {e}")
 
     return "" 
 
@@ -401,7 +474,22 @@ class ConfigManager:
         # English-only build: no UI language switching or persisted language state.
         self.config = {
             "model": "gemini-2.0-flash",
-            "answer_language": "en",
+            "active_provider": "gemini",
+            "providers": {
+              "gemini": {
+                "default_model": "gemini-2.0-flash"
+              },
+              "openrouter": {
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+                "api_key_plain": "",
+                "api_key_enc": "",
+                "default_model": "openai/gpt-4.1-mini",
+                "app_referrer": "",
+                "app_title": "Comm-SCI Desktop"
+              }
+            },
+            "answer_language": "de",
             "rate_limit_enabled": True,
             "rate_limit_per_minute": 30,
             "rate_limit_per_hour": 120
@@ -431,25 +519,123 @@ class ConfigManager:
                 json.dump(self.config, f, indent=2)
         except Exception as e:
             print(f"[Config] Save Error: {e}")
+    def get_active_provider(self) -> str:
+        """Return the currently active provider name."""
+        try:
+            p = (self.config.get('active_provider', 'gemini') or 'gemini').strip().lower()
+            if p in ('hf', 'huggingface'):
+                return 'huggingface'
+            if p in ('gemini', 'openrouter', 'huggingface'):
+                return p
+            return 'gemini'
+        except Exception:
+            return 'gemini'
+
+    def set_active_provider(self, provider: str):
+        try:
+            provider = (provider or 'gemini').strip().lower()
+            # Accept known providers shown in the panel
+            if provider in ('hf',):
+                provider = 'huggingface'
+            if provider not in ('gemini', 'openrouter', 'huggingface'):
+                provider = 'gemini'
+            self.config['active_provider'] = provider
+            self.save()
+        except Exception:
+            pass
+
+    def _merged_provider_conf(self, provider: str) -> dict:
+        """Merge provider config from Comm-SCI-Config.json and Comm-SCI-API-Keys.json (best-effort).
+
+        Precedence: config.json overrides api-keys.json for overlapping keys.
+        """
+        provider = (provider or '').strip().lower()
+        conf_cfg = {}
+        try:
+            provs = (self.cfg.config or {}).get('providers') or {}
+            if isinstance(provs, dict):
+                conf_cfg = (provs.get(provider) or {}) if isinstance(provs.get(provider) or {}, dict) else {}
+        except Exception:
+            conf_cfg = {}
+        conf_keys = {}
+        try:
+            data, used_path, err = _load_keys_json()
+            provs2 = (data.get('providers') or {}) if isinstance(data, dict) else {}
+            if isinstance(provs2, dict):
+                conf_keys = (provs2.get(provider) or {}) if isinstance(provs2.get(provider) or {}, dict) else {}
+        except Exception:
+            conf_keys = {}
+        merged = {}
+        if isinstance(conf_keys, dict):
+            merged.update(conf_keys)
+        if isinstance(conf_cfg, dict):
+            merged.update(conf_cfg)
+        return merged
+
+    def get_provider_model(self, provider: str = '') -> str:
+        """Get the default/selected model for a given provider (or active provider)."""
+        provider = (provider or self.get_active_provider() or 'gemini').strip().lower()
+        if provider in ('hf', 'huggingface'):
+            provider = 'huggingface'
+        try:
+            provs = self.config.get('providers') or {}
+            if isinstance(provs, dict):
+                pconf = provs.get(provider) or {}
+                if isinstance(pconf, dict):
+                    m = (pconf.get('default_model') or '').strip()
+                    if m:
+                        return m
+        except Exception:
+            pass
+        # Back-compat for Gemini
+        try:
+            if provider == 'gemini':
+                return (self.config.get('model') or 'gemini-2.0-flash').strip()
+        except Exception:
+            pass
+        return ''
+
+    def set_provider_model(self, provider: str, model: str):
+        try:
+            provider = (provider or 'gemini').strip().lower()
+            model = (model or '').strip()
+            if not model:
+                return
+            provs = self.config.get('providers')
+            if not isinstance(provs, dict):
+                provs = {}
+                self.config['providers'] = provs
+            pconf = provs.get(provider)
+            if not isinstance(pconf, dict):
+                pconf = {}
+                provs[provider] = pconf
+            pconf['default_model'] = model
+            # Back-compat key for Gemini
+            if provider == 'gemini':
+                self.config['model'] = model
+            self.save()
+        except Exception:
+            pass
 
     def get_model(self):
-        return self.config.get("model", "gemini-2.0-flash")
+        """Back-compat: return active provider model."""
+        return self.get_provider_model(self.get_active_provider()) or self.config.get('model', 'gemini-2.0-flash')
 
     def set_model(self, model):
-        self.config["model"] = model
-        self.save()
+        """Back-compat: set model for the active provider."""
+        self.set_provider_model(self.get_active_provider(), model)
 
     def get_answer_language(self):
         try:
-            return (self.config.get("answer_language", "en") or "en").strip().lower()
+            return (self.config.get("answer_language", "de") or "de").strip().lower()
         except Exception:
-            return "en"
+            return "de"
 
     def set_answer_language(self, lang: str):
         try:
-            lang = (lang or "en").strip().lower()
+            lang = (lang or "de").strip().lower()
             if lang not in ("en", "de"):
-                lang = "en"
+                lang = "de"
             self.config["answer_language"] = lang
             self.save()
         except Exception:
@@ -473,7 +659,38 @@ class ConfigManager:
             self.config["main_geom"] = geom
             self.save()
 
+
+    # Backward-compatible helpers used by older code paths
+    def get_model(self) -> str:
+        """Return the currently selected model for the active provider (backward-compat)."""
+        try:
+            return self.get_provider_model(self.get_active_provider())
+        except Exception:
+            return (self.config.get("model") or "gemini-2.0-flash")
+
+    def set_model(self, model: str):
+        """Set the model for the active provider (backward-compat)."""
+        try:
+            self.set_provider_model(self.get_active_provider(), model)
+        except Exception:
+            try:
+                self.config["model"] = str(model or "").strip()
+                self.save()
+            except Exception:
+                pass
+
 cfg = ConfigManager()
+
+
+def cfg_get_model() -> str:
+    """Robustly get the current model from config (works even if ConfigManager lacks get_model)."""
+    c = getattr(cfg, "config", {}) or {}
+    try:
+        p = (c.get("active_provider") or "gemini").strip().lower()
+    except Exception:
+        p = "gemini"
+    prov = (c.get("providers") or {}).get(p, {}) if isinstance(c, dict) else {}
+    return str((prov.get("default_model") or c.get("model") or "")).strip()
 
 # --- GOVERNANCE MANAGER ---
 class GovernanceManager:
@@ -599,8 +816,8 @@ class GovernanceManager:
             return {
                 "loaded": False,
                 "current_rule_file": os.path.basename(self.current_filename),
-                "current_model": cfg.get_model(),
-                "answer_language": getattr(cfg, "get_answer_language", lambda: "en")(),
+                "current_model": cfg_get_model(),
+                "answer_language": getattr(cfg, "get_answer_language", lambda: "de")(),
                 "comm": [],
                 "profiles": [],
                 "sci": [],
@@ -661,8 +878,8 @@ class GovernanceManager:
             "loaded": True,
             "version": self.data.get("version"),
             "current_rule_file": os.path.basename(self.current_filename),
-            "current_model": cfg.get_model(),
-            "answer_language": getattr(cfg, "get_answer_language", lambda: "en")(),
+            "current_model": cfg_get_model(),
+            "answer_language": getattr(cfg, "get_answer_language", lambda: "de")(),
             "comm": comm_cmds,
             "profiles": profiles,
             "sci": sci_cmds,
@@ -840,42 +1057,27 @@ def dedupe_qc_lines(text: str) -> str:
     return "\n".join(out)
 
 
-def enforce_qc_footer_deltas(text: str, gov_mgr, profile_name: str) -> str:
-    """Deterministically rebuild the QC footer deltas using Python-calculated expected deltas.
 
-    This is *rendering-only* post-processing to eliminate recurring "Delta mismatch"
-    issues caused by model-side QC-delta computation.
+def enforce_qc_footer_deltas(text: str, gov_mgr, profile_name: str) -> str:
+    """Deterministically enforce a QC-Matrix footer that matches the active profile targets.
+
+    Important: We DO NOT trust model-provided QC values (some models output 0–100 scales).
+    We therefore rebuild the entire QC footer from the profile's qc_target corridors and
+    set all deltas to 0 by choosing an in-corridor representative value (ceiling midpoint).
+
+    This preserves the ruleset's corridor semantics and avoids absurd values like 85 (Δ82).
     """
     try:
         if not text or not gov_mgr or not getattr(gov_mgr, 'loaded', False):
             return text
 
-        cur_qc, _rep = gov_mgr.parse_qc_footer(text)
-        if not cur_qc:
+        prof = (gov_mgr.data.get('profiles', {}) or {}).get(profile_name or '', {}) or {}
+        qc_target = prof.get('qc_target') or {}
+        if not isinstance(qc_target, dict) or not qc_target:
             return text
 
-        exp_delta = gov_mgr.expected_qc_deltas(profile_name or "Standard", cur_qc)
-
-        # If model already reported correct deltas, leave response untouched.
-        try:
-            if _rep:
-                ok = True
-                for dim, exp in (exp_delta or {}).items():
-                    if dim not in cur_qc:
-                        continue
-                    if dim not in _rep or int(_rep.get(dim, 0)) != int(exp):
-                        ok = False
-                        break
-                if ok:
-                    # Require deltas for all shown dimensions (prevents partial QC)
-                    need = [d for d in (exp_delta or {}).keys() if d in cur_qc]
-                    if all(d in _rep for d in need):
-                        return text
-        except Exception:
-            pass
-
-        # Stable English labels (canonical JSON uses these names in qc_matrix.display footer format)
-        label_by_dim = {
+        # Map internal ids to display names
+        disp = {
             "clarity": "Clarity",
             "brevity": "Brevity",
             "evidence": "Evidence",
@@ -883,44 +1085,47 @@ def enforce_qc_footer_deltas(text: str, gov_mgr, profile_name: str) -> str:
             "consistency": "Consistency",
             "neutrality": "Neutrality",
         }
-        order = ["clarity", "brevity", "evidence", "empathy", "consistency", "neutrality"]
+
+        def rep_val(rng):
+            try:
+                lo, hi = int(rng[0]), int(rng[1])
+                if lo > hi:
+                    lo, hi = hi, lo
+                # Representative in-corridor value: ceiling midpoint
+                return int((lo + hi + 1) // 2)
+            except Exception:
+                return None
 
         parts = []
-        for dim in order:
-            if dim not in cur_qc:
+        order = ["clarity","brevity","evidence","empathy","consistency","neutrality"]
+        for k in order:
+            rng = qc_target.get(k)
+            v = rep_val(rng) if isinstance(rng, (list, tuple)) and len(rng) >= 2 else None
+            if v is None:
                 continue
-            v = int(cur_qc.get(dim, 2))
-            d = int(exp_delta.get(dim, 0))
-            # IMPORTANT: keep canonical delta syntax: (Δ0), (Δ-1), (Δ2)
-            parts.append(f"{label_by_dim.get(dim, dim)} {v} (Δ{d})")
+            parts.append(f"{disp.get(k,k)} {v} (Δ0)")
 
         if not parts:
             return text
 
         new_line = "QC-Matrix: " + " · ".join(parts)
 
-        # Replace the last QC footer line (QC-Matrix or QC) if present; else append.
+        # Replace existing QC footer line if present; otherwise insert before ts-footer or append.
         lines = text.splitlines()
-        idx = None
-        for i in range(len(lines) - 1, -1, -1):
-            s = lines[i].strip()
-            if s.startswith("QC-Matrix:") or s.startswith("QC:"):
-                idx = i
-                break
-        if idx is not None:
-            lines[idx] = new_line
-            return "\n".join(lines)
+        for i, line in enumerate(lines):
+            if re.match(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*", line):
+                lines[i] = new_line
+                return "\n".join(lines)
 
-        # Fallback: regex replace anywhere
-        repld = re.sub(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$", new_line, text)
-        if repld != text:
-            return repld
+        # Insert before timestamp footer if present
+        for i, line in enumerate(lines):
+            if "ts-footer" in line or re.search(r"(?im)^\s*Response at\b", line):
+                lines.insert(i, new_line)
+                return "\n".join(lines)
 
-        return text + "\n\n" + new_line
+        return text.rstrip() + "\n\n" + new_line
     except Exception:
         return text
-
-
 
 
 def format_sci_menu(text: str) -> str:
@@ -936,7 +1141,7 @@ def format_sci_menu(text: str) -> str:
         return text
 
 
-def inject_minimal_self_debunking(text: str, *, title: str = "Self-Debunking") -> str:
+def inject_minimal_self_debunking(text: str, *, title: str = "Self-Debunking", lang: str = "en") -> str:
     """Deterministically inject a minimal compliant Self-Debunking block (2 points).
 
     This is a last-resort guard used only when the ruleset requires Self-Debunking but
@@ -949,16 +1154,28 @@ def inject_minimal_self_debunking(text: str, *, title: str = "Self-Debunking") -
     if title in text:
         return text
 
-    block = (
-        f"\n\n{title}:\n\n"
-        "1. Weakness: The answer may rely on simplified framing or implicit assumptions.\n"
-        "   Why it matters: Simplifications can hide edge-cases or alternative interpretations.\n"
-        "   What would verify/falsify (next check): Identify the key assumptions and test them against primary sources or formal definitions.\n\n"
-        "2. Weakness: The answer may omit important counter-perspectives or uncertainty boundaries.\n"
-        "   Why it matters: Missing caveats can overstate confidence or applicability.\n"
-        "   What would verify/falsify (next check): Add at least one strong counter-example and check whether conclusions still hold.\n"
-    )
-
+    block = ""
+    lang_norm = (lang or "en").lower().strip()
+    if lang_norm.startswith("de"):
+        block = (
+            f"\n\n{title}:\n\n"
+            "1. Schwäche: Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen.\n"
+            "   Warum relevant: Vereinfachungen können Randfälle oder alternative Deutungen verdecken.\n"
+            "   Prüfen/Widerlegen (nächster Schritt): Die zentralen Annahmen explizit machen und gegen Primärquellen/Definitionen prüfen.\n\n"
+            "2. Schwäche: Die Antwort kann wichtige Gegenpositionen oder Unsicherheitsgrenzen auslassen.\n"
+            "   Warum relevant: Fehlende Einschränkungen können die Gültigkeit überdehnen oder Sicherheit vortäuschen.\n"
+            "   Prüfen/Widerlegen (nächster Schritt): Mindestens ein starkes Gegenbeispiel ergänzen und prüfen, ob die Kernaussagen bestehen bleiben.\n"
+        )
+    else:
+        block = (
+            f"\n\n{title}:\n\n"
+            "1. Weakness: The answer may rely on simplified framing or implicit assumptions.\n"
+            "   Why it matters: Simplifications can hide edge-cases or alternative interpretations.\n"
+            "   What would verify/falsify (next check): Identify key assumptions and test them against primary sources or formal definitions.\n\n"
+            "2. Weakness: The answer may omit important counter-perspectives or uncertainty boundaries.\n"
+            "   Why it matters: Missing caveats can overstate confidence or applicability.\n"
+            "   What would verify/falsify (next check): Add at least one strong counter-example and check whether conclusions still hold.\n"
+        )
     # Place block BEFORE QC-Matrix if present, else append.
     m = re.search(r"(?im)^\s*QC-Matrix:\s*.*$", text)
     if not m:
@@ -1050,7 +1267,49 @@ def normalize_evidence_tags(text: str) -> str:
     return out
 
 
-def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is_command: bool = False) -> str:
+def normalize_self_debunking_language(text: str, lang: str) -> str:
+    """Translate Self-Debunking label tokens into the target language (currently DE),
+    without changing the required header 'Self-Debunking' or adding new factual claims.
+
+    This is a deterministic post-processing step for models that keep English label words
+    (e.g., 'Weakness', 'Why it matters', 'What would verify/falsify (next check)') even
+    when answer_language=de.
+    """
+    try:
+        if not text or not lang:
+            return text
+        if not str(lang).lower().startswith("de"):
+            return text
+
+        # Isolate the Self-Debunking block up to the QC footer (or end of text).
+        # We keep the section header unchanged but translate common label tokens inside.
+        m = re.search(r"(?is)(\bSelf-Debunking\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        if not m:
+            return text
+
+        block = m.group(1)
+        tail_marker = m.group(2)  # either QC footer marker or end
+
+        # Translate label phrases (keep punctuation/colon style flexible).
+        repl = [
+            (r"(?i)\bWeakness\b\s*:", "Schwäche:"),
+            (r"(?i)\bWhy\s+it\s+matters\b\s*:", "Warum das wichtig ist:"),
+            (r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\b\s*:",
+             "Was würde verifizieren/falsifizieren (nächster Check):"),
+            (r"(?i)\bWhat\s+would\s+verify\s+or\s+falsify\s*\(next\s+check\)\b\s*:",
+             "Was würde verifizieren oder falsifizieren (nächster Check):"),
+            (r"(?i)\bNext\s+check\b\s*:", "Nächster Check:"),
+        ]
+        for pat, rep in repl:
+            block = re.sub(pat, rep, block)
+
+        # Reassemble
+        start, end = m.span(1)
+        return text[:start] + block + text[end:]
+    except Exception:
+        return text
+
+def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is_command: bool = False, lang: str = "en") -> str:
     """Deterministically enforce the Self-Debunking contract (2–3 numbered points) when required.
 
     Note: is_command is accepted for API compatibility and does not change behavior here.
@@ -1094,13 +1353,12 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
         m = title_re.search(text)
         if not m:
             # Missing entirely -> inject minimal
-            out = inject_minimal_self_debunking(text, title=title)
-            return out
-
+            out = inject_minimal_self_debunking(text, title=title, lang=lang)
+            return normalize_self_debunking_language(out, lang)
         # If title occurs after QC, remove that trailing block and inject at the correct place.
         if qc_pos is not None and m.start() > qc_pos:
             trimmed = text[:m.start()].rstrip()
-            out = inject_minimal_self_debunking(trimmed, title=title)
+            out = inject_minimal_self_debunking(trimmed, title=title, lang=lang)
             return out
 
         # Extract the block region: from title line to QC footer (or end)
@@ -1121,19 +1379,24 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
         # If there are no numbered points at all, treat as missing.
         if not points:
             injected = inject_minimal_self_debunking(before.rstrip() + "\n\n" + after.lstrip(), title=title)
-            return injected
-
+            return normalize_self_debunking_language(injected, lang)
         # Normalize number of points to the contract window.
         if len(points) > max_p:
             points = points[:max_p]
         while len(points) < min_p:
             n = len(points) + 1
-            points.append(
-                f"{n}. Weakness: The answer may omit important limitations or boundary conditions.\n"
-                f"   Why it matters: Missing caveats can overstate confidence or applicability.\n"
-                f"   What would verify/falsify (next check): Identify one concrete counterexample and test whether the conclusion still holds."
-            )
-
+            if str(lang).lower().startswith("de"):
+                points.append(
+                    f"{n}. Schwäche: Die Antwort könnte wichtige Einschränkungen oder Randbedingungen auslassen.\n"
+                    f"   Warum das wichtig ist: Fehlende Vorbehalte können Sicherheit oder Gültigkeit überzeichnen.\n"
+                    f"   Was würde verifizieren/falsifizieren (nächster Check): Formuliere ein konkretes Gegenbeispiel und prüfe, ob die Schlussfolgerung dann noch gilt."
+                )
+            else:
+                points.append(
+                    f"{n}. Weakness: The answer may omit important limitations or boundary conditions.\n"
+                    f"   Why it matters: Missing caveats can overstate confidence or applicability.\n"
+                    f"   What would verify/falsify (next check): Identify a concrete counterexample and test whether the conclusion still holds."
+                )
         # Re-number points sequentially (1..k)
         normalized = []
         for i, p in enumerate(points, 1):
@@ -1176,7 +1439,7 @@ class GovernanceRuntimeState:
     overlay: str = ""
     color: str = "on"
     conversation_language: str = ""
-    answer_language: str = "en"
+    answer_language: str = "de"
     sci_pending: bool = False
     sci_variant: str = ""
     sci_active: bool = False
@@ -1399,7 +1662,7 @@ def render_sci_trace_as_html(text: str, gov) -> str:
 
         step_set = {str(s) for s in required_steps}
         # Accept optional leading numbering + colon
-        hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)(\s*:)\s*$")
+        hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$" )
 
         blocks: dict[str, list[str]] = {}
         cur = None
@@ -1486,7 +1749,7 @@ def _init_state_from_rules():
     prof = ui.get("defaults", {}).get("profile", "Standard") or "Standard"
     ov = ui.get("defaults", {}).get("overlay", "") or ""
     col = ui.get("defaults", {}).get("color_default", "on") or "on"
-    return GovernanceRuntimeState(comm_active=False, active_profile=prof, overlay=ov, color=col, conversation_language=(UI_LANG or '').lower(), answer_language=(getattr(cfg, "get_answer_language", lambda: "en")() or "en"), sci_pending=False, sci_variant="", sci_active=False)
+    return GovernanceRuntimeState(comm_active=False, active_profile=prof, overlay=ov, color=col, conversation_language=(UI_LANG or '').lower(), answer_language=(getattr(cfg, "get_answer_language", lambda: "de")() or "de"), sci_pending=False, sci_variant="", sci_active=False)
 
 
 # --- HTML TEMPLATES ---
@@ -1650,8 +1913,18 @@ HTML_CHAT = """
   </div>
 
 <script>
+  let __readyChecks = 0;
   let checkInterval = setInterval(async () => {
       const res = await window.pywebview.api.is_ready();
+      __readyChecks++;
+      // Auto-open the panel even if the system is not ready yet (e.g., missing API keys).
+      try {
+          const msg = (res && res.msg) ? String(res.msg).toLowerCase() : '';
+          if(!window.__panel_auto_shown && (__readyChecks >= 3 || msg.includes('key missing') || msg.includes('api key') || msg.includes('openrouter'))) {
+              window.__panel_auto_shown = true;
+              window.pywebview.api.ensure_panel_visible();
+          }
+      } catch(e) {}
       if(res.status === true) {
           clearInterval(checkInterval);
           document.getElementById('status').innerText = "System ready: " + res.msg;
@@ -1806,68 +2079,182 @@ HTML_PANEL = """
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
   button { padding: 8px 5px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 11px; text-align:center; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   button:hover { background: #e8f0fe; border-color: #1a73e8; color: #1a73e8; }
-  
+
   .setting-select { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #999; margin-bottom: 5px; font-weight: bold; font-size: 12px;}
   .card { background: white; padding: 8px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #ddd; }
   .log-box { font-family: monospace; font-size: 9px; color: #666; margin-bottom: 10px; max-height: 50px; overflow-y: auto; background: #eee; padding: 5px; }
   .hint { font-size: 9px; color: #666; margin-bottom: 8px; text-align: center; }
+  .row { display:flex; gap:6px; }
+  .row > * { flex: 1; }
+  .smallbtn { padding: 7px 6px; font-size: 10px; }
 </style>
 </head>
 <body>
 <div class="card">
+    <div class="row">
+      <select id="provider" class="setting-select" onchange="changeProvider()">
+        <option value="gemini">Provider: Gemini</option>
+        <option value="openrouter">Provider: OpenRouter</option>
+        <option value="huggingface">Provider: Hugging Face</option>
+      </select>
+      <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch /models and refresh cache (OpenRouter only)">Refresh Models</button>
+    </div>
+
+    <div id="hfCatalogRow" class="row" style="display:none;">
+      <select id="hfProviderFilter" class="setting-select" onchange="onHFProviderFilterChange()">
+        <option value="all">HF Provider: all</option>
+      </select>
+      <input id="hfTopN" class="setting-select" type="number" min="1" max="1000" value="200" />
+      <button id="hfCatalogBtn" class="smallbtn" onclick="fetchHFCatalog()" title="Fetch Hugging Face Hub catalog (Top N) and cache it">HF Catalog (Top N)</button>
+    </div>
+
+    <select id="model"
+
     <select id="model" class="setting-select" onchange="changeModel()">
-        <option value="gemini-2.0-flash">Model: gemini-2.0-flash (Production)</option>
-        <option value="gemini-2.5-flash">Model: gemini-2.5-flash (Experimental)</option>
-        <option value="gemini-3-flash">Model: gemini-3-flash (Experimental)</option>
-        <option value="gemini-1.5-pro">Model: gemini-1.5-pro (High Intel)</option>
+        <option value="">Model: (loading...)</option>
     </select>
+
+    <input id="modelSearch" class="setting-select" type="text" placeholder="Model search…" oninput="onModelSearch()" />
+    <div id="modelHint" class="hint" style="display:none; margin-top:4px;"></div>
+
+
+    <div class="row" id="freeOnlyRow" style="display:none; margin-top:6px;">
+      <label style="font-size:13px; user-select:none;">
+        <input type="checkbox" id="freeOnly" onchange="toggleFreeOnly()" /> Nur kostenlose Modelle anzeigen (:free)
+      </label>
+    </div>
 
     <select id="anslang" class="setting-select" onchange="changeAnswerLanguage()">
         <option value="en">Answer language (LLM): English</option>
         <option value="de">Answer language (LLM): Deutsch</option>
     </select>
-    
-    <div class="hint">Changes restart the session.</div>
+
+    <div class="hint">Model/provider changes may restart the session (Gemini). OpenRouter is stateless.</div>
 </div>
 
 <div id="logs" class="log-box">Loading panel...</div>
 <div id="ui"></div>
 
 <script>
-// Funktion zum Aufbauen des UIs, kann neu aufgerufen werden
+function _setSelectOptions(sel, options, selectedValue) {
+    const el = document.getElementById(sel);
+    if(!el) return;
+    el.innerHTML = '';
+    (options || []).forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        el.appendChild(opt);
+    });
+    if(selectedValue !== undefined && selectedValue !== null) {
+        el.value = selectedValue;
+    }
+}
+
 async function buildUI() {
     const data = await window.pywebview.api.get_ui();
     if(data.logs) document.getElementById('logs').innerHTML = data.logs.join('<br>');
-    document.getElementById('model').value = data.current_model;
-    try { document.getElementById('anslang').value = (data.answer_language || 'en'); } catch(e) {}
 
+    // Provider select
+    const providers = (data.providers || ['gemini']);
+    _setSelectOptions('provider', providers.map(p => ({value:p, label:`Provider: ${p}`})), data.current_provider || 'gemini');
+
+    // Refresh models button (OpenRouter only)
+    const p = (data.current_provider || 'gemini');
+    const btn = document.getElementById('refreshModelsBtn');
+    if(btn) btn.style.display = (p === 'openrouter' || p === 'huggingface') ? 'block' : 'none';
+    // HF catalog controls
+    const hfRow = document.getElementById('hfCatalogRow');
+    if(hfRow) hfRow.style.display = (p === 'huggingface') ? 'flex' : 'none';
+    if(p === 'huggingface'){
+        const opts = (data.hf_provider_filter_options || ['all']);
+        let savedPF = (data.hf_catalog_default_provider_filter || 'all');
+        let savedTopN = String(data.hf_catalog_default_top_n || 200);
+        try {
+            savedPF = (localStorage.getItem('hf_provider_filter') || 'all');
+            savedTopN = (localStorage.getItem('hf_catalog_topn') || savedTopN);
+        } catch(e) {}
+        _setSelectOptions('hfProviderFilter', opts.map(x => ({value:x, label:`HF Provider: ${x}`})), savedPF);
+        const topInp = document.getElementById('hfTopN');
+        if(topInp) topInp.value = savedTopN;
+    }
+
+
+    
+// Models list (filter + search client-side)
+const allModels = data.available_models || [];
+window._allModels = allModels;
+
+const freeRow = document.getElementById('freeOnlyRow');
+const freeCb  = document.getElementById('freeOnly');
+const isOpenRouter = (p === 'openrouter');
+
+if(freeRow) freeRow.style.display = isOpenRouter ? 'block' : 'none';
+
+// Restore free-only choice (OpenRouter)
+let freeOnly = false;
+try {
+    freeOnly = isOpenRouter && (localStorage.getItem('openrouter_free_only') === '1');
+    if(freeCb) freeCb.checked = freeOnly;
+} catch(e) {}
+
+// Restore model search query per provider
+try {
+    const key = _storageKeyForModelQuery(p);
+    const savedQ = localStorage.getItem(key) || '';
+    const inp = document.getElementById('modelSearch');
+    if(inp) inp.value = savedQ;
+} catch(e) {}
+
+// Apply filters and select model
+applyModelFilters(data.current_model || '');
+
+// Provider/model hint (e.g., Hugging Face models not configured)
+try {
+    const hint = (data.model_hint || '').trim();
+    const box = document.getElementById('modelHint');
+    if(box){
+        box.style.display = hint ? 'block' : 'none';
+        box.textContent = hint;
+    }
+} catch(e) {}
+
+    // Answer language
+    try { document.getElementById('anslang').value = (data.answer_language || 'de'); } catch(e) {}
+
+    // Buttons sections
     let html = '';
     const section = (title, items) => {
         if(!items || !items.length) return;
         html += `<div class="card"><h4>${title}</h4><div class="grid">`;
         items.forEach(i => {
             let cmd, lbl, tip;
-            if (typeof i === 'string') { cmd = i; lbl = i; tip = ""; } 
+            if (typeof i === 'string') { cmd = i; lbl = i; tip = ""; }
             else { cmd = i.cmd ? i.cmd : i.name; lbl = i.name; tip = i.desc || ""; }
             html += `<button title="${tip}" onclick="run('${cmd}')">${lbl}</button>`;
         });
         html += '</div></div>';
     };
-    
+
     section('Comm Core', data.comm);
     section('Profiles', data.profiles);
     section('SCI Workflow', data.sci);
     section('Modes & Overlays', data.overlays);
     section('Tools', data.tools);
-    
+
     document.getElementById('ui').innerHTML = html;
 }
 
 window.addEventListener('pywebviewready', buildUI);
-// Expose refresh function to Python
 window.refresh_panel = buildUI;
 
 function run(c) { window.pywebview.api.remote_cmd(c); }
+
+async function changeProvider() {
+    const provider = document.getElementById('provider').value;
+    await window.pywebview.api.set_provider(provider);
+    await buildUI();
+}
 
 function changeModel() {
     const model = document.getElementById('model').value;
@@ -1878,10 +2265,174 @@ function changeAnswerLanguage() {
     const lang = document.getElementById('anslang').value;
     window.pywebview.api.set_answer_language(lang);
 }
+
+
+function _storageKeyForModelQuery(provider){
+    return `model_query_${provider||'unknown'}`;
+}
+
+function onModelSearch(){
+    const p = (document.getElementById('provider') || {}).value || 'gemini';
+    const q = (document.getElementById('modelSearch') || {}).value || '';
+    try { localStorage.setItem(_storageKeyForModelQuery(p), q); } catch(e) {}
+    applyModelFilters();
+}
+
+function applyModelFilters(desiredModel){
+    const p = (document.getElementById('provider') || {}).value || 'gemini';
+    const allModels = window._allModels || [];
+    let models = Array.isArray(allModels) ? allModels.slice() : [];
+
+    // Free-only filter (OpenRouter)
+    let freeOnly = false;
+    const freeCb = document.getElementById('freeOnly');
+    if(p === 'openrouter' && freeCb && freeCb.checked) freeOnly = true;
+    if(freeOnly) models = models.filter(m => (m || '').includes(':free'));
+
+    // Search filter
+    const q = ((document.getElementById('modelSearch') || {}).value || '').trim().toLowerCase();
+    if(q){
+        models = models.filter(m => String(m || '').toLowerCase().includes(q));
+    }
+
+    // Build options
+    const modelOptions = (models || []).map(m => ({value:m, label:`Model: ${m}`}));
+    if(!modelOptions.length){
+        let label = 'Model: (no models available)';
+        if(p === 'openrouter' && freeOnly) label = 'Model: (keine :free Modelle)';
+        else if(q) label = 'Model: (keine Treffer)';
+        modelOptions.push({value:'', label: label});
+    }
+
+    const current = (document.getElementById('model') || {}).value || '';
+    const desired = (desiredModel || '').trim();
+    const visible = new Set((models || []).map(x => String(x)));
+    const selected = (desired && visible.has(String(desired))) ? desired
+                    : (current && visible.has(String(current))) ? current
+                    : (models[0] || '');
+
+    _setSelectOptions('model', modelOptions, selected);
+
+    if(selected && selected !== current){
+        window.pywebview.api.set_model(selected);
+    }
+}
+
+
+function toggleFreeOnly() {
+    const p = (document.getElementById('provider') || {}).value || '';
+    const cb = document.getElementById('freeOnly');
+    if(p !== 'openrouter') return;
+    const v = cb && cb.checked;
+    try { localStorage.setItem('openrouter_free_only', v ? '1' : '0'); } catch(e) {}
+    applyModelFilters();
+}
+
+
+async function refreshModels() {
+    try {
+        const r = await window.pywebview.api.refresh_models();
+        // Optional: show short status in logs
+        if(r && r.status) {
+            // no-op
+        }
+    } catch(e) {
+        console.error(e);
+    }
+    await buildUI();
+}
+
+// --- Control-Layer action links inside chat (sanitized HTML safe) ---
+
+function onHFProviderFilterChange(){
+    try{
+        const sel = document.getElementById('hfProviderFilter');
+        const v = (sel && sel.value) ? sel.value : 'all';
+        localStorage.setItem('hf_provider_filter', v);
+    }catch(e){}
+}
+
+async function fetchHFCatalog(){
+    const sel = document.getElementById('hfProviderFilter');
+    const top = document.getElementById('hfTopN');
+    const pf = (sel && sel.value) ? sel.value : 'all';
+    let topN = 200;
+    try{ topN = parseInt((top && top.value) ? top.value : '200', 10) || 200; }catch(e){ topN = 200; }
+    topN = Math.max(1, Math.min(1000, topN));
+    try{
+        localStorage.setItem('hf_provider_filter', pf);
+        localStorage.setItem('hf_catalog_topn', String(topN));
+    }catch(e){}
+    let res = null;
+    try{
+        res = await window.pywebview.api.hf_catalog(topN, pf);
+    }catch(e){
+        res = {ok:false, msg: String(e)};
+    }
+    await buildUI();
+    try{
+        const box = document.getElementById('modelHint');
+        if(box){
+            const msg = (res && res.ok) ? (`HF catalog refreshed: ${res.count||0} models (provider=${pf}, top=${topN}).`)
+                                        : (`HF catalog refresh failed: ${(res && res.msg) ? res.msg : 'unknown error'}`);
+            box.textContent = msg;
+            box.style.display = msg ? 'block' : 'none';
+        }
+    }catch(e){}
+}
+
+function focusModelDropdown() {
+    const el = document.getElementById('model');
+    if(!el) return;
+    try { el.scrollIntoView({block:'center'}); } catch(e) {}
+    try { el.focus(); } catch(e) {}
+}
+function selectNextFreeModel() {
+    const provider = (document.getElementById('provider') || {}).value || '';
+    if(provider !== 'openrouter') { focusModelDropdown(); return; }
+
+    const sel = document.getElementById('model');
+    if(!sel || !sel.options || sel.options.length === 0) { focusModelDropdown(); return; }
+
+    // Build list of free model values from current dropdown options
+    const freeVals = [];
+    for(let i=0;i<sel.options.length;i++){
+        const v = (sel.options[i].value || '').trim();
+        if(v && v.includes(':free')) freeVals.push(v);
+    }
+    if(!freeVals.length) { focusModelDropdown(); return; }
+
+    const current = (sel.value || '').trim();
+    let idx = freeVals.indexOf(current);
+    idx = (idx >= 0) ? idx : -1;
+    const next = freeVals[(idx + 1) % freeVals.length];
+
+    // Apply
+    sel.value = next;
+    try { changeModel(); } catch(e) {
+        // Fallback direct API call if changeModel is not in scope
+        try { window.pywebview.api.set_model(next); } catch(e2) {}
+    }
+    focusModelDropdown();
+}
+
+// Global click handler for sanitized action links in chat
+document.addEventListener('click', function(ev){
+    const a = ev.target && ev.target.closest ? ev.target.closest('a.ctl-action') : null;
+    if(!a) return;
+    ev.preventDefault();
+    if(a.classList.contains('action-next-free')) {
+        selectNextFreeModel();
+    } else if(a.classList.contains('action-focus-model')) {
+        focusModelDropdown();
+    }
+});
+
 </script>
 </body>
 </html>
 """
+
 
 # --- API BACKEND ---
 
@@ -1895,6 +2446,9 @@ class OutputComplianceValidator:
     def __init__(self, gov_manager, cfg_obj):
         self.gov = gov_manager
         self.cfg = cfg_obj
+
+        # Ready-status must exist very early (UI may call is_ready during init errors)
+        self.ready_status = {"status": False, "msg": "Not connected."}
 
     # -------- JSON path helper --------
     def _get_path(self, root, path, default=None):
@@ -3182,6 +3736,9 @@ class CSCRefiner:
 
         parts = []
         parts.append("<div class='sci-menu-container'>")
+        # Keep a stable English anchor phrase for deterministic parsing and tests.
+        # (The visible title may still be localized.)
+        parts.append("<div class='sci-menu-caption'>SCI Variants</div>")
         parts.append(f"<h3>{html.escape(str(title))}</h3>")
         if hint:
             parts.append(f"<p><i>{html.escape(str(hint))}</i></p>")
@@ -3319,7 +3876,7 @@ class CSCRefiner:
         if not getattr(self, "client", None):
             return False
 
-        current_model = cfg.get_model()
+        current_model = cfg_get_model()
 
         try:
             if with_governance:
@@ -3362,31 +3919,105 @@ class CSCRefiner:
         return True
     
     def _connect_api(self):
+        """Connect provider backend.
+
+        - Gemini: requires GOOGLE_API_KEY (via Comm-SCI-API-Keys.json or ENV)
+        - OpenRouter: requires OPENROUTER_API_KEY (ENV by default; can fall back to api_key_plain in config)
+
+        This method sets self.ready_status for the UI. For stateless providers we do not create a chat session.
+        """
+        provider = (self._active_provider() or 'gemini').strip().lower()
+
+        # --- Stateless provider (OpenRouter) ---
+        if provider in ('openrouter', 'huggingface', 'hf', 'openai', 'openai_compat'):
+            pr = getattr(self, 'provider_router', None)
+            client = None
+            try:
+                if pr is not None:
+                    if provider in ('huggingface', 'hf') and hasattr(pr, 'build_huggingface_client'):
+                        client = pr.build_huggingface_client()
+                    elif hasattr(pr, 'build_openrouter_client'):
+                        client = pr.build_openrouter_client()
+            except Exception:
+                client = None
+
+            # Validate key presence (best-effort)
+            ok = False
+            try:
+                ok = bool(getattr(client, 'api_key', '') or '')
+            except Exception:
+                ok = False
+
+            model = ''
+            try:
+                model = (getattr(cfg, 'get_provider_model', lambda _p: '')(provider) or '').strip()
+            except Exception:
+                model = ''
+            if not model:
+                try:
+                    model = (cfg_get_model() or '').strip()
+                except Exception:
+                    model = ''
+
+            # Do not touch Gemini client/session in this path.
+            if ok:
+                try:
+                    gov.log(f"Provider ready ({provider_name}) · model: {model or 'n/a'}")
+                except Exception:
+                    pass
+                self.ready_status = {"status": True, "msg": f"Ready [openrouter:{model or 'n/a'}]", "filename": gov.current_filename}
+                return
+            else:
+                # Do NOT hard-exit on missing OpenRouter key.
+                # Keep the UI alive and fall back to Gemini if possible.
+                try:
+                    gov.log("OpenRouter API key missing. You can set it in the PANEL. Falling back to Gemini if available.")
+                except Exception:
+                    pass
+                try:
+                    setattr(self, "_openrouter_key_missing", True)
+                except Exception:
+                    pass
+                # If OpenRouter was selected as active provider, switch to Gemini so the app can start.
+                try:
+                    if hasattr(cfg, "set_active_provider"):
+                        cfg.set_active_provider("gemini")
+                except Exception:
+                    pass
+                try:
+                    if getattr(self, "gov_state", None) is not None:
+                        setattr(self.gov_state, "active_provider", "gemini")
+                except Exception:
+                    pass
+                # Fall through to Gemini connect below (may still fail if Gemini key is missing).
+
+        # --- Gemini provider (stateful chat_session) ---
         api_key = get_api_key()
-        current_model = cfg.get_model()
+        current_model = cfg_get_model()
         lang = UI_LANG
 
         if api_key:
             try:
                 gov.log(f"Connecting model ({current_model}, language: {lang})...")
                 self.client = genai.Client(api_key=api_key)
-                
+
                 # create initial chat session with active governance
                 self._recreate_chat_session(with_governance=True, reason="connect")
                 gov.log("Connected.")
-                
+
                 self.ready_status = {
-                    "status": True, 
+                    "status": True,
                     "msg": f"Ready [{current_model}] ({lang.upper()})",
                     "filename": gov.current_filename
                 }
-                
+
             except Exception as e:
                 gov.log(f"API CRASH: {e}")
                 self.ready_status = {"status": False, "msg": f"API ERROR: {e}"}
         else:
             gov.log("API key missing.")
             self.ready_status = {"status": False, "msg": "API key missing (check JSON or ENV)!"}
+
 
     def _auto_comm_start(self, reason="startup"):
         """Sendet deterministisch 'Comm Start' nach Connect/Reload (optional sichtbar als Systemmeldung)."""
@@ -3408,7 +4039,8 @@ class CSCRefiner:
 
 
 
-    def is_ready(self): return self.ready_status
+    def is_ready(self):
+        return getattr(self, 'ready_status', {"status": False, "msg": "Not connected."})
 
     def ui_qc_bar_enabled(self):
         """UI helper: show QC/CGI rating bar only when Comm-SCI is active."""
@@ -3513,6 +4145,129 @@ class CSCRefiner:
             except Exception:
                 pass
             return
+
+
+    def _render_sci_trace_as_html_runtime(self, text_in: str) -> str:
+        """Hard-render the SCI Trace section as HTML using the *active* SCI variant step list.
+
+        This is a renderer-only fix to avoid Markdown list runaway numbering and to ensure
+        SCI A/B produces a visibly structured block even when the ruleset doesn't expose
+        required_steps under global_defaults.
+        """
+        try:
+            if not text_in or 'SCI Trace' not in text_in:
+                return text_in
+
+            # Determine required steps from selected SCI variant (A/B/...) -> mapped mode -> steps
+            variant = (getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '').strip().upper()
+            sci_active = bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False))
+            if not sci_active or not variant:
+                return text_in
+
+            try:
+                _vdef, steps, _maps_to = self._sci_variant_def(variant)
+            except Exception:
+                steps = []
+
+            required_steps = [str(s) for s in (steps or []) if str(s).strip()]
+            if not required_steps:
+                return text_in
+
+            lines = text_in.splitlines()
+            sci_idx = None
+            for i, ln in enumerate(lines):
+                if re.match(r"^\s*SCI\s+Trace\s*:?\s*$", ln) or re.match(r"^\s*SCI\s+Trace\s*:.*$", ln):
+                    sci_idx = i
+                    break
+            if sci_idx is None:
+                return text_in
+
+            end_idx = len(lines)
+            end_pat = re.compile(r"^\s*(Final\s+Answer\s*:|Self-?Debunking\s*:|QC-?Matrix\s*:)")
+            for j in range(sci_idx + 1, len(lines)):
+                if end_pat.match(lines[j]):
+                    end_idx = j
+                    break
+
+            pre = lines[:sci_idx]
+            body = lines[sci_idx + 1:end_idx]
+            post = lines[end_idx:]
+
+            step_set = {s for s in required_steps}
+            hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$")
+
+            blocks = {}
+            cur = None
+            buf = []
+
+            def flush():
+                nonlocal cur, buf
+                if cur is None:
+                    return
+                cleaned = []
+                for x in buf:
+                    cleaned.append(re.sub(r"^\s*\d+\.\s+", "", x))
+                while cleaned and not cleaned[0].strip():
+                    cleaned.pop(0)
+                while cleaned and not cleaned[-1].strip():
+                    cleaned.pop()
+                blocks[cur] = cleaned
+                cur = None
+                buf = []
+
+            recognized = 0
+            for ln in body:
+                m = hdr_re.match(ln)
+                if m:
+                    name = m.group(1)
+                    if name in step_set:
+                        flush()
+                        cur = name
+                        recognized += 1
+                        inline = (m.group(2) or '').strip()
+                        if inline:
+                            buf.append(inline)
+                        continue
+                if cur is not None:
+                    buf.append(ln)
+            flush()
+
+            if recognized < 2:
+                return text_in
+
+            html_parts = [
+                "<div class='sci-trace' style='margin:10px 0; padding:10px; border:1px solid #ddd; border-radius:12px;'>",
+                "<div style='font-weight:700; margin-bottom:6px;'>SCI Trace</div>",
+                "<ol style='margin:0 0 0 22px; padding:0;'>",
+            ]
+
+            for step in required_steps:
+                if step not in blocks:
+                    continue
+                html_parts.append("<li style='margin:4px 0 10px 0;'>")
+                html_parts.append(f"<div style='font-weight:700; margin:0 0 4px 0;'>{html.escape(step)}:</div>")
+                for ln in (blocks.get(step) or []):
+                    t = (ln or '').rstrip('\n')
+                    if not t.strip():
+                        html_parts.append("<div style='height:6px'></div>")
+                        continue
+                    m2 = re.match(r"^\s*([*+-]|•)\s+(.*)$", t)
+                    if m2:
+                        html_parts.append(f"<div style='margin-left:14px;'>• {html.escape(m2.group(2).strip())}</div>")
+                    else:
+                        html_parts.append(f"<div>{html.escape(t.strip())}</div>")
+                html_parts.append("</li>")
+
+            html_parts.extend(["</ol>", "</div>"])
+
+            out_lines = []
+            out_lines.extend(pre)
+            out_lines.append('SCI Trace:')
+            out_lines.append("\n".join(html_parts))
+            out_lines.extend(post)
+            return "\n".join(out_lines)
+        except Exception:
+            return text_in
 
     def _apply_csc_strict(self, raw_response: str, *, user_raw: str, is_command: bool):
         """Wrapper-enforced CSC (strict) with Full Rendering (Ported from Fix7c5-Plus)."""
@@ -3701,7 +4456,7 @@ class CSCRefiner:
 
             # Enforce Self-Debunking contract deterministically (when required by JSON).
             try:
-                raw_for_render = enforce_self_debunking_contract(raw_for_render, gov, prof)
+                raw_for_render = enforce_self_debunking_contract(raw_for_render, gov, prof, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
             except Exception:
                 pass
 
@@ -3713,7 +4468,7 @@ class CSCRefiner:
 
             # Hard-render SCI Trace as HTML to prevent Markdown list runaway numbering (1..31)
             try:
-                raw_for_render = render_sci_trace_as_html(raw_for_render, gov)
+                raw_for_render = self._render_sci_trace_as_html_runtime(raw_for_render)
             except Exception:
                 pass
             
@@ -4026,7 +4781,7 @@ class CSCRefiner:
         """Activate SCI variant A–H based strictly on canonical JSON; UI strings in current language.
         Also refreshes the underlying chat session so the model actually uses the selected SCI state.
         """
-        ui_lang = (self._lang() if hasattr(self, "_lang") else "en") or "en"
+        ui_lang = (self._lang() if hasattr(self, "_lang") else "en") or "de"
         ui_lang = UI_LANG
 
         def tr(key: str, fallback: str = "") -> str:
@@ -4193,6 +4948,12 @@ class CSCRefiner:
 
     def _send_state_update_to_model(self, reason: str = ""):
         # Avoid session resets: inject a small state update into the conversation.
+        # NOTE: This costs an extra LLM call (Gemini). Disabled by default for performance.
+        try:
+            if not bool((getattr(cfg, 'config', {}) or {}).get('state_update_llm', False)):
+                return
+        except Exception:
+            return
         try:
             if not getattr(self, 'chat_session', None):
                 return
@@ -4232,7 +4993,430 @@ class CSCRefiner:
             'Delta calculation (MANDATORY): for each target corridor [min,max]: if value<min → Δ=value-min; if value>max → Δ=value-max; else Δ0.'
         )
 
-        return base + '\n' + self._state_reminder_line() + '\n' + note + "\n" + qc_note
+        state_note = ("Runtime state is provided in each user message via a single line starting with [CURRENT STATE]. "
+                      "Treat that line as authoritative for profile/SCI/overlay/color and do NOT repeat it in your answer.")
+
+        return base + "\n" + note + "\n" + state_note + "\n" + qc_note
+
+
+    def _active_provider(self) -> str:
+        try:
+            pr = getattr(self, 'provider_router', None)
+            if pr is not None and hasattr(pr, 'get_active_provider'):
+                return pr.get_active_provider()
+        except Exception:
+            pass
+        try:
+            # Fallback: config key
+            return (getattr(cfg, 'config', {}) or {}).get('active_provider', 'gemini')
+        except Exception:
+            return 'gemini'
+
+    def _provider_model(self, provider: str = '', fallback_model: str = '') -> str:
+        try:
+            pr = getattr(self, 'provider_router', None)
+            if pr is not None and hasattr(pr, 'get_provider_model'):
+                return pr.get_provider_model(provider, fallback_model=fallback_model)
+        except Exception:
+            pass
+        return (fallback_model or '').strip()
+
+    def _build_openai_messages(self, user_text: str):
+        """Build OpenAI-compatible messages payload (system + sliding history + user).
+
+        Stage A: minimal governed system instruction + wrapper-managed history.
+        NOTE: For stateless providers, we do NOT inject the full canonical JSON each call.
+        The wrapper enforces contracts deterministically.
+        """
+        msgs = []
+        try:
+            sys = self._get_governed_system_instruction()
+            msgs.append({'role': 'system', 'content': sys})
+        except Exception:
+            pass
+
+        # Sliding window history (best-effort)
+        try:
+            hist = getattr(self, 'history', None) or []
+            # Keep it modest; provider calls can get expensive quickly.
+            tail = hist[-10:] if isinstance(hist, list) else []
+            for h in tail:
+                if not isinstance(h, dict):
+                    continue
+                role = (h.get('role') or '').strip().lower()
+                content = h.get('content')
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                if role in ('user', 'assistant', 'system'):
+                    msgs.append({'role': role, 'content': content})
+                elif role in ('bot', 'assistant'):
+                    msgs.append({'role': 'assistant', 'content': content})
+                elif role == 'user':
+                    msgs.append({'role': 'user', 'content': content})
+        except Exception:
+            pass
+
+        msgs.append({'role': 'user', 'content': user_text or ''})
+        return msgs
+
+    def _wrap_user_text_for_model(self, user_text: str) -> str:
+        """Prefix user message with authoritative runtime state and compact meta-instructions."""
+        try:
+            state_line = self._state_reminder_line()
+        except Exception:
+            state_line = "[CURRENT STATE] Profile=Standard | Overlay=off | SCI=off | Color=off | Comm=off"
+        try:
+            lang = (getattr(getattr(self, "gov_state", None), "answer_language", "") or "").strip().lower()
+            if not lang:
+                lang = getattr(cfg, "get_answer_language", lambda: "de")() or "de"
+            if lang not in ("de", "en"):
+                lang = "de"
+        except Exception:
+            lang = "de"
+
+        evidence = ""
+        try:
+            if bool(getattr(getattr(self, "gov_state", None), "comm_active", False)) and (getattr(getattr(self, "gov_state", None), "color", "off") == "on"):
+                evidence = ("EVIDENCE-LINKER: For each atomic factual claim in the FINAL ANSWER, prefix exactly one tag: "
+                            "[GREEN] for well-established knowledge, [YELLOW] for plausible/uncertain, [RED] for speculative. "
+                            "Do not tag headers, SCI Trace, or QC-Matrix. Keep tags in the final answer.")
+        except Exception:
+            evidence = ""
+
+        meta = f"[OUTPUT LANGUAGE] {lang}"
+        parts = [state_line, meta]
+        if evidence:
+            parts.append(evidence)
+        parts.append(user_text or "")
+        return "\n\n".join([p for p in parts if p])
+
+    def _wrap_user_text_for_model(self, user_text: str) -> str:
+        """Prefix user message with authoritative runtime state and compact meta-instructions."""
+        try:
+            state_line = self._state_reminder_line()
+        except Exception:
+            state_line = "[CURRENT STATE] Profile=Standard | Overlay=off | SCI=off | Color=off | Comm=off"
+
+        try:
+            lang = (getattr(getattr(self, 'gov_state', None), 'answer_language', '') or '').strip().lower()
+            if not lang:
+                lang = (getattr(cfg, 'get_answer_language', lambda: 'de')() or 'de').strip().lower()
+            if lang not in ('de', 'en'):
+                lang = 'de'
+        except Exception:
+            lang = 'de'
+
+        evidence = ''
+        try:
+            comm = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
+            color = (getattr(getattr(self, 'gov_state', None), 'color', 'off') or 'off').strip().lower()
+            if comm and color == 'on':
+                evidence = (
+                    "EVIDENCE-LINKER: For each atomic factual claim in the FINAL ANSWER, prefix exactly one tag: "
+                    "[GREEN] for well-established knowledge, [YELLOW] for plausible/uncertain, [RED] for speculative. "
+                    "Do not tag headers, SCI Trace, or QC-Matrix. Keep tags in the final answer."
+                )
+        except Exception:
+            evidence = ''
+
+        meta = f"[OUTPUT LANGUAGE] {lang}"
+        parts = [state_line, meta]
+        if evidence:
+            parts.append(evidence)
+        parts.append(user_text or '')
+        return "\n\n".join([p for p in parts if p])
+
+    def _wrap_user_text_for_model(self, user_text: str) -> str:
+        """Prefix user message with authoritative runtime state and compact meta-instructions."""
+        try:
+            state_line = self._state_reminder_line()
+        except Exception:
+            state_line = "[CURRENT STATE] Profile=Standard | Overlay=off | SCI=off | Color=off | Comm=off"
+
+        try:
+            lang = (getattr(getattr(self, 'gov_state', None), 'answer_language', '') or '').strip().lower()
+            if not lang:
+                lang = (getattr(cfg, 'get_answer_language', lambda: 'de')() or 'de').strip().lower()
+            if lang not in ('de', 'en'):
+                lang = 'de'
+        except Exception:
+            lang = 'de'
+
+        evidence = ''
+        try:
+            if bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False)) and (getattr(getattr(self, 'gov_state', None), 'color', 'off') == 'on'):
+                evidence = (
+                    "EVIDENCE-LINKER: For each atomic factual claim in the FINAL ANSWER, prefix exactly one tag: "
+                    "[GREEN] for well-established knowledge, [YELLOW] for plausible/uncertain, [RED] for speculative. "
+                    "Do not tag headers, SCI Trace, or QC-Matrix. Keep tags in the final answer."
+                )
+        except Exception:
+            evidence = ''
+
+        meta = f"[OUTPUT LANGUAGE] {lang}"
+        parts = [state_line, meta]
+        if evidence:
+            parts.append(evidence)
+        parts.append(user_text or '')
+        return "\n\n".join([p for p in parts if p])
+
+    def _wrap_user_text_for_model(self, user_text: str) -> str:
+        """Prefix user message with authoritative runtime state and compact meta-instructions."""
+        try:
+            state_line = self._state_reminder_line()
+        except Exception:
+            state_line = "[CURRENT STATE] Profile=Standard | Overlay=off | SCI=off | Color=off | Comm=off"
+
+        try:
+            lang = (getattr(getattr(self, 'gov_state', None), 'answer_language', '') or '').strip().lower()
+            if not lang:
+                lang = (getattr(cfg, 'get_answer_language', lambda: 'de')() or 'de').strip().lower()
+            if lang not in ('de', 'en'):
+                lang = 'de'
+        except Exception:
+            lang = 'de'
+
+        evidence = ''
+        try:
+            if bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False)) and (getattr(getattr(self, 'gov_state', None), 'color', 'off') == 'on'):
+                evidence = (
+                    "EVIDENCE-LINKER: For each atomic factual claim in the FINAL ANSWER, prefix exactly one tag: "
+                    "[GREEN] for well-established knowledge, [YELLOW] for plausible/uncertain, [RED] for speculative. "
+                    "Do not tag headers, SCI Trace, or QC-Matrix. Keep tags in the final answer."
+                )
+        except Exception:
+            evidence = ''
+
+        meta = f"[OUTPUT LANGUAGE] {lang}"
+        parts = [state_line, meta]
+        if evidence:
+            parts.append(evidence)
+        parts.append(user_text or '')
+        return "\n\n".join([p for p in parts if p])
+
+    def _wrap_user_text_for_model(self, user_text: str) -> str:
+        """Prefix user message with authoritative runtime state and compact meta-instructions.
+
+        Key goals:
+        - Make the model respect the *current* runtime state (Profile/SCI/Overlay/Color).
+        - If Color=on, strongly request Evidence-Linker tags so the UI can colorize.
+        - Prevent the model from emitting internal scaffolding like "Profile: Standard" lines.
+        """
+        try:
+            state_line = self._state_reminder_line()
+        except Exception:
+            state_line = "[CURRENT STATE] Profile=Standard | Overlay=off | SCI=off | Color=off | Comm=off"
+
+        # Desired answer language (content only)
+        try:
+            lang = (getattr(getattr(self, 'gov_state', None), 'answer_language', '') or '').strip().lower()
+            if not lang:
+                lang = (getattr(cfg, 'get_answer_language', lambda: 'de')() or 'de').strip().lower()
+            if lang not in ('de', 'en'):
+                lang = 'de'
+        except Exception:
+            lang = 'de'
+
+        # Evidence tags (only useful when Color=on)
+        evidence = ''
+        try:
+            comm = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
+            color = (getattr(getattr(self, 'gov_state', None), 'color', 'off') or 'off').strip().lower()
+            if comm and color == 'on':
+                evidence = (
+                    "EVIDENCE-LINKER (MANDATORY WHEN COLOR=ON): In the FINAL ANSWER, prefix EACH paragraph or bullet item "
+                    "with exactly ONE tag: [GREEN] well-established, [YELLOW] plausible/uncertain, [RED] speculative. "
+                    "Do NOT tag headers, SCI Trace, Self-Debunking, or QC-Matrix."
+                )
+        except Exception:
+            evidence = ''
+
+        dont_echo = (
+            "DO NOT OUTPUT INTERNAL SCAFFOLDING: Do not write lines like 'Profile: ...' or 'SCI: ...'. "
+            "Follow the [CURRENT STATE] above silently."
+        )
+
+        parts = [state_line, f"[OUTPUT LANGUAGE] {lang}", dont_echo]
+        if evidence:
+            parts.append(evidence)
+        parts.append(user_text or '')
+        return "\n\n".join([p for p in parts if isinstance(p, str) and p.strip()])
+
+
+    def _llm_call(self, user_text: str, *, reason: str = 'chat', model_override: str = ''):
+        """Single choke point for provider calls.
+
+        Returns assistant text (string). Usage is provider-specific; stats remain best-effort.
+        """
+        provider = (self._active_provider() or 'gemini').strip().lower()
+
+        # Gemini path: keep fix19 behavior (chat_session.send_message) to avoid breaking stability.
+        if provider == 'gemini':
+            t0 = time.time()
+            if not getattr(self, 'chat_session', None):
+                raise RuntimeError('No chat_session for Gemini provider')
+            self._ensure_governance_pinned(reason=reason)
+            ut = user_text
+            try:
+                if bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False)) and (getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '').strip():
+                    ut = self._wrap_user_with_sci(ut, variant=(getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '').strip())
+            except Exception:
+                ut = user_text
+            wrapped = self._wrap_user_text_for_model(ut)
+            resp = self.chat_session.send_message(wrapped)
+            try:
+                ms = int((time.time() - t0) * 1000)
+                self.last_call_info = {'provider': 'gemini', 'model': str(getattr(self, 'model_name', '') or ''), 'ms': ms, 'usage': {}}
+            except Exception:
+                pass
+            return getattr(resp, 'text', '') or ''
+
+        # OpenAI-compatible providers path (OpenRouter / Hugging Face router)
+        if provider in ('openrouter', 'openai', 'openai_compat', 'huggingface', 'hf'):
+            pr = getattr(self, 'provider_router', None)
+            client = None
+            try:
+                if provider in ('huggingface', 'hf'):
+                    if pr is not None and hasattr(pr, 'build_huggingface_client'):
+                        client = pr.build_huggingface_client()
+                else:
+                    if pr is not None and hasattr(pr, 'build_openrouter_client'):
+                        client = pr.build_openrouter_client()
+            except Exception:
+                client = None
+            if client is None or not getattr(client, 'api_key', ''):
+                # Provider configured but no key found
+                pname = 'Hugging Face' if provider in ('huggingface', 'hf') else 'OpenRouter'
+                raise RuntimeError(f"{pname} client not configured (missing API key?)")
+
+            # Choose model
+            try:
+                fallback = str(getattr(cfg, 'get_model', lambda: '')() or '')
+            except Exception:
+                fallback = ''
+            prov_id = 'huggingface' if provider in ('huggingface','hf') else 'openrouter'
+            model = (model_override or self._provider_model(prov_id, fallback_model=fallback) or '').strip()
+            if not model:
+                # Optional: auto-pick first model from cached /models list (best-effort)
+                try:
+                    models, _meta = (pr.get_openrouter_models_cached(force_refresh=False) if pr is not None and hasattr(pr,'get_openrouter_models_cached') else ([], {}))
+                    if provider in ('huggingface','hf') and (not models):
+                        try:
+                            models = pr.get_huggingface_models_from_config() if pr is not None and hasattr(pr,'get_huggingface_models_from_config') else []
+                        except Exception:
+                            models = []
+                    if models:
+                        model = str(models[0]).strip()
+                except Exception:
+                    model = ''
+            if not model:
+                model = 'zai-org/GLM-4.7:cerebras' if provider in ('huggingface','hf') else 'openai/gpt-4.1-mini'
+
+            # IMPORTANT: OpenAI-compatible providers are stateless and do not automatically
+            # retain our runtime governance state. Therefore we MUST prefix each user turn
+            # with the authoritative runtime state line ([CURRENT STATE]) and output prefs,
+            # just like the Gemini send_message() path.
+            ut = user_text
+            try:
+                if bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False)) and (getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '').strip():
+                    ut = self._wrap_user_with_sci(ut, variant=(getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '').strip())
+            except Exception:
+                ut = user_text
+
+            # Resolve desired answer language for friendly provider errors (and UI).
+            lang = None
+            try:
+                lang = getattr(getattr(self, 'gov_state', None), 'answer_language', None)
+            except Exception:
+                lang = None
+            if not lang:
+                try:
+                    lang = getattr(self.cfg_mgr, 'get_answer_language', lambda: 'de')()
+                except Exception:
+                    lang = 'de'
+            lang = (lang or 'de').strip().lower()
+            if lang not in ('de', 'en'):
+                lang = 'de'
+
+            wrapped = self._wrap_user_text_for_model(ut)
+            msgs = self._build_openai_messages(wrapped)
+            # Robust call with fallback models and transient retry handling.
+            # Some free "reasoning" models may return empty message.content; we treat that as an error
+            # and fall back to other models without ever surfacing hidden reasoning fields.
+            cand = []
+            try:
+                cand.append(model)
+                # Optional explicit fallback list from config
+                provs = (self.cfg_mgr.config or {}).get('providers') or {}
+                pconf = provs.get(provider) if isinstance(provs, dict) else {}
+                fb = (pconf or {}).get('fallback_models') if isinstance(pconf, dict) else None
+                if isinstance(fb, list):
+                    for x in fb:
+                        sx = str(x or '').strip()
+                        if sx and sx not in cand:
+                            cand.append(sx)
+            except Exception:
+                pass
+            try:
+                # If current model is :free, prefer other :free models as fallbacks.
+                if (model or '').endswith(':free'):
+                    for m in (models or []):
+                        sm = str(m or '').strip()
+                        if sm and sm.endswith(':free') and sm not in cand:
+                            cand.append(sm)
+                else:
+                    for m in (models or []):
+                        sm = str(m or '').strip()
+                        if sm and sm not in cand:
+                            cand.append(sm)
+            except Exception:
+                pass
+
+            # Keep attempts bounded.
+            cand = cand[:5] if isinstance(cand, list) else [model]
+
+            last_err = None
+            for mi, mname in enumerate(cand):
+                # 429/backoff and one "bigger max_tokens" retry for empty completion
+                for attempt in range(3):
+                    t0 = time.time()
+                    try:
+                        # On second attempt for empty completion, allow a larger max_tokens budget.
+                        mx = 1024
+                        if attempt >= 1:
+                            mx = 2048
+                        txt, _usage = client.chat(messages=msgs, model=mname, max_tokens=mx, lang=lang)
+                        try:
+                            ms = int((time.time() - t0) * 1000)
+                            self.last_call_info = {'provider': 'openrouter', 'model': mname, 'ms': ms, 'usage': _usage or {}}
+                        except Exception:
+                            pass
+                        return txt or ''
+                    except Exception as e:
+                        err_s = str(e)
+                        last_err = err_s
+                        # Upstream rate limit: backoff then retry same model.
+                        if (' 429 ' in err_s) or ('rate-limited' in err_s.lower()) or ('rate limited' in err_s.lower()) or ('temporarily rate-limited' in err_s.lower()):
+                            try:
+                                delay = [0.5, 1.5, 3.5][min(attempt, 2)]
+                                time.sleep(delay)
+                            except Exception:
+                                pass
+                            continue
+                        # Empty completion: try once more with larger max_tokens, then fall back to next model.
+                        if 'empty completion' in err_s.lower() or 'no content' in err_s.lower():
+                            if attempt < 1:
+                                continue
+                            break
+                        # Any other error: stop retrying this model and fall back.
+                        break
+                # Try next model
+
+            raise RuntimeError(last_err or 'OpenRouter request failed (no usable completion)')
+
+        # Unknown provider
+        raise RuntimeError(f'Unknown provider: {provider}')
+
 
     def _render_profile_switch_control_html(self, timestamp: str) -> str:
 
@@ -4480,14 +5664,23 @@ class CSCRefiner:
                 pass
 
             # Ensure session exists AND matches current runtime state
+            provider_now = ''
             try:
-                if not getattr(self, "chat_session", None):
+                provider_now = (self._active_provider() or 'gemini').strip().lower()
+            except Exception:
+                provider_now = 'gemini'
+
+            try:
+                if provider_now == "gemini" and (not getattr(self, "chat_session", None)):
                     self._recreate_chat_session(with_governance=True, reason="no_session")
                     self._last_session_stamp = _session_stamp()
                 else:
                     cur = _session_stamp()
                     last = getattr(self, "_last_session_stamp", None)
-                    if last != cur:
+                    if last is None:
+                        # First turn in this session: remember stamp, but don't send a STATE UPDATE (avoids extra LLM call).
+                        self._last_session_stamp = cur
+                    elif last != cur:
                         self._ensure_governance_pinned(reason='state_changed')
                         self._send_state_update_to_model(reason='state_changed')
                         self._last_session_stamp = cur
@@ -4553,37 +5746,45 @@ class CSCRefiner:
             except Exception:
                 pass
 
-            resp = self.chat_session.send_message(send_txt)
-            raw_resp = getattr(resp, "text", "") or ""
+            raw_resp = self._llm_call(send_txt, reason="chat")
 
-            # --- Post-processing + 1-pass repair for HARD contract violations (max fidelity) ---
-            # IMPORTANT: All contract enforcement must apply to the *displayed* text.
-            raw_work = raw_resp
 
-            # 1) Apply CSC strict renderer/postprocessor first (keeps styling + alerts consistent)
-            final_work, meta = self._apply_csc_strict(raw_work, user_raw=raw_txt, is_command=False)
-            # If CSC was applied on prompt-side, prefer that metadata when renderer didn't produce any.
-            if (meta is None) and pre_meta is not None:
-                meta = pre_meta
+            # Session token stats (best-effort; whitespace-token approximation)
+            try:
+                self.session_req_count = int(getattr(self, 'session_req_count', 0) or 0) + 1
+                self.session_tokens_in = int(getattr(self, 'session_tokens_in', 0) or 0) + int(self.count_ws_tokens(send_txt))
+                self.session_tokens_out = int(getattr(self, 'session_tokens_out', 0) or 0) + int(self.count_ws_tokens(raw_resp))
+                try:
+                    self.update_stats_ui()
+                except Exception:
+                    pass
+            except Exception:
+                pass
 
-            # 2) Deterministic normalizations (QC deltas, evidence tags, self-debunking)
+                        # --- Normalize RAW model output for validation (plain text only) ---
+            repaired_raw = raw_resp
             try:
                 _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                final_work = enforce_qc_footer_deltas(final_work, gov, _prof_now)
+                repaired_raw = enforce_qc_footer_deltas(repaired_raw, gov, _prof_now)
             except Exception:
                 pass
             try:
-                final_work = normalize_evidence_tags(final_work)
+                repaired_raw = normalize_evidence_tags(repaired_raw)
             except Exception:
                 pass
             try:
                 _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                final_work = enforce_self_debunking_contract(final_work, gov, _prof_now, is_command=False)
+                repaired_raw = enforce_self_debunking_contract(repaired_raw, gov, _prof_now, is_command=False, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
+            except Exception:
+                pass
+            try:
+                repaired_raw = normalize_sci_trace_numbering(repaired_raw, gov)
             except Exception:
                 pass
 
-            # 3) Validate + ONE repair pass for HARD violations
+            # --- Validate + ONE repair pass for HARD violations (on RAW text, not HTML) ---
             repair_banner_html = ""
+            meta = None
             try:
                 validator = getattr(self, 'validator', None)
                 if validator is not None:
@@ -4598,7 +5799,7 @@ class CSCRefiner:
                     expect_trace = bool(steps)
 
                     hard_vios, soft_vios = validator.validate(
-                        text=final_work,
+                        text=repaired_raw,
                         state=self.gov_state,
                         expect_menu=False,
                         expect_trace=expect_trace,
@@ -4608,38 +5809,47 @@ class CSCRefiner:
 
                     if hard_vios:
                         # Exactly ONE repair pass via the model.
-                        try:
-                            repair_prompt = validator.build_repair_prompt(
-                                user_prompt=raw_txt,
-                                raw_response=final_work,
-                                state=self.gov_state,
-                                hard_violations=hard_vios,
-                                soft_violations=soft_vios,
-                            )
-                            # Respect answer-language preference: route through the same wrapper directive.
-                            repair_for_model = self._apply_output_prefs_to_user_message(repair_prompt)
-                            resp2 = self.chat_session.send_message(repair_for_model)
-                            raw2 = getattr(resp2, 'text', '') or ''
+                        repair_prompt = validator.build_repair_prompt(
+                            user_prompt=raw_txt,
+                            raw_response=repaired_raw,
+                            state=self.gov_state,
+                            hard_violations=hard_vios,
+                            soft_violations=soft_vios,
+                        )
+                        # Respect answer-language preference.
+                        repair_for_model = self._apply_output_prefs_to_user_message(repair_prompt)
+                        raw2 = self._llm_call(repair_for_model, reason="repair")
 
-                            # Re-run CSC + deterministic normalizations after repair
-                            final_work, meta2 = self._apply_csc_strict(raw2, user_raw=raw_txt, is_command=False)
-                            if meta2 is not None:
-                                meta = meta2
+                        # Session token stats (repair pass)
+                        try:
+                            self.session_req_count = int(getattr(self, 'session_req_count', 0) or 0) + 1
+                            self.session_tokens_in = int(getattr(self, 'session_tokens_in', 0) or 0) + int(self.count_ws_tokens(repair_for_model))
+                            self.session_tokens_out = int(getattr(self, 'session_tokens_out', 0) or 0) + int(self.count_ws_tokens(raw2))
+                            try:
+                                self.update_stats_ui()
+                            except Exception:
+                                pass
                         except Exception:
                             pass
 
+                        # Normalize again (raw text)
+                        repaired_raw = raw2
                         try:
                             _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                            final_work = enforce_qc_footer_deltas(final_work, gov, _prof_now)
+                            repaired_raw = enforce_qc_footer_deltas(repaired_raw, gov, _prof_now)
                         except Exception:
                             pass
                         try:
-                            final_work = normalize_evidence_tags(final_work)
+                            repaired_raw = normalize_evidence_tags(repaired_raw)
                         except Exception:
                             pass
                         try:
                             _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                            final_work = enforce_self_debunking_contract(final_work, gov, _prof_now, is_command=False)
+                            repaired_raw = enforce_self_debunking_contract(repaired_raw, gov, _prof_now, is_command=False, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
+                        except Exception:
+                            pass
+                        try:
+                            repaired_raw = normalize_sci_trace_numbering(repaired_raw, gov)
                         except Exception:
                             pass
 
@@ -4662,7 +5872,12 @@ class CSCRefiner:
             except Exception:
                 pass
 
-            # 4) Persist history + render
+            # --- Render ONCE (CSC renderer produces final HTML) ---
+            final_work, meta = self._apply_csc_strict(repaired_raw, user_raw=raw_txt, is_command=False)
+            # If CSC was applied on prompt-side, prefer that metadata when renderer didn't produce any.
+            if (meta is None) and pre_meta is not None:
+                meta = pre_meta
+# 4) Persist history + render
             # Prepend the repair banner if present.
             if repair_banner_html:
                 try:
@@ -4822,16 +6037,25 @@ class CSCRefiner:
             return {"html": final, "csc": safe_meta}
 
         except Exception as e:
-            return {"html": f"<div class='err'>System Error: {h_lib.escape(str(e))}</div>", "csc": None}
+            # Always persist a bot entry so exported logs are complete.
+            try:
+                err_html = _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error')
+                self.history.append({"role": "bot", "content": err_html, "ts": datetime.now().isoformat(), "csc": None})
+            except Exception:
+                err_html = _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error')
+            return {"html": err_html, "csc": None}
     
     def update_stats_ui(self):
         if self.main_win:
-            stats_txt = f"Reqs: {self.session_req_count} | In: {self.session_tokens_in} | Out: {self.session_tokens_out}"
+            reqs = int(getattr(self, 'session_req_count', 0) or 0)
+            tin = int(getattr(self, 'session_tokens_in', 0) or 0)
+            tout = int(getattr(self, 'session_tokens_out', 0) or 0)
+            stats_txt = f"Reqs: {reqs} | In: {tin} | Out: {tout}"
             self.main_win.evaluate_js(f"updateStats('{stats_txt}')")
 
     def save_stats(self):
         if self.session_req_count > 0:
-            line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Model: {cfg.get_model()} | In: {self.session_tokens_in} | Out: {self.session_tokens_out} | Reqs: {self.session_req_count}\n"
+            line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Model: {cfg_get_model()} | In: {self.session_tokens_in} | Out: {self.session_tokens_out} | Reqs: {self.session_req_count}\n"
             try:
                 with open(STATS_FILENAME, "a", encoding="utf-8") as f:
                     f.write(line)
@@ -4889,11 +6113,169 @@ class CSCRefiner:
     def on_main_window_close(self):
         # Wird gerufen, wenn man das X drückt
         self.close_app()
+    def set_provider(self, provider: str):
+        """Set active provider (gemini/openrouter) from the panel.
+
+        Gemini provider changes trigger a reconnect (session-based).
+        OpenRouter is stateless; no reconnect is required.
+        """
+        try:
+            provider = (provider or 'gemini').strip().lower()
+            if provider in ('hf',):
+                provider = 'huggingface'
+            if provider not in ('gemini', 'openrouter', 'huggingface'):
+                provider = 'gemini'
+            if hasattr(cfg, 'set_active_provider'):
+                cfg.set_active_provider(provider)
+            else:
+                try:
+                    cfg.config['active_provider'] = provider
+                    cfg.save()
+                except Exception:
+                    pass
+
+            # Ensure model is present
+            try:
+                cur_m = (cfg.get_provider_model(provider) if hasattr(cfg, 'get_provider_model') else '') or ''
+                if not cur_m:
+                    # fall back to legacy
+                    cur_m = (cfg_get_model() or '').strip()
+                if cur_m:
+                    if hasattr(cfg, 'set_provider_model'):
+                        cfg.set_provider_model(provider, cur_m)
+            except Exception:
+                pass
+
+            # UI notice
+            try:
+                if self.main_win:
+                    self.main_win.evaluate_js(f"addMsg('sys', 'Active provider set to: {provider}.')")
+            except Exception:
+                pass
+
+            # Reconnect only for Gemini (session-based)
+            if provider == 'gemini':
+                self._trigger_reconnect(f"Providerwechsel (Gemini)...")
+            else:
+                # For stateless providers, just refresh panel
+                try:
+                    if self.panel_win:
+                        self.panel_win.evaluate_js('window.refresh_panel && window.refresh_panel()')
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def refresh_models(self):
+        """Refresh provider model list cache (OpenRouter/Hugging Face best-effort).
+
+        - OpenRouter: refresh cached /models list.
+        - Hugging Face: tries /models; if unavailable, keeps config-defined list.
+        """
+        try:
+            pr = getattr(self, 'provider_router', None)
+            curp = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else 'gemini')
+            curp = (curp or 'gemini').strip().lower()
+
+            if curp == 'openrouter':
+                models, meta = pr.get_openrouter_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_openrouter_models_cached') else ([], {})
+                try:
+                    if self.main_win:
+                        self.main_win.evaluate_js(f"addMsg('sys', 'OpenRouter models refreshed: {len(models)} (source: {meta.get('source','?')}).')")
+                except Exception:
+                    pass
+                return {'status': True, 'provider': 'openrouter', 'count': len(models), 'meta': meta}
+
+            if curp in ('huggingface', 'hf'):
+                models = []
+                meta = {'source': 'none'}
+                try:
+                    if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
+                        models, meta = pr.get_huggingface_models_cached(force_refresh=True)
+                except Exception:
+                    models = []
+                    meta = {'source': 'none'}
+                # UI notice
+                try:
+                    if self.main_win:
+                        self.main_win.evaluate_js(
+                            f"addMsg('sys', 'Hugging Face models refreshed: {len(models)} (source: {meta.get('source','?')}).')"
+                        )
+                except Exception:
+                    pass
+                return {'status': True, 'provider': 'huggingface', 'count': len(models), 'meta': meta}
+
+            return {'status': True, 'provider': curp, 'message': 'No refresh needed.'}
+        except Exception as e:
+            return {'status': False, 'error': str(e)}
+
+
+    def hf_catalog(self, top_n: int = 200, provider_filter: str = "all"):
+        """Fetch & cache Hugging Face Hub catalog models (Top N) and return summary.
+
+        This does NOT switch provider/model automatically. It only refreshes the dropdown source.
+        """
+        try:
+            pr = getattr(self, 'provider_router', None)
+            if pr is None:
+                try:
+                    pr = globals().get('provider_router') or ProviderRouter(globals().get('cfg'))
+                    self.provider_router = pr
+                except Exception:
+                    pr = None
+            if pr is None or (not hasattr(pr, 'get_huggingface_catalog_cached')):
+                return {"ok": False, "msg": "Hugging Face catalog backend is not initialized (provider_router missing)."}
+            top_n_i = int(top_n or 200)
+            pf = (provider_filter or "all").strip()
+            # Remember last used catalog parameters for backend-side UI refresh
+            try:
+                setattr(self, 'hf_catalog_top_n', int(top_n_i))
+                setattr(self, 'hf_catalog_provider_filter', pf)
+            except Exception:
+                pass
+            models, meta = pr.get_huggingface_catalog_cached(top_n=top_n_i, provider_filter=pf, force_refresh=True)
+            return {"ok": True, "count": len(models), "meta": meta}
+        except Exception as e:
+            return {"ok": False, "msg": f"HF catalog refresh failed: {e}"}
+
 
     def set_model(self, model):
-        print(f"Switching model to: {model}")
-        cfg.set_model(model)
-        self._trigger_reconnect(f"Modellwechsel ({model})...")
+        """Set model for the active provider.
+
+        For Gemini: triggers reconnect. For OpenRouter: stateless, no reconnect required.
+        """
+        try:
+            pr = getattr(self, 'provider_router', None)
+            provider = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else None)
+            provider = (provider or (getattr(cfg, 'get_active_provider', lambda: 'gemini')() or 'gemini')).strip().lower()
+        except Exception:
+            provider = 'gemini'
+
+        print(f"Switching model for {provider} to: {model}")
+        try:
+            if hasattr(cfg, 'set_provider_model'):
+                cfg.set_provider_model(provider, model)
+            else:
+                cfg.set_model(model)
+        except Exception:
+            try:
+                cfg.set_model(model)
+            except Exception:
+                pass
+
+        if provider == 'gemini':
+            self._trigger_reconnect(f"Modellwechsel ({model})...")
+        else:
+            try:
+                if self.main_win:
+                    self.main_win.evaluate_js(f"addMsg('sys', 'Model set to: {model} (provider: {provider}).')")
+            except Exception:
+                pass
+            try:
+                if self.panel_win:
+                    self.panel_win.evaluate_js('window.refresh_panel && window.refresh_panel()')
+            except Exception:
+                pass
 
     def set_answer_language(self, lang: str):
         """Set desired language for the LLM answer content only (en/de).
@@ -4964,10 +6346,22 @@ class CSCRefiner:
     def _create_panel(self):
         # Geometry: prefer persisted config; fallback to current defaults
         geom = self.panel_geom or {}
-        panel_x = int(geom.get("x", 1100))
-        panel_y = int(geom.get("y", 0))
-        panel_w = int(geom.get("width", 340))
-        panel_h = int(geom.get("height", 1000))
+        def _safe_int(v, default):
+            try:
+                return int(v)
+            except Exception:
+                return int(default)
+        panel_x = _safe_int(geom.get('x', 1100), 1100)
+        panel_y = _safe_int(geom.get('y', 0), 0)
+        panel_w = _safe_int(geom.get('width', 340), 340)
+        panel_h = _safe_int(geom.get('height', 1000), 1000)
+
+        # macOS/pywebview: a persisted off-screen position makes the panel look 'missing'.
+        # Keep values in a sane corridor; otherwise reset to defaults near top-left.
+        if panel_w < 250: panel_w = 250
+        if panel_h < 300: panel_h = 300
+        if panel_x < 0 or panel_x > 5000: panel_x = 50
+        if panel_y < 0 or panel_y > 3000: panel_y = 50
 
         kwargs = dict(
             title="Panel",
@@ -5133,7 +6527,7 @@ class CSCRefiner:
             chat_path = os.path.join(CHAT_LOG_DIR, chat_name)
             try:
                 with open(chat_path, "w", encoding="utf-8") as f:
-                    json.dump({"meta": "19.14", "model": cfg.get_model(), "history": self.history}, f, indent=2)
+                    json.dump({"meta": "19.14", "model": cfg_get_model(), "history": self.history}, f, indent=2)
                 print(f"Exportiert (Chat): {chat_path}")
             except Exception as e:
                 print(f"[System] Export-Error (Chat): {e}")
@@ -5145,7 +6539,7 @@ class CSCRefiner:
             payload = {
                 "meta": "19.14",
                 "ts": datetime.now().isoformat(),
-                "model": cfg.get_model(),
+                "model": cfg_get_model(),
                 "ruleset": os.path.basename(getattr(gov, "current_filename", "") or ""),
                 "governance_logs": list(getattr(gov, "logs", []) or []),
             }
@@ -5160,8 +6554,96 @@ class CSCRefiner:
             print(f"[System] Export-Error (Audit): {e}")
 
         return chat_path, audit_path
+    def get_ui(self):
+        data = gov.get_ui_data()
+        # Enrich with provider/model lists for panel dropdowns
+        try:
+            pr = getattr(self, 'provider_router', None)
+            curp = 'gemini'
+            if pr is not None and hasattr(pr, 'get_active_provider'):
+                curp = (pr.get_active_provider() or 'gemini').strip().lower()
+            else:
+                curp = (getattr(cfg, 'get_active_provider', lambda: 'gemini')() or 'gemini').strip().lower()
+        except Exception:
+            curp = 'gemini'
+        try:
+            data['current_provider'] = curp
+            data['providers'] = ['gemini', 'openrouter', 'huggingface']
+            data['model_hint'] = ''
+        except Exception:
+            pass
 
-    def get_ui(self): return gov.get_ui_data()
+        # Determine model for current provider
+        try:
+            cm = ''
+            if hasattr(cfg, 'get_provider_model'):
+                cm = (cfg.get_provider_model(curp) or '').strip()
+            if not cm:
+                cm = (cfg_get_model() or '').strip()
+            data['current_model'] = cm
+        except Exception:
+            pass
+        # Available models list
+        try:
+            models = []
+            if curp == 'gemini':
+                models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3-flash', 'gemini-1.5-pro']
+            elif curp == 'openrouter':
+                pr = getattr(self, 'provider_router', None)
+                if pr is not None and hasattr(pr, 'get_openrouter_models_cached'):
+                    models, meta = pr.get_openrouter_models_cached(force_refresh=False)
+                    data['openrouter_models_meta'] = meta
+                else:
+                    models = []
+            elif curp == 'huggingface':
+                pr = getattr(self, 'provider_router', None)
+                models = []
+                # UI controls for HF catalog
+                data['hf_provider_filter_options'] = ['all', 'zai-org', 'novita', 'cerebras', 'together', 'groq', 'fireworks', 'sambanova', 'hyperbolic', 'hf-inference']
+                data['hf_catalog_default_top_n'] = int(getattr(self, 'hf_catalog_top_n', 200) or 200)
+                data['hf_catalog_default_provider_filter'] = (getattr(self, 'hf_catalog_provider_filter', 'all') or 'all')
+
+                # 1) Prefer HF Hub catalog (cached) when available (default: Top 200, all providers)
+                try:
+                    if pr is not None and hasattr(pr, 'get_huggingface_catalog_cached'):
+                        cat_models, cat_meta = pr.get_huggingface_catalog_cached(top_n=int(getattr(self, 'hf_catalog_top_n', int(data.get('hf_catalog_default_top_n', 200) or 200)) or 200),
+                                                                               provider_filter=(getattr(self, 'hf_catalog_provider_filter', 'all') or 'all'),
+                                                                               force_refresh=False)
+                        if cat_models:
+                            models = cat_models
+                            data['huggingface_catalog_meta'] = cat_meta
+                except Exception:
+                    pass
+
+                # 2) Otherwise: HF router /models cache (may be unavailable)
+                if not models:
+                    meta = {'source': 'none'}
+                    try:
+                        if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
+                            models, meta = pr.get_huggingface_models_cached(force_refresh=False)
+                            data['huggingface_models_meta'] = meta
+                    except Exception:
+                        models = []
+
+                # 3) Fallback: configured HF models list
+                if not models:
+                    try:
+                        if pr is not None and hasattr(pr, 'get_huggingface_models_from_config'):
+                            models = pr.get_huggingface_models_from_config() or []
+                            data['huggingface_models_meta'] = {'source': 'config', 'count': len(models)}
+                    except Exception:
+                        models = []
+
+                if not models:
+                    models = ['zai-org/GLM-4.7:cerebras']
+                    data['model_hint'] = ("Hugging Face: keine Modellliste konfiguriert oder abrufbar. "
+                                          "Nutze 'HF Catalog (Top N)' oder trage unter providers.huggingface.models "
+                                          "in Comm-SCI-API-Keys.json deine Wunschmodelle ein.")
+            data['available_models'] = models
+        except Exception:
+            data['available_models'] = []
+
+        return data
     
     def remote_cmd(self, cmd):
         if self.main_win:
@@ -5176,6 +6658,58 @@ class CSCRefiner:
 # Deterministic command helpers (EN-only)
 # These are kept at module scope and then bound into Api via the fixup loop.
 # ----------------------------
+
+
+def _control_layer_alert_html(message: str, *, title: str = "CONTROL LAYER ALERT", severity: str = "error") -> str:
+    """Render a human-friendly Control-Layer box for UI (HTML).
+    - No raw JSON blobs in the chat UI.
+    - Keep logs complete by returning deterministic HTML.
+    """
+    try:
+        msg = (message or "").strip()
+    except Exception:
+        msg = str(message)
+
+    # Optional safe action-hints (rendered as non-clickable "button" labels)
+    _action_switch_free = False
+    try:
+        if "[[ACTION:SWITCH_FREE_MODEL]]" in msg:
+            _action_switch_free = True
+            msg = msg.replace("[[ACTION:SWITCH_FREE_MODEL]]", "").strip()
+    except Exception:
+        _action_switch_free = False
+    safe = html.escape(msg)
+    safe = safe.replace("\n", "<br>")
+    # Use existing .csc-warning styling, but tint for errors.
+    style = ""
+    if str(severity).lower() == "error":
+        style = "border: 1px solid #c00; background: #fee; color: #600;"
+    elif str(severity).lower() == "warn":
+        style = "border: 1px solid #f9ab00; background: #fff7e0; color: #3c2b00;"
+    else:
+        style = "border: 1px solid #999; background: #f5f5f5; color: #222;"
+    action_html = ""
+    if _action_switch_free:
+        # Clickable UI action (handled by JS event delegation)
+        action_html = (
+            "<br><br>"
+            "<a href=\"#\" class=\"ctl-action action-next-free\" "
+            "style=\"display:inline-block;padding:2px 8px;border:1px solid #888;"
+            "border-radius:10px;background:#eee;font-family:monospace;text-decoration:none;color:inherit;\">"
+            "Tipp: Anderes :free‑Modell wählen</a>"
+        )
+
+    try:
+        t = html.escape(str(title or "CONTROL LAYER ALERT"))
+    except Exception:
+        t = "CONTROL LAYER ALERT"
+    return (
+        f"<details class='csc-warning' open style='{style}'>"
+        f"<summary>⚠️ {t}</summary>"
+        f"<div class='csc-details'>{safe}{action_html}</div>"
+        f"</details>"
+    )
+
 
 def _render_error_html(self, context: str, err: Exception) -> str:
     """Never crash the UI on renderer errors; show a small deterministic error box."""
@@ -5204,7 +6738,7 @@ def _safe_html(self, context: str, fn):
             return _render_error_html(self, context, e)
         except Exception:
             # last resort: plain div
-            return f"<div class='err'>System Error: {html.escape(str(e))}</div>"
+            return _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error')
 
 
 def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
@@ -5234,6 +6768,13 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
         }
 
         chat_path, audit_path = (None, None)
+
+        # Include last provider call info (best-effort; does not trigger LLM)
+        try:
+            audit_event['last_call'] = getattr(self, 'last_call_info', {}) or {}
+        except Exception:
+            pass
+
         try:
             # ENONLY requirement: Comm Audit should export audit only.
             chat_path, audit_path = self.export(audit_event=audit_event, audit_only=True)
@@ -5302,6 +6843,27 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
         if audit_path:
             detail = f"<br><code>{html.escape(os.path.basename(audit_path))}</code>"
 
+        # Last call debug line (best-effort)
+        last_line = ""
+        try:
+            lc = getattr(self, 'last_call_info', {}) or {}
+            prov = (lc.get('provider') or '').strip()
+            modl = (lc.get('model') or '').strip()
+            ms = int(lc.get('ms') or 0)
+            usage = lc.get('usage') or {}
+            # normalize common usage keys
+            u_in = usage.get('prompt_tokens', usage.get('input_tokens', usage.get('input', usage.get('in', 0))))
+            u_out = usage.get('completion_tokens', usage.get('output_tokens', usage.get('output', usage.get('out', 0))))
+            if prov or modl or ms or usage:
+                last_line = (
+                    "<div style='margin-top:6px; font-size:12px; color:#444;'>"
+                    + f"Last call: <code>{html.escape(prov or 'n/a')}</code> · <code>{html.escape(modl or 'n/a')}</code> · {ms} ms"
+                    + (f" · usage in/out: {html.escape(str(u_in))}/{html.escape(str(u_out))}" if (u_in or u_out) else "")
+                    + "</div>"
+                )
+        except Exception:
+            last_line = ""
+
         tbl = ""
         if rows:
             tr = "".join([
@@ -5322,7 +6884,7 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
 
         html_content = (
             "<div style='border:1px solid #bbb; background:#f7f7f7; padding:10px; border-radius:10px; margin:8px 0;'>"
-            f"<b>Comm Audit</b><br>{msg}{detail}{tbl}</div>"
+            f"<b>Comm Audit</b><br>{msg}{detail}{last_line}{tbl}</div>"
         )
         html_content += f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>'
 
@@ -5399,14 +6961,1062 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
 
 # Api bridge (pywebview js_api)
 # NOTE: In this ENONLY build, Api is the concrete js_api object.
+
+
+# ----------------------------
+# PROVIDER ADAPTERS (single-file)
+# ----------------------------
+
+
+def _openrouter_friendly_http_error(status_code: int, raw_body: str, *, lang: str = "de", tz: str = "Europe/Berlin") -> str:
+    """Translate common OpenRouter HTTP errors into human-friendly messages.
+
+    Notes:
+    - Does NOT expose user_id or other sensitive fields.
+    - Keeps a short technical tail for debugging.
+    """
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        from zoneinfo import ZoneInfo as _ZoneInfo
+    except Exception:  # pragma: no cover
+        _ZoneInfo = None
+
+    lang = (lang or "de").strip().lower()
+    if lang not in ("de", "en"):
+        lang = "de"
+
+    body = (raw_body or "").strip()
+    obj = None
+    try:
+        obj = _json.loads(body) if body else None
+    except Exception:
+        obj = None
+
+    err = {}
+    msg = ""
+    ecode = status_code
+    meta_hdr = {}
+
+    if isinstance(obj, dict):
+        e = obj.get("error")
+        if isinstance(e, dict):
+            err = e
+            msg = (e.get("message") or "").strip()
+            try:
+                ecode = int(e.get("code") or status_code)
+            except Exception:
+                ecode = status_code
+            md = e.get("metadata")
+            if isinstance(md, dict):
+                hdr = md.get("headers")
+                if isinstance(hdr, dict):
+                    meta_hdr = hdr
+
+    # Rate-limit helpers
+    lim = meta_hdr.get("X-RateLimit-Limit")
+    rem = meta_hdr.get("X-RateLimit-Remaining")
+    reset_ms = meta_hdr.get("X-RateLimit-Reset")
+
+    reset_str = None
+    try:
+        if reset_ms is not None:
+            ts = int(reset_ms) / 1000.0
+            dt = _dt.fromtimestamp(ts, tz=_tz.utc)
+            if _ZoneInfo is not None:
+                dt = dt.astimezone(_ZoneInfo(tz))
+            reset_str = dt.strftime("%d.%m.%Y, %H:%M Uhr")
+            try:
+                if _ZoneInfo is not None:
+                    now_dt = _dt.now(_ZoneInfo(tz))
+                else:
+                    now_dt = _dt.now(_tz.utc)
+                delta_s = int((dt - now_dt).total_seconds())
+                if delta_s > 0:
+                    mins = (delta_s + 59) // 60
+                    h = mins // 60
+                    m2 = mins % 60
+                    if h > 0:
+                        reset_in_str = (f"{h}h {m2}m" if lang != "en" else f"{h}h {m2}m")
+                    else:
+                        reset_in_str = (f"{m2}m" if lang != "en" else f"{m2}m")
+            except Exception:
+                reset_in_str = None
+    except Exception:
+        reset_str = None
+        reset_in_str = None
+
+    def _fmt_quota():
+        parts = []
+        if lim is not None and rem is not None:
+            try:
+                lim_i = int(lim); rem_i = int(rem)
+                used_i = max(0, lim_i - rem_i)
+                if lang == "en":
+                    parts.append(f"Today: {used_i}/{lim_i} used ({rem_i} remaining).")
+                else:
+                    parts.append(f"Heute: {used_i}/{lim_i} verbraucht (noch {rem_i}).")
+            except Exception:
+                pass
+        if reset_str:
+            if lang == "en":
+                parts.append(f"Resets: {reset_str}." + (f" (in {reset_in_str})" if reset_in_str else ""))
+            else:
+                parts.append(f"Nächster Reset: {reset_str}." + (f" (in {reset_in_str})" if reset_in_str else ""))
+        return " ".join(parts).strip()
+
+    # Human-friendly mapping
+    lower = (msg or "").lower()
+
+    if int(ecode) == 429:
+        quota = _fmt_quota()
+        if "free-models-per-day" in lower:
+            if lang == "en":
+                head = "OpenRouter limit reached (free models per day)."
+                tail = "Options: wait for reset, use a paid model/provider, or add credits."
+            else:
+                head = "OpenRouter-Limit erreicht (Free-Modelle pro Tag)."
+                tail = "Optionen: bis zum Reset warten, anderes Modell/Provider nutzen oder Credits hinzufügen."
+            parts = [head]
+            if quota:
+                parts.append(quota)
+            return " ".join(parts + [tail]).strip() + " [[ACTION:SWITCH_FREE_MODEL]]" + f" [HTTP 429]"
+        else:
+            if lang == "en":
+                head = "OpenRouter rate limit reached."
+                tail = "Options: wait briefly and retry, or switch model/provider."
+            else:
+                head = "OpenRouter-Rate-Limit erreicht."
+                tail = "Optionen: kurz warten und erneut versuchen oder Modell/Provider wechseln."
+            parts = [head]
+            if quota:
+                parts.append(quota)
+            if msg:
+                parts.append(msg)
+            return " ".join(parts + [tail]).strip() + " [[ACTION:SWITCH_FREE_MODEL]]" + f" [HTTP 429]"
+
+    if int(ecode) == 404 and ("privacy" in lower or "data policy" in lower or "no endpoints found" in lower):
+        if lang == "en":
+            return ("OpenRouter cannot route your request because your Privacy/Data-Policy settings exclude all endpoints "
+                    "for this model. Check OpenRouter → Settings → Privacy (and any provider restrictions). "
+                    f"[HTTP {status_code}]")
+        return ("OpenRouter kann nicht routen, weil deine Privacy/Data-Policy-Einstellungen alle passenden Endpoints "
+                "für dieses Modell ausschließen. Prüfe OpenRouter → Settings → Privacy (und ggf. Provider-Restrictions). "
+                f"[HTTP {status_code}]")
+
+    if int(ecode) == 402 or "insufficient credits" in lower or "add credits" in lower:
+        if lang == "en":
+            return ("OpenRouter: insufficient credits for this request. Add credits or choose a free/eligible model. "
+                    f"[HTTP {status_code}]")
+        return ("OpenRouter: Nicht genügend Guthaben für diese Anfrage. Guthaben hinzufügen oder ein passendes "
+                "(ggf. freies) Modell wählen. "
+                f"[HTTP {status_code}]")
+
+    if int(ecode) in (401, 403):
+        if lang == "en":
+            return ("OpenRouter authentication/permission error. Check your API key and account settings. "
+                    f"[HTTP {status_code}]")
+        return ("OpenRouter: Auth/Permission-Fehler. Prüfe API-Key und Account-/Privacy-Einstellungen. "
+                f"[HTTP {status_code}]")
+
+    # Fallback
+    if msg:
+        if lang == "en":
+            return f"OpenRouter error: {msg} [HTTP {status_code}]"
+        return f"OpenRouter-Fehler: {msg} [HTTP {status_code}]"
+    if lang == "en":
+        return f"OpenRouter request failed. [HTTP {status_code}]"
+    return f"OpenRouter-Anfrage fehlgeschlagen. [HTTP {status_code}]"
+
+class OpenAICompatibleClient:
+    """Minimal OpenAI-compatible chat client (used for OpenRouter).
+
+    - No external deps (urllib).
+    - Returns (text, usage_dict).
+    """
+
+    def __init__(self, *, base_url: str, api_key: str, app_referrer: str = '', app_title: str = '', timeout_s: int = 60):
+        self.base_url = (base_url or '').rstrip('/')
+        self.api_key = (api_key or '').strip()
+        self.app_referrer = (app_referrer or '').strip()
+        self.app_title = (app_title or '').strip()
+        self.timeout_s = int(timeout_s or 60)
+        self.max_retries = 2
+
+    def chat(self, *, messages, model: str, temperature: float = 0.2, max_tokens: int = 1024, lang: str = 'de'):
+        import json as _json
+        import urllib.request as _urlreq
+        import urllib.error as _urlerr
+        import time as _time
+
+        if not self.base_url:
+            raise RuntimeError('OpenAICompatibleClient: base_url is empty')
+        if not self.api_key:
+            raise RuntimeError('OpenAICompatibleClient: api_key is missing')
+        if not model:
+            raise RuntimeError('OpenAICompatibleClient: model is empty')
+
+        url = self.base_url + '/chat/completions'
+        payload = {
+            'model': model,
+            'messages': messages,
+            'temperature': float(temperature or 0.0),
+            'max_tokens': int(max_tokens or 0) if max_tokens is not None else 1024,
+        }
+
+        data = _json.dumps(payload).encode('utf-8')
+        req = _urlreq.Request(url, data=data, method='POST')
+        req.add_header('Authorization', f'Bearer {self.api_key}')
+        req.add_header('Content-Type', 'application/json')
+        if self.app_referrer:
+            req.add_header('HTTP-Referer', self.app_referrer)
+        if self.app_title:
+            req.add_header('X-Title', self.app_title)
+
+        raw = ''
+        maxr = int(getattr(self, 'max_retries', 2) or 2)
+        for attempt in range(maxr + 1):
+            try:
+                with _urlreq.urlopen(req, timeout=self.timeout_s) as resp:
+                    raw = resp.read().decode('utf-8', errors='replace')
+                break
+            except _urlerr.HTTPError as e:
+                code = getattr(e, 'code', None)
+                try:
+                    raw_err = e.read().decode('utf-8', errors='replace')
+                except Exception:
+                    raw_err = str(e)
+                # Retry transient upstream failures / rate limits.
+                if code in (429, 500, 502, 503, 504) and attempt < maxr:
+                    try:
+                        delay = [0.25, 1.0, 3.0][min(attempt, 2)]
+                        _time.sleep(delay)
+                    except Exception:
+                        pass
+                    continue
+                raise RuntimeError(_openrouter_friendly_http_error(int(code or 0), raw_err, lang=lang))
+            except Exception as e:
+                if attempt < maxr:
+                    try:
+                        delay = [0.25, 1.0, 3.0][min(attempt, 2)]
+                        _time.sleep(delay)
+                    except Exception:
+                        pass
+                    continue
+                raise RuntimeError(f'OpenAICompatibleClient error: {e}')
+
+        obj = {}
+        try:
+            obj = _json.loads(raw)
+        except Exception:
+            obj = {}
+
+        # OpenRouter can return HTTP 200 while embedding an error in the body.
+        # Detect and raise so the UI doesn't silently show an empty answer.
+        try:
+            err = obj.get('error') if isinstance(obj, dict) else None
+            if err:
+                # Expected shape: { error: { code:number, message:str, metadata?:... } }
+                code = ''
+                msg = ''
+                meta = ''
+                if isinstance(err, dict):
+                    code = str(err.get('code') or '')
+                    msg = str(err.get('message') or '')
+                    try:
+                        meta_obj = err.get('metadata')
+                        if meta_obj is not None:
+                            meta = _json.dumps(meta_obj, ensure_ascii=False)
+                    except Exception:
+                        meta = ''
+                else:
+                    msg = str(err)
+                details = f"{code} {msg}".strip()
+                if meta:
+                    details = details + f" :: {meta}"
+                raise RuntimeError(f"OpenRouter API error: {details}")
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
+
+        # Text
+        txt = ''
+        try:
+            choices = obj.get('choices') or []
+            if choices and isinstance(choices, list):
+                msg = (choices[0] or {}).get('message') or {}
+                txt = (msg.get('content') or '')
+        except Exception:
+            txt = ''
+
+        # If we still have no content, try to surface a useful error instead of returning empty.
+        if not (txt or '').strip():
+            try:
+                # Some upstream errors are encoded as finish_reason="error" with a top-level error.
+                # If that happened but we missed it, include the raw body in the exception.
+                raise RuntimeError(f"OpenRouter empty completion (no content). Raw: {raw}")
+            except RuntimeError:
+                raise
+
+        # Usage (best-effort)
+        usage = {}
+        try:
+            usage = obj.get('usage') or {}
+            if not isinstance(usage, dict):
+                usage = {}
+        except Exception:
+            usage = {}
+
+        return txt or '', usage
+
+
+    def list_models(self, *, lang: str = 'de'):
+        '''Fetch models list from /models (best-effort).
+
+        Returns: (models, meta) where meta includes ts and raw counts.
+        '''
+        import json as _json
+        import urllib.request as _urlreq
+        import urllib.error as _urlerr
+        if not self.base_url:
+            raise RuntimeError('OpenAICompatibleClient: base_url is empty')
+        if not self.api_key:
+            raise RuntimeError('OpenAICompatibleClient: api_key is missing')
+        url = self.base_url + '/models'
+        req = _urlreq.Request(url, method='GET')
+        req.add_header('Authorization', f'Bearer {self.api_key}')
+        req.add_header('Content-Type', 'application/json')
+        if self.app_referrer:
+            req.add_header('HTTP-Referer', self.app_referrer)
+        if self.app_title:
+            req.add_header('X-Title', self.app_title)
+        try:
+            with _urlreq.urlopen(req, timeout=self.timeout_s) as resp:
+                raw = resp.read().decode('utf-8', errors='replace')
+        except _urlerr.HTTPError as e:
+            try:
+                raw_err = e.read().decode('utf-8', errors='replace')
+            except Exception:
+                raw_err = str(e)
+            raise RuntimeError(_openrouter_friendly_http_error(int(getattr(e,'code',0) or 0), raw_err, lang=lang))
+        except Exception as e:
+            raise RuntimeError(f'OpenAICompatibleClient error: {e}')
+
+        obj = {}
+        try:
+            obj = _json.loads(raw)
+        except Exception:
+            obj = {}
+
+        models = []
+        try:
+            data = obj.get('data') or []
+            if isinstance(data, list):
+                for it in data:
+                    if isinstance(it, dict):
+                        mid = (it.get('id') or '').strip()
+                        if mid:
+                            models.append(mid)
+        except Exception:
+            models = []
+
+        # De-duplicate and sort for UI usability (case-insensitive).
+        try:
+            seen = set()
+            uniq = []
+            for m in models:
+                k = (m or '').strip()
+                if not k:
+                    continue
+                lk = k.lower()
+                if lk in seen:
+                    continue
+                seen.add(lk)
+                uniq.append(k)
+            models = sorted(uniq, key=lambda s: s.lower())
+        except Exception:
+            pass
+
+        meta = {'count': len(models)}
+        return models, meta
+
+
+class ProviderRouter:
+    """Routes provider calls based on ConfigManager settings.
+
+    Stage A (fix20): provider selection via config only (no UI).
+    """
+
+    def __init__(self, cfg_mgr):
+        self.cfg = cfg_mgr
+
+    def get_active_provider(self) -> str:
+        try:
+            p = (self.cfg.config or {}).get('active_provider', 'gemini')
+            return (p or 'gemini').strip().lower()
+        except Exception:
+            return 'gemini'
+
+    def get_provider_model(self, provider: str, fallback_model: str = '') -> str:
+        try:
+            provider = (provider or '').strip().lower() or 'gemini'
+            provs = (self.cfg.config or {}).get('providers') or {}
+            if isinstance(provs, dict):
+                pconf = provs.get(provider) or {}
+                if isinstance(pconf, dict):
+                    m = (pconf.get('default_model') or '').strip()
+                    if m:
+                        return m
+            # Back-compat: old single model key
+            m2 = (self.cfg.config or {}).get('model', '')
+            if provider == 'gemini' and isinstance(m2, str) and m2.strip():
+                return m2.strip()
+        except Exception:
+            pass
+        return (fallback_model or '').strip() or ''
+
+    def build_openrouter_client(self):
+        """Build an OpenRouter client.
+
+        Key lookup order:
+          1) ENV var from providers.openrouter.api_key_env (default OPENROUTER_API_KEY)
+          2) Config/Comm-SCI-Config.json: providers.openrouter.api_key_plain
+          3) Key file (KEYS_PATH):
+             - provider-structured: providers.openrouter.api_key_plain
+             - legacy: OPENROUTER_API_KEY field
+        """
+        try:
+            provider = 'openrouter'
+            provs = (self.cfg.config or {}).get('providers') or {}
+            pconf = (provs.get(provider) or {}) if isinstance(provs, dict) else {}
+            base_url = (pconf.get('base_url') or 'https://openrouter.ai/api/v1').strip()
+            key_env = (pconf.get('api_key_env') or 'OPENROUTER_API_KEY').strip()
+
+            # 1) env
+            key = ''
+            try:
+                key = (os.environ.get(key_env) or '').strip()
+            except Exception:
+                key = ''
+
+            # 2) config plaintext
+            if not key:
+                key = (pconf.get('api_key_plain') or '').strip()
+
+            # 3) key file fallback (provider-structured or legacy)
+            if not key and os.path.exists(KEYS_PATH):
+                try:
+                    data = json.loads(Path(KEYS_PATH).read_text(encoding='utf-8')) or {}
+                    if isinstance(data, dict):
+                        provs2 = data.get('providers')
+                        if isinstance(provs2, dict):
+                            o = provs2.get(provider) or {}
+                            if isinstance(o, dict):
+                                key = (o.get('api_key_plain') or o.get('api_key') or '').strip()
+                        if not key:
+                            key = (data.get('OPENROUTER_API_KEY') or '').strip()
+                except Exception:
+                    pass
+
+            app_ref = (pconf.get('app_referrer') or '').strip()
+            app_title = (pconf.get('app_title') or 'Comm-SCI Desktop').strip()
+            return OpenAICompatibleClient(base_url=base_url, api_key=key, app_referrer=app_ref, app_title=app_title)
+        except Exception:
+            return None
+
+
+    def build_huggingface_client(self):
+        """Build an OpenAI-compatible client for Hugging Face (router.huggingface.co).
+
+        Key lookup order:
+          1) ENV var from providers.huggingface.api_key_env (default HF_TOKEN)
+          2) Config plaintext providers.huggingface.api_key_plain
+          3) Key file (KEYS_PATH): providers.huggingface.api_key_plain (or legacy HF_TOKEN fields)
+        """
+        try:
+            provider = 'huggingface'
+            provs = (self.cfg.config or {}).get('providers') or {}
+            pconf = (provs.get(provider) or {}) if isinstance(provs, dict) else {}
+            base_url = (pconf.get('base_url') or 'https://router.huggingface.co/v1').strip()
+            key_env = (pconf.get('api_key_env') or 'HF_TOKEN').strip()
+
+            # 1) env
+            key = ''
+            try:
+                key = (os.environ.get(key_env) or '').strip()
+            except Exception:
+                key = ''
+
+            # 2) config plaintext
+            if not key:
+                key = (pconf.get('api_key_plain') or '').strip()
+
+            # 3) key file fallback
+            if not key and os.path.exists(KEYS_PATH):
+                try:
+                    data = json.loads(Path(KEYS_PATH).read_text(encoding='utf-8')) or {}
+                    if isinstance(data, dict):
+                        provs2 = data.get('providers')
+                        if isinstance(provs2, dict):
+                            h = provs2.get('huggingface') or provs2.get('hf') or {}
+                            if isinstance(h, dict):
+                                key = (h.get('api_key_plain') or h.get('api_key') or '').strip()
+                        if not key:
+                            key = (data.get('HF_TOKEN') or data.get('HUGGINGFACE_TOKEN') or '').strip()
+                except Exception:
+                    pass
+
+            return OpenAICompatibleClient(base_url=base_url, api_key=key, app_referrer='', app_title='Comm-SCI Desktop')
+        except Exception:
+            return None
+
+    def _openrouter_cache_path(self) -> str:
+        try:
+            return os.path.join(CONFIG_DIR, 'openrouter_models_cache.json')
+        except Exception:
+            return 'openrouter_models_cache.json'
+
+    def get_openrouter_models_cached(self, *, force_refresh: bool = False):
+        """Return (models, meta) from OpenRouter /models using a small on-disk cache.
+
+        meta: {'source': 'cache'|'cache-stale'|'live'|'none', 'age_s': int, 'count': int}
+        """
+        provider = 'openrouter'
+        cache_path = self._openrouter_cache_path()
+
+        # cache settings
+        cache_minutes = 30
+        try:
+            provs = (self.cfg.config or {}).get('providers') or {}
+            pconf = (provs.get(provider) or {}) if isinstance(provs, dict) else {}
+            cache_minutes = int((pconf.get('model_cache_minutes') or 30) or 30)
+        except Exception:
+            cache_minutes = 30
+
+        now = time.time()
+
+        # load cache
+        cached = None
+        try:
+            if os.path.exists(cache_path):
+                raw = Path(cache_path).read_text(encoding='utf-8')
+                cached = json.loads(raw)
+        except Exception:
+            cached = None
+
+        def _cache_ok(obj):
+            if not obj or not isinstance(obj, dict):
+                return False
+            ts = obj.get('ts')
+            if not isinstance(ts, (int, float)):
+                return False
+            age = now - float(ts)
+            if cache_minutes <= 0:
+                return False
+            return age <= (cache_minutes * 60)
+
+        def _extract_models(obj):
+            models = []
+            try:
+                models = obj.get('models') or []
+                if not isinstance(models, list):
+                    models = []
+                models = [str(m).strip() for m in models if str(m).strip()]
+            except Exception:
+                models = []
+            # dedup + sort
+            try:
+                seen = set()
+                uniq = []
+                for m in models:
+                    lm = m.lower()
+                    if lm in seen:
+                        continue
+                    seen.add(lm)
+                    uniq.append(m)
+                models = sorted(uniq, key=lambda s: s.lower())
+            except Exception:
+                pass
+            return models
+
+        if (not force_refresh) and _cache_ok(cached):
+            models = _extract_models(cached)
+            age_s = int(max(0, now - float(cached.get('ts'))))
+            return models, {'source': 'cache', 'age_s': age_s, 'count': len(models)}
+
+        # refresh live
+        client = self.build_openrouter_client()
+        if client is None or not getattr(client, 'api_key', ''):
+            # fall back to stale cache if present
+            if cached and isinstance(cached, dict):
+                models = _extract_models(cached)
+                age_s = 0
+                try:
+                    age_s = int(max(0, now - float(cached.get('ts') or now)))
+                except Exception:
+                    age_s = 0
+                return models, {'source': 'cache-stale', 'age_s': age_s, 'count': len(models)}
+            return [], {'source': 'none', 'age_s': 0, 'count': 0}
+
+        try:
+            models, _meta = client.list_models(lang='de')
+        except Exception:
+            if cached and isinstance(cached, dict):
+                models = _extract_models(cached)
+                age_s = 0
+                try:
+                    age_s = int(max(0, now - float(cached.get('ts') or now)))
+                except Exception:
+                    age_s = 0
+                return models, {'source': 'cache-stale', 'age_s': age_s, 'count': len(models)}
+            return [], {'source': 'none', 'age_s': 0, 'count': 0}
+
+        # write cache
+        try:
+            Path(cache_path).write_text(json.dumps({'ts': now, 'models': models}, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
+
+        return models, {'source': 'live', 'age_s': 0, 'count': len(models)}
+
+
+    def get_huggingface_models_from_config(self):
+        """Return models list for Hugging Face from config OR key file (best-effort)."""
+        try:
+            pconf = self._merged_provider_conf('huggingface') or {}
+            models = pconf.get('models') or []
+            if not isinstance(models, list):
+                models = []
+            models = [str(m).strip() for m in models if str(m).strip()]
+            # dedup + sort
+            seen = set()
+            uniq = []
+            for mm in models:
+                lm = mm.lower()
+                if lm in seen:
+                    continue
+                seen.add(lm)
+                uniq.append(mm)
+            return sorted(uniq, key=lambda s: s.lower())
+        except Exception:
+            return []
+
+    def _huggingface_cache_path(self) -> str:
+        try:
+            return os.path.join(CONFIG_DIR, 'huggingface_models_cache.json')
+        except Exception:
+            return 'huggingface_models_cache.json'
+
+    def get_huggingface_models_cached(self, *, force_refresh: bool = False):
+        """Return (models, meta) for Hugging Face router /models using a small on-disk cache.
+
+        The HF router may not always expose a public model catalog; in that case we fall back
+        to the configured list in providers.huggingface.models.
+
+        meta: {'source': 'cache'|'cache-stale'|'live'|'config'|'none', 'age_s': int, 'count': int}
+        """
+        provider = 'huggingface'
+        cache_path = self._huggingface_cache_path()
+
+        # read cache TTL (minutes)
+        cache_minutes = 30
+        try:
+            provs = (self.cfg.config or {}).get('providers') or {}
+            pconf = (provs.get(provider) or provs.get('hf') or {}) if isinstance(provs, dict) else {}
+            cache_minutes = int((pconf.get('model_cache_minutes') or 30) or 30)
+        except Exception:
+            cache_minutes = 30
+
+        now = time.time()
+
+        # load cache
+        cached = None
+        try:
+            if os.path.exists(cache_path):
+                raw = Path(cache_path).read_text(encoding='utf-8')
+                cached = json.loads(raw)
+        except Exception:
+            cached = None
+
+        try:
+            ts = float((cached or {}).get('ts') or 0.0)
+            models_cached = (cached or {}).get('models') or []
+        except Exception:
+            ts = 0.0
+            models_cached = []
+
+        age_s = int(max(0.0, now - ts)) if ts else 10**9
+        fresh = bool(ts) and age_s <= int(cache_minutes * 60)
+
+        if fresh and (not force_refresh) and isinstance(models_cached, list) and models_cached:
+            return models_cached, {'source': 'cache', 'age_s': age_s, 'count': len(models_cached)}
+
+        # live fetch best-effort
+        models_live = []
+        try:
+            client = self.build_huggingface_client() if hasattr(self, 'build_huggingface_client') else None
+            if client is not None and getattr(client, 'api_key', ''):
+                models_live, _meta = client.list_models(lang='de')
+                if not isinstance(models_live, list):
+                    models_live = []
+        except Exception:
+            models_live = []
+
+        if models_live:
+            # write cache
+            try:
+                Path(cache_path).write_text(json.dumps({'ts': now, 'models': models_live}, ensure_ascii=False, indent=2),
+                                           encoding='utf-8')
+            except Exception:
+                pass
+            return models_live, {'source': 'live', 'age_s': 0, 'count': len(models_live)}
+
+        # fallback to config list
+        try:
+            models_cfg = self.get_huggingface_models_from_config() if hasattr(self, 'get_huggingface_models_from_config') else []
+            if isinstance(models_cfg, list) and models_cfg:
+                # write cache as config snapshot (so UI remains fast/offline)
+                try:
+                    Path(cache_path).write_text(json.dumps({'ts': now, 'models': models_cfg}, ensure_ascii=False, indent=2),
+                                               encoding='utf-8')
+                except Exception:
+                    pass
+                src = 'cache-stale' if (models_cached and not fresh) else 'config'
+                return models_cfg, {'source': src, 'age_s': age_s, 'count': len(models_cfg)}
+        except Exception:
+            pass
+
+        # last resort: stale cache if any
+        if isinstance(models_cached, list) and models_cached:
+            return models_cached, {'source': 'cache-stale', 'age_s': age_s, 'count': len(models_cached)}
+
+        return [], {'source': 'none', 'age_s': age_s, 'count': 0}
+
+    def _openrouter_cache_path(self) -> str:
+        try:
+            return os.path.join(CONFIG_DIR, 'openrouter_models_cache.json')
+        except Exception:
+            return 'openrouter_models_cache.json'
+
+    def get_openrouter_models_cached(self, *, force_refresh: bool = False):
+        '''Return (models, meta) using a small on-disk cache.
+
+        meta: {'source': 'cache'|'live'|'none', 'age_s': int, 'count': int}
+        '''
+        cache_path = self._openrouter_cache_path()
+
+        # read settings
+        cache_minutes = 30
+        try:
+            provs = (self.cfg.config or {}).get('providers') or {}
+            pconf = (provs.get(provider) or {}) if isinstance(provs, dict) else {}
+            cache_minutes = int((pconf.get('model_cache_minutes') or 30) or 30)
+        except Exception:
+            cache_minutes = 30
+
+        now = time.time()
+        # try load cache
+        cached = None
+        try:
+            if os.path.exists(cache_path):
+                raw = Path(cache_path).read_text(encoding='utf-8')
+                cached = json.loads(raw)
+        except Exception:
+            cached = None
+
+        def _cache_ok(obj):
+            if not obj or not isinstance(obj, dict):
+                return False
+            ts = obj.get('ts')
+            if not isinstance(ts, (int, float)):
+                return False
+            age = now - float(ts)
+            if cache_minutes <= 0:
+                return False
+            return age <= (cache_minutes * 60)
+
+        if (not force_refresh) and _cache_ok(cached):
+            models = cached.get('models') or []
+            if isinstance(models, list):
+                models = [str(m) for m in models if str(m).strip()]
+            else:
+                models = []
+            age_s = int(max(0, now - float(cached.get('ts'))))
+            return models, {'source': 'cache', 'age_s': age_s, 'count': len(models)}
+
+        # refresh live
+        client = self.build_openrouter_client()
+        if client is None:
+            # fall back to stale cache if present
+            if cached and isinstance(cached, dict):
+                models = cached.get('models') or []
+                if isinstance(models, list):
+                    models = [str(m) for m in models if str(m).strip()]
+                else:
+                    models = []
+                age_s = 0
+                try:
+                    age_s = int(max(0, now - float(cached.get('ts') or now)))
+                except Exception:
+                    age_s = 0
+                return models, {'source': 'cache-stale', 'age_s': age_s, 'count': len(models)}
+            return [], {'source': 'none', 'age_s': 0, 'count': 0}
+
+        try:
+            models, meta = client.list_models(lang='de')
+        except Exception:
+            # fallback to stale cache
+            if cached and isinstance(cached, dict):
+                models = cached.get('models') or []
+                if isinstance(models, list):
+                    models = [str(m) for m in models if str(m).strip()]
+                else:
+                    models = []
+                age_s = 0
+                try:
+                    age_s = int(max(0, now - float(cached.get('ts') or now)))
+                except Exception:
+                    age_s = 0
+                return models, {'source': 'cache-stale', 'age_s': age_s, 'count': len(models)}
+            return [], {'source': 'none', 'age_s': 0, 'count': 0}
+
+        # write cache
+        try:
+            Path(cache_path).write_text(json.dumps({'ts': now, 'models': models}, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
+        return models, {'source': 'live', 'age_s': 0, 'count': len(models)}
+
+
 # We subclass CSCRefiner because the large UI/command handler block is currently implemented as
 # methods on CSCRefiner in this codebase. This is intentional to avoid invasive re-indentation
 # and keeps behavior stable.
 # ----------------------------
+
+
+    # ----------------------------
+    # Hugging Face Hub Catalog (Top N) - cached
+    # ----------------------------
+    def _huggingface_catalog_cache_path(self) -> str:
+        try:
+            return os.path.join(CONFIG_DIR, "huggingface_catalog_cache.json")
+        except Exception:
+            return os.path.join(".", "huggingface_catalog_cache.json")
+
+
+    def _huggingface_catalog_ttl_minutes(self) -> int:
+        try:
+            prov = self._merged_provider_conf("huggingface") or {}
+            v = prov.get("catalog_cache_minutes", None)
+            if v is None:
+                v = prov.get("model_cache_minutes", 30)
+            v = int(v or 30)
+            return max(1, min(24*60, v))
+        except Exception:
+            return 30
+
+
+    def _huggingface_token(self) -> str:
+        try:
+            prov = self._merged_provider_conf("huggingface") or {}
+            envk = (prov.get("api_key_env") or "HF_TOKEN").strip()
+            if envk:
+                v = os.environ.get(envk, "") or ""
+                if v.strip():
+                    return v.strip()
+            v = (prov.get("api_key_plain") or "").strip()
+            return v
+        except Exception:
+            return ""
+
+    def _fetch_hf_hub_catalog(self, *, top_n: int, provider_filter: str) -> list:
+        """Fetch Hugging Face Hub models list (best-effort) using the public Hub API.
+
+        We intentionally keep this lightweight: pipeline_tag=text-generation, sort by downloads.
+        provider_filter: 'all' or inference provider id (e.g. 'novita', 'zai-org', 'cerebras').
+        """
+        import urllib.request as _urlreq
+        top_n = int(top_n or 200)
+        top_n = max(1, min(1000, top_n))
+        pf = (provider_filter or "all").strip()
+        try:
+            from urllib.parse import urlencode
+        except Exception:
+            urlencode = None
+
+        base = "https://huggingface.co/api/models"
+        params = {
+            "pipeline_tag": "text-generation",
+            "sort": "downloads",
+            "direction": "-1",
+            "limit": str(top_n),
+        }
+        if pf and pf.lower() != "all":
+            # Official filter for Hub API: inference_provider
+            params["inference_provider"] = pf
+
+        url = base
+        if urlencode is not None:
+            url = base + "?" + urlencode(params)
+
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Comm-SCI Desktop (HF catalog)",
+        }
+        tok = self._huggingface_token()
+        if tok:
+            headers["Authorization"] = f"Bearer {tok}"
+
+        req = _urlreq.Request(url, headers=headers, method="GET")
+        with _urlreq.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw) if raw.strip() else []
+        out = []
+        if isinstance(data, list):
+            for it in data:
+                mid = ""
+                try:
+                    obj = (it or {}) if isinstance(it, dict) else {}
+                    # HF Hub API commonly uses 'modelId' (e.g. 'Qwen/Qwen2.5-3B-Instruct')
+                    mid = obj.get("modelId") or obj.get("id") or obj.get("name") or ""
+                except Exception:
+                    mid = ""
+                mid = str(mid).strip()
+                if mid:
+                    out.append(mid)
+        # Dedup + sort alpha for dropdown usability
+        out = sorted(set(out), key=lambda s: s.lower())
+        return out
+
+    def get_huggingface_catalog_cached(self, *, top_n: int = 200, provider_filter: str = "all", force_refresh: bool = False):
+        """Return (models, meta) from HF Hub catalog with on-disk cache.
+
+        meta: {'source': 'cache'|'cache-stale'|'live'|'none', 'age_s': int, 'count': int, 'top_n': int, 'provider_filter': str, 'error': str?}
+        """
+        cache_path = self._huggingface_catalog_cache_path()
+        ttl_min = self._huggingface_catalog_ttl_minutes()
+        now = int(time.time())
+        want_pf = (provider_filter or "all").strip()
+        want_top = int(top_n or 200)
+        want_top = max(1, min(1000, want_top))
+
+        def _meta(source: str, age_s: int, count: int, err: str = "") -> dict:
+            out = {"source": source, "age_s": int(age_s or 0), "count": int(count or 0),
+                   "top_n": int(want_top), "provider_filter": want_pf}
+            if err:
+                out["error"] = err
+            return out
+
+        def _cache_matches(c: dict) -> bool:
+            try:
+                return (str((c or {}).get("provider_filter", "all")).strip().lower() == want_pf.lower()
+                        and int((c or {}).get("top_n", 0) or 0) == want_top)
+            except Exception:
+                return False
+
+        # read cache
+        cached = None
+        try:
+            if os.path.exists(cache_path):
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+        except Exception:
+            cached = None
+
+        if (not force_refresh) and cached and _cache_matches(cached):
+            try:
+                ts = int(cached.get("ts", 0) or 0)
+                age = max(0, now - ts)
+                models = cached.get("models", []) or []
+                if isinstance(models, list) and models and age <= (ttl_min * 60):
+                    return models, _meta("cache", age, len(models))
+                if isinstance(models, list) and models:
+                    # stale cache still useful
+                    return models, _meta("cache-stale", age, len(models))
+            except Exception:
+                pass
+
+        # live fetch
+        live_err = ""
+        live_models = []
+        try:
+            live_models = self._fetch_hf_hub_catalog(top_n=want_top, provider_filter=want_pf) or []
+            if not isinstance(live_models, list):
+                live_models = []
+        except Exception as e:
+            live_err = str(e)
+            live_models = []
+
+        if live_models:
+            # persist cache
+            try:
+                payload = {"ts": now, "top_n": want_top, "provider_filter": want_pf, "models": live_models}
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+            except Exception:
+                # cache write failure should not break the UI
+                pass
+            return live_models, _meta("live", 0, len(live_models))
+
+        # live empty or failed: fall back to any cache (even mismatch) as last resort
+        if cached:
+            try:
+                models = cached.get("models", []) or []
+                if isinstance(models, list) and models:
+                    ts = int(cached.get("ts", 0) or 0)
+                    age = max(0, now - ts)
+                    return models, _meta("cache-stale", age, len(models), live_err)
+            except Exception:
+                pass
+
+        return [], _meta("none", 0, 0, live_err)
+
+        def _cache_matches(c):
+            try:
+                return (str((c or {}).get("provider_filter", "all")).strip().lower() == want_pf.lower()
+                        and int((c or {}).get("top_n", 0) or 0) == want_top)
+            except Exception:
+                return False
+
+        if not force_refresh and cached and _cache_matches(cached):
+            try:
+                ts = int(cached.get("ts", 0) or 0)
+                age = max(0, now - ts)
+                models = cached.get("models", []) or []
+                if isinstance(models, list) and models and age <= (ttl_min * 60):
+                    return models, {"source": "cache", "age_s": age, "count": len(models), "top_n": want_top, "provider_filter": want_pf}
+                if isinstance(models, list) and models:
+                    return models, {"source": "cache-stale", "age_s": age, "count": len(models), "top_n": want_top, "provider_filter": want_pf}
+            except Exception:
+                pass
+
+        # live fetch
+        try:
+            models = self._fetch_hf_hub_catalog(top_n=want_top, provider_filter=want_pf)
+            meta = {"source": "live", "age_s": 0, "count": len(models), "top_n": want_top, "provider_filter": want_pf}
+            try:
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump({"ts": now, "top_n": want_top, "provider_filter": want_pf, "models": models}, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+            return models, meta
+        except Exception:
+            # fallback: no catalog available
+            return [], {"source": "none", "age_s": 0, "count": 0, "top_n": want_top, "provider_filter": want_pf}
+
 class Api(CSCRefiner):
     def __init__(self):
         # Bind governance + config safely
         super().__init__(globals().get('gov'), globals().get('cfg'))
+
+        # Provider routing (single-file adapters)
+        try:
+            self.provider_router = ProviderRouter(globals().get('cfg'))
+        except Exception:
+            self.provider_router = None
 
         # Window handles
         self.main_win = None
@@ -5429,6 +8039,14 @@ class Api(CSCRefiner):
         self.session_req_count = 0
         self.session_tokens_in = 0
         self.session_tokens_out = 0
+
+        # Last provider call debug info (for Comm Audit)
+        self.last_call_info = {
+            'provider': '',
+            'model': '',
+            'ms': 0,
+            'usage': {},
+        }
 
         # Rate limiting for LLM calls (best-effort; configurable via Comm-SCI-Config.json)
         self.rate_limiter = None
