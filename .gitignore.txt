@@ -13,6 +13,9 @@ Logs/**
 !Logs/**/
 !Logs/**/.gitkeep
 
+# Config: Inhalt ignorieren, Ordnerstruktur erlauben
+Config/**
+
 # Python cache
 __pycache__/
 *.pyc
