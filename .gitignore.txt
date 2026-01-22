@@ -1,1 +1,18 @@
+# Secrets
+Config/Comm-SCI-API-Keys.json
+
+# Optional: weitere lokale/enc files
+Config/*keys*.json
+Config/*secret*
+
+# Logs
+Logs/
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
 .DS_Store
