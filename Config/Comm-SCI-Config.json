@@ -1,0 +1,51 @@
+{
+  "model": "gemini-2.0-flash",
+  "active_provider": "gemini",
+  "providers": {
+    "gemini": {
+      "default_model": "gemini-2.0-flash"
+    },
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_key_plain": "",
+      "api_key_enc": "",
+      "default_model": "meta-llama/llama-3.3-70b-instruct:free",
+      "app_referrer": "",
+      "app_title": "Comm-SCI Desktop"
+    },
+    "huggingface": {
+      "default_model": "microsoft/Phi-3.5-mini-instruct"
+    }
+  },
+  "answer_language": "de",
+  "rate_limit_enabled": true,
+  "rate_limit_per_minute": 30,
+  "rate_limit_per_hour": 120,
+  "panel_geom": {
+    "x": 1141,
+    "y": 34,
+    "width": 340,
+    "height": 948
+  },
+  "rate_limit_scopes": {
+    "providers": {
+      "openrouter": {
+        "per_minute": 10,
+        "per_hour": 60
+      },
+      "huggingface": {
+        "per_minute": 5,
+        "per_hour": 20
+      }
+    },
+    "models": {
+      "openrouter": {
+        "anthropic/claude-3.5-sonnet": {
+          "per_minute": 3,
+          "per_hour": 10
+        }
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@ import traceback
 import difflib
 import hashlib
 import base64
-from collections import deque
+from collections import deque, defaultdict
 from pathlib import Path
 try:
     import markdown  # type: ignore
@@ -63,35 +63,211 @@ def sanitize_html(html_text: str) -> str:
         return html_text
 
 
+class _NullContext:
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class RateLimiter:
-    """Simple in-memory sliding-window limiter for LLM calls."""
-    def __init__(self, *, per_minute: int = 30, per_hour: int = 120):
+    """In-memory sliding-window limiter for LLM calls.
+
+    Goals:
+    - Cheap, dependency-free, testable.
+    - Backward compatible with the old API: allow() -> (ok: bool, msg: str)
+
+    Concepts:
+    - Scopes: 'global' plus optional fine-grained keys like:
+        * 'provider:gemini'
+        * 'provider:openrouter'
+        * 'provider:huggingface'
+        * 'model:openrouter:<model_id>'
+      Scopes are only enforced if configured; otherwise only 'global' applies.
+    """
+
+    def __init__(self, *, per_minute: int = 30, per_hour: int = 120, scopes: dict | None = None, clock=None):
+        import time as _time
+        self._clock = clock or getattr(_time, 'monotonic', _time.time)
+
+        # Normalize limits
         self.per_minute = int(per_minute or 0)
         self.per_hour = int(per_hour or 0)
-        self._events = deque()  # timestamps (float seconds)
 
-    def allow(self):
-        now = time.time()
-        # prune older than 1 hour
+        self._limits = {'global': {'per_minute': self.per_minute, 'per_hour': self.per_hour}}
+
+        # Merge optional scopes (backward compatible; ignore malformed structures)
+        self._merge_scopes(scopes or {})
+
+        # Per-scope timestamp deques
+        self._events = defaultdict(deque)
+
+        # Defensive thread-safety (pywebview callbacks may interleave)
+        import threading as _threading
+        self._lock = _threading.Lock()
+
+    def _merge_scopes(self, scopes: dict):
+        try:
+            if not isinstance(scopes, dict):
+                return
+            # Support both flat and nested structures:
+            #   flat: {'provider:openrouter': {'per_minute': 10, 'per_hour': 50}}
+            #   nested: {'global': {...}, 'providers': {'openrouter': {...}}, 'models': {'openrouter': {'<id>': {...}}}}
+            flat = {}
+            for k, v in scopes.items():
+                if not isinstance(v, dict):
+                    continue
+                flat[str(k)] = v
+
+            # Nested provider limits
+            provs = scopes.get('providers') if isinstance(scopes, dict) else None
+            if isinstance(provs, dict):
+                for pname, lim in provs.items():
+                    if isinstance(lim, dict):
+                        flat[f'provider:{str(pname).strip().lower()}'] = lim
+
+            # Nested model limits (optional)
+            mods = scopes.get('models') if isinstance(scopes, dict) else None
+            if isinstance(mods, dict):
+                for pname, models in mods.items():
+                    if not isinstance(models, dict):
+                        continue
+                    for mid, lim in models.items():
+                        if isinstance(lim, dict):
+                            p = str(pname).strip().lower()
+                            m = str(mid).strip()
+                            if p and m:
+                                flat[f'model:{p}:{m}'] = lim
+
+            # Apply
+            for sk, lim in flat.items():
+                if not isinstance(lim, dict):
+                    continue
+                pm = lim.get('per_minute', None)
+                ph = lim.get('per_hour', None)
+                if pm is None and ph is None:
+                    continue
+                key = str(sk).strip()
+                if not key:
+                    continue
+                cur = dict(self._limits.get(key, {}))
+                if pm is not None:
+                    try:
+                        cur['per_minute'] = int(pm or 0)
+                    except Exception:
+                        pass
+                if ph is not None:
+                    try:
+                        cur['per_hour'] = int(ph or 0)
+                    except Exception:
+                        pass
+                # Ensure missing keys fall back to global defaults
+                if 'per_minute' not in cur:
+                    cur['per_minute'] = self.per_minute
+                if 'per_hour' not in cur:
+                    cur['per_hour'] = self.per_hour
+                self._limits[key] = cur
+        except Exception:
+            # Never crash caller
+            return
+
+    def _prune(self, scope: str, now: float):
+        dq = self._events[scope]
+        # prune older than 1 hour (largest supported window)
         cutoff_h = now - 3600.0
-        while self._events and self._events[0] < cutoff_h:
-            self._events.popleft()
+        while dq and dq[0] < cutoff_h:
+            dq.popleft()
 
-        if self.per_hour > 0 and len(self._events) >= self.per_hour:
-            return False, f"Rate limit exceeded: {self.per_hour}/hour"
+    def _check_one_scope(self, scope: str, now: float):
+        lim = self._limits.get(scope) or self._limits.get('global') or {}
+        per_h = int(lim.get('per_hour', 0) or 0)
+        per_m = int(lim.get('per_minute', 0) or 0)
 
-        if self.per_minute > 0:
+        dq = self._events[scope]
+        self._prune(scope, now)
+
+        # Hour window
+        if per_h > 0 and len(dq) >= per_h:
+            retry = max(0.0, (dq[0] + 3600.0) - now)
+            return False, retry, f"Rate limit exceeded: {per_h}/hour (scope: {scope})"
+
+        # Minute window
+        if per_m > 0:
             cutoff_m = now - 60.0
+            # count events in last minute
             n_m = 0
-            for t in reversed(self._events):
-                if t < cutoff_m:
+            for t in reversed(dq):
+                if t <= cutoff_m:
                     break
                 n_m += 1
-            if n_m >= self.per_minute:
-                return False, f"Rate limit exceeded: {self.per_minute}/minute"
+            if n_m >= per_m:
+                # find the event that will drop the count below the limit
+                # (oldest event within the last-minute window among the last 'per_m' events)
+                recent = [t for t in dq if t > cutoff_m]
+                # recent is already sorted
+                if recent and len(recent) >= per_m:
+                    t_block = recent[len(recent) - per_m]  # earliest among the last 'per_m' events
+                    retry = max(0.0, (t_block + 60.0) - now)
+                else:
+                    retry = 60.0
+                return False, retry, f"Rate limit exceeded: {per_m}/minute (scope: {scope})"
 
-        self._events.append(now)
-        return True, "ok"
+        return True, 0.0, "ok"
+
+    def allow_call(self, *, provider: str = "", model: str = "", reason: str = "", consume: bool = True, return_retry: bool = False):
+        """Check (and optionally consume) a slot for an LLM call.
+
+        Returns (ok: bool, msg: str) by default.
+        If return_retry=True, returns (ok: bool, msg: str, retry_after_s: int).
+        """
+        with getattr(self, '_lock', None) or _NullContext():
+                now = float(self._clock())
+
+                # Decide which scopes to enforce. Only enforce configured scopes.
+                scopes = ['global']
+                p = (provider or '').strip().lower()
+                m = (model or '').strip()
+
+                if p and f'provider:{p}' in self._limits:
+                    scopes.append(f'provider:{p}')
+                if p and m and f'model:{p}:{m}' in self._limits:
+                    scopes.append(f'model:{p}:{m}')
+
+                # Check all scopes first, find the strongest block (max retry)
+                worst_retry = 0.0
+                worst_msg = ""
+                for sc in scopes:
+                    ok, retry, msg = self._check_one_scope(sc, now)
+                    if not ok:
+                        if retry >= worst_retry:
+                            worst_retry = retry
+                            worst_msg = msg
+
+                if worst_msg:
+                    retry_s = int(worst_retry + 0.999)  # ceiling seconds
+                    hint = f"{worst_msg}. Retry after {retry_s}s."
+                    if reason:
+                        hint += f" Reason: {reason}."
+                    if p:
+                        hint += f" Provider: {p}."
+                    if m:
+                        hint += f" Model: {m}."
+                    if return_retry:
+                        return False, hint, retry_s
+                    return False, hint
+
+                if consume:
+                    for sc in scopes:
+                        self._events[sc].append(now)
+
+                if return_retry:
+                    return True, "ok", 0
+                return True, "ok"
+
+    def allow(self):
+        """Backward-compatible API (global scope only)."""
+        return self.allow_call(consume=True)
+
 
 
 def _derive_fernet_key(passphrase: str, salt_b64: str) -> bytes:
@@ -494,6 +670,9 @@ class ConfigManager:
             "rate_limit_per_minute": 30,
             "rate_limit_per_hour": 120
         }
+        # Warn only once per instance for config parse issues (avoid log spam)
+        self._warned_load_error = False
+        self._warned_save_error = False
         self.load()
         # Compatibility flag: some older code paths may check this.
         self.loaded = True
@@ -509,7 +688,9 @@ class ConfigManager:
                 # Ignore/remove any persisted language key from older builds.
                 self.config.pop("language", None)
             except Exception as e:
-                print(f"[Config] Error: {e}")
+                if not getattr(self, "_warned_load_error", False):
+                    print(f"[Config] Error: {e}")
+                    self._warned_load_error = True
         else:
             self.save()
 
@@ -518,7 +699,9 @@ class ConfigManager:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=2)
         except Exception as e:
-            print(f"[Config] Save Error: {e}")
+            if not getattr(self, "_warned_save_error", False):
+                print(f"[Config] Save Error: {e}")
+                self._warned_save_error = True
     def get_active_provider(self) -> str:
         """Return the currently active provider name."""
         try:
@@ -1059,71 +1242,124 @@ def dedupe_qc_lines(text: str) -> str:
 
 
 def enforce_qc_footer_deltas(text: str, gov_mgr, profile_name: str) -> str:
-    """Deterministically enforce a QC-Matrix footer that matches the active profile targets.
+    """
+    Deterministically correct ONLY the QC deltas in an existing QC-Matrix footer line.
 
-    Important: We DO NOT trust model-provided QC values (some models output 0–100 scales).
-    We therefore rebuild the entire QC footer from the profile's qc_target corridors and
-    set all deltas to 0 by choosing an in-corridor representative value (ceiling midpoint).
+    - Keeps the model-provided QC *values* (Clarity 3, Brevity 1, ...) unchanged.
+    - Recomputes Δ based on the active profile's qc_target corridor [min..max]:
+        * within corridor => Δ0
+        * below min       => Δ = value - min   (negative)
+        * above max       => Δ = value - max   (positive)
 
-    This preserves the ruleset's corridor semantics and avoids absurd values like 85 (Δ82).
+    If no QC footer line is present, returns text unchanged.
     """
     try:
-        if not text or not gov_mgr or not getattr(gov_mgr, 'loaded', False):
+        if not text or not gov_mgr or not getattr(gov_mgr, "loaded", False):
             return text
 
-        prof = (gov_mgr.data.get('profiles', {}) or {}).get(profile_name or '', {}) or {}
-        qc_target = prof.get('qc_target') or {}
+        prof = (gov_mgr.data.get("profiles", {}) or {}).get(profile_name or "", {}) or {}
+        qc_target = prof.get("qc_target") or {}
         if not isinstance(qc_target, dict) or not qc_target:
             return text
 
-        # Map internal ids to display names
-        disp = {
-            "clarity": "Clarity",
-            "brevity": "Brevity",
-            "evidence": "Evidence",
-            "empathy": "Empathy",
-            "consistency": "Consistency",
-            "neutrality": "Neutrality",
-        }
-
-        def rep_val(rng):
-            try:
-                lo, hi = int(rng[0]), int(rng[1])
-                if lo > hi:
-                    lo, hi = hi, lo
-                # Representative in-corridor value: ceiling midpoint
-                return int((lo + hi + 1) // 2)
-            except Exception:
-                return None
-
-        parts = []
-        order = ["clarity","brevity","evidence","empathy","consistency","neutrality"]
-        for k in order:
-            rng = qc_target.get(k)
-            v = rep_val(rng) if isinstance(rng, (list, tuple)) and len(rng) >= 2 else None
-            if v is None:
-                continue
-            parts.append(f"{disp.get(k,k)} {v} (Δ0)")
-
-        if not parts:
+        # Identify the QC line (first match). Keep everything else unchanged.
+        lines = text.splitlines()
+        qc_idx = None
+        for i, line in enumerate(lines):
+            if re.match(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*", line or ""):
+                qc_idx = i
+                break
+        if qc_idx is None:
             return text
 
-        new_line = "QC-Matrix: " + " · ".join(parts)
+        line = lines[qc_idx]
 
-        # Replace existing QC footer line if present; otherwise insert before ts-footer or append.
-        lines = text.splitlines()
-        for i, line in enumerate(lines):
-            if re.match(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*", line):
-                lines[i] = new_line
-                return "\n".join(lines)
+        # Map display label -> internal key
+        label_to_key = {
+            "Clarity": "clarity",
+            "Brevity": "brevity",
+            "Evidence": "evidence",
+            "Empathy": "empathy",
+            "Consistency": "consistency",
+            "Neutrality": "neutrality",
+        }
 
-        # Insert before timestamp footer if present
-        for i, line in enumerate(lines):
-            if "ts-footer" in line or re.search(r"(?im)^\s*Response at\b", line):
-                lines.insert(i, new_line)
-                return "\n".join(lines)
+        def _to_num(s: str):
+            s = (s or "").strip().replace(",", ".")
+            try:
+                if "." in s:
+                    return float(s)
+                return int(s)
+            except Exception:
+                try:
+                    return float(s)
+                except Exception:
+                    return None
 
-        return text.rstrip() + "\n\n" + new_line
+        def _fmt_delta(d):
+            # keep integer formatting where possible
+            try:
+                if isinstance(d, float) and abs(d - round(d)) < 1e-9:
+                    d = int(round(d))
+            except Exception:
+                pass
+            if isinstance(d, (int, float)):
+                if d == 0:
+                    return "Δ0"
+                if isinstance(d, float):
+                    ds = f"{d:.2f}".rstrip("0").rstrip(".")
+                    if not ds.startswith("-"):
+                        ds = "+" + ds
+                    return "Δ" + ds
+                return f"Δ{d:+d}"
+            return "Δ0"
+
+        # Replace each dimension's delta while keeping the value
+        dim_re = re.compile(
+            r"(?P<label>Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality)\s+"
+            r"(?P<val>[0-9]+(?:[.,][0-9]+)?)\s*"
+            r"\(\s*Δ\s*(?P<delta>[+-]?\d+(?:[.,]\d+)?)\s*\)",
+            re.IGNORECASE,
+        )
+
+        def _repl(m):
+            label = m.group("label")
+            # Normalize label casing to match our mapping keys
+            label_norm = label[0].upper() + label[1:].lower()
+            key = label_to_key.get(label_norm)
+            if not key:
+                return m.group(0)
+            rng = qc_target.get(key)
+            if not (isinstance(rng, (list, tuple)) and len(rng) >= 2):
+                return m.group(0)
+
+            v = _to_num(m.group("val"))
+            if v is None:
+                return m.group(0)
+
+            try:
+                lo, hi = float(rng[0]), float(rng[1])
+                if lo > hi:
+                    lo, hi = hi, lo
+            except Exception:
+                return m.group(0)
+
+            if v < lo:
+                d = v - lo
+            elif v > hi:
+                d = v - hi
+            else:
+                d = 0
+
+            # Keep original value string as written by model
+            val_str = m.group("val")
+            return f"{label_norm} {val_str} ({_fmt_delta(d)})"
+
+        new_line = dim_re.sub(_repl, line)
+
+        # Ensure the line still starts with "QC-Matrix:" (unchanged), but keep original prefix if present.
+        lines[qc_idx] = new_line
+        return "\n".join(lines)
     except Exception:
         return text
 
@@ -4373,7 +4609,9 @@ class CSCRefiner:
             
             # QC Matrix Check (deterministic delta enforcement before alerting)
             try:
-                _prof = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
+                # IMPORTANT: use the same profile as shown in the header/rendering.
+                # This avoids false "expected Δ..." alerts if the runtime state changes mid-turn.
+                _prof = (prof or getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard')
                 enforced_txt = enforce_qc_footer_deltas(raw_response, gov, _prof)
                 cur_qc, rep_delta = gov.parse_qc_footer(enforced_txt)
                 if cur_qc:
@@ -4940,6 +5178,16 @@ class CSCRefiner:
             if not msg:
                 return
             if getattr(self, 'chat_session', None):
+                # Rate limiting: count this pinned injection as an LLM call (best-effort).
+                try:
+                    if bool(getattr(self, 'rate_limit_enabled', True)) and getattr(self, 'rate_limiter', None) is not None:
+                        _prov = (self._active_provider() or 'gemini').strip().lower()
+                        _model = str(getattr(self, 'model_name', '') or '') if _prov == 'gemini' else ''
+                        ok, _m = self.rate_limiter.allow_call(provider=_prov, model=_model, reason='pinned', consume=True)
+                        if not ok:
+                            return
+                except Exception:
+                    pass
                 _ = self.chat_session.send_message(msg)
             self._gov_pinned_sent = True
             self._gov_pinned_fp = fp
@@ -4966,6 +5214,16 @@ class CSCRefiner:
                 + line
                 + "\nInstruction: Use this state for all subsequent answers. Reply exactly with 'ACK'."
             )
+            # Rate limiting: count state update as an LLM call (best-effort).
+            try:
+                if bool(getattr(self, 'rate_limit_enabled', True)) and getattr(self, 'rate_limiter', None) is not None:
+                    _prov = (self._active_provider() or 'gemini').strip().lower()
+                    _model = str(getattr(self, 'model_name', '') or '') if _prov == 'gemini' else ''
+                    ok, _m = self.rate_limiter.allow_call(provider=_prov, model=_model, reason='state_update', consume=True)
+                    if not ok:
+                        return
+            except Exception:
+                pass
             _ = self.chat_session.send_message(msg)
         except Exception:
             pass
@@ -5731,20 +5989,38 @@ class CSCRefiner:
             # Rate limiting (LLM calls only)
             try:
                 if bool(getattr(self, 'rate_limit_enabled', True)) and getattr(self, 'rate_limiter', None) is not None:
-                    ok, msg = self.rate_limiter.allow()
+                    _provider_rl = (provider_now or 'gemini').strip().lower()
+                    _model_rl = ''
+                    try:
+                        if _provider_rl == 'gemini':
+                            _model_rl = str(getattr(self, 'model_name', '') or '')
+                            if not _model_rl:
+                                _model_rl = str(getattr(cfg, 'get_model', lambda: '')() or '')
+                        elif _provider_rl in ('openrouter', 'openai', 'openai_compat'):
+                            fb = str(getattr(cfg, 'get_model', lambda: '')() or '')
+                            _model_rl = (self._provider_model('openrouter', fallback_model=fb) or '').strip()
+                        elif _provider_rl in ('huggingface', 'hf'):
+                            fb = str(getattr(cfg, 'get_model', lambda: '')() or '')
+                            _model_rl = (self._provider_model('huggingface', fallback_model=fb) or '').strip()
+                    except Exception:
+                        _model_rl = ''
+
+                    ok, msg, retry_s = self.rate_limiter.allow_call(provider=_provider_rl, model=_model_rl, reason='chat', consume=True, return_retry=True)
                     if not ok:
                         ts = datetime.now().isoformat()
                         warn = (
                             "<div style='border:1px solid #fca5a5; background:#fef2f2; padding:10px; "
                             "border-radius:10px; margin:8px 0; color:#991b1b;'>"
                             "<b>CONTROL LAYER BLOCK:</b><br>" + html.escape(str(msg)) +
+                                        "<br><span style='font-size:12px; color:#7f1d1d;'>Retry after " + html.escape(str(retry_s)) + "s</span>" +
                             "<br><span style='font-size:12px; color:#7f1d1d;'>"
-                            "Tip: adjust limits in Comm-SCI-Config.json (rate_limit_per_minute / rate_limit_per_hour)"
+                            "Tip: adjust limits in Config/Comm-SCI-Config.json (rate_limit_per_minute / rate_limit_per_hour; optional rate_limit_scopes)"
                             "</span></div>"
                         )
                         return {"html": warn + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None}
             except Exception:
                 pass
+
 
             raw_resp = self._llm_call(send_txt, reason="chat")
 
@@ -5818,6 +6094,40 @@ class CSCRefiner:
                         )
                         # Respect answer-language preference.
                         repair_for_model = self._apply_output_prefs_to_user_message(repair_prompt)
+                        # Rate limiting (repair pass counts as an extra LLM call)
+                        try:
+                            if bool(getattr(self, 'rate_limit_enabled', True)) and getattr(self, 'rate_limiter', None) is not None:
+                                _provider_rl = (provider_now or 'gemini').strip().lower()
+                                _model_rl = ''
+                                try:
+                                    if _provider_rl == 'gemini':
+                                        _model_rl = str(getattr(self, 'model_name', '') or '')
+                                        if not _model_rl:
+                                            _model_rl = str(getattr(cfg, 'get_model', lambda: '')() or '')
+                                    elif _provider_rl in ('openrouter', 'openai', 'openai_compat'):
+                                        fb = str(getattr(cfg, 'get_model', lambda: '')() or '')
+                                        _model_rl = (self._provider_model('openrouter', fallback_model=fb) or '').strip()
+                                    elif _provider_rl in ('huggingface', 'hf'):
+                                        fb = str(getattr(cfg, 'get_model', lambda: '')() or '')
+                                        _model_rl = (self._provider_model('huggingface', fallback_model=fb) or '').strip()
+                                except Exception:
+                                    _model_rl = ''
+
+                                ok, msg, retry_s = self.rate_limiter.allow_call(provider=_provider_rl, model=_model_rl, reason='repair', consume=True, return_retry=True)
+                                if not ok:
+                                    ts = datetime.now().isoformat()
+                                    warn = (
+                                        "<div style='border:1px solid #fca5a5; background:#fef2f2; padding:10px; "
+                                        "border-radius:10px; margin:8px 0; color:#991b1b;'>"
+                                        "<b>CONTROL LAYER BLOCK:</b><br>" + html.escape(str(msg)) +
+                                        "<br><span style='font-size:12px; color:#7f1d1d;'>"
+                                        "Tip: adjust limits in Config/Comm-SCI-Config.json (rate_limit_per_minute / rate_limit_per_hour; optional rate_limit_scopes)"
+                                        "</span></div>"
+                                    )
+                                    return {"html": warn + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None}
+                        except Exception:
+                            pass
+
                         raw2 = self._llm_call(repair_for_model, reason="repair")
 
                         # Session token stats (repair pass)
@@ -8058,9 +8368,9 @@ class Api(CSCRefiner):
                 self.rate_limit_enabled = bool(conf.get('rate_limit_enabled', True))
                 per_m = int(conf.get('rate_limit_per_minute', 30) or 30)
                 per_h = int(conf.get('rate_limit_per_hour', 120) or 120)
-                self.rate_limiter = RateLimiter(per_minute=per_m, per_hour=per_h)
+                self.rate_limiter = RateLimiter(per_minute=per_m, per_hour=per_h, scopes=conf.get('rate_limit_scopes'))
         except Exception:
-            self.rate_limiter = RateLimiter(per_minute=30, per_hour=120)
+            self.rate_limiter = RateLimiter(per_minute=30, per_hour=120, scopes=None)
 
         # Model client/chat (initialized later)
         self.client = None

@@ -3,25 +3,25 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for fix14.
+"""Unified pytest suite for fix70.
 
 Place this file in the same folder as:
-- 03-12-Gemini_JSON-19.6.8-b20-006-fix17-crossversionguard.py
+- Wrapper-070.py    
 - Comm-SCI-v19.6.8.json
 
 Run:
-  pytest -vv test_comm_sci_fix14_all.py
+  pytest -vv tTest-065.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / '03-12-Gemini_JSON-19.6.8-b20-009-fix19-crossversionguard.py'
+FIX_PATH = HERE / 'Wrapper-070.py'
 JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
 
 
 def load_fix_module():
-    spec = importlib.util.spec_from_file_location('comm_sci_fix14_mod', FIX_PATH)
+    spec = importlib.util.spec_from_file_location('Wrapper-069', FIX_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     spec.loader.exec_module(module)  # type: ignore[attr-defined]
@@ -103,7 +103,10 @@ def _extract_html(out):
 
 
 def _prime_module_gov(mod):
-    """Inject canonical JSON into the module-level gov so Api() uses the real rules."""
+    """Inject canonical JSON into the module-level gov so Api() uses the real rules.
+
+    Also force provider selection to Gemini for deterministic unit tests (no network calls).
+    """
     data = load_ruleset_data()
     mod.gov.data = data
     mod.gov.loaded = True
@@ -111,8 +114,32 @@ def _prime_module_gov(mod):
         mod.gov.filepath = str(JSON_PATH)
     except Exception:
         pass
-    return data
 
+    # Deterministic provider for tests: avoid accidental HTTP calls if user's config selects OpenRouter/HF.
+    try:
+        cfg = getattr(mod, 'cfg', None)
+        conf = getattr(cfg, 'config', None)
+        if isinstance(conf, dict):
+            conf['active_provider'] = 'gemini'
+            # Keep legacy 'model' key coherent for Gemini
+            if isinstance(conf.get('model'), str) and conf.get('model').strip():
+                pass
+            else:
+                conf['model'] = conf.get('model') or 'gemini-2.0-flash'
+    except Exception:
+        pass
+
+    # Force deterministic provider for unit tests: avoid accidental real network calls
+    try:
+        if hasattr(mod, 'cfg') and getattr(mod, 'cfg', None) is not None:
+            c = getattr(mod.cfg, 'config', None)
+            if isinstance(c, dict):
+                c['active_provider'] = 'gemini'
+                # keep a sane default model key for gemini path
+                c.setdefault('model', c.get('model') or 'gemini-2.0-flash')
+    except Exception:
+        pass
+    return data
 
 # ------------------------
 # Routing / Numeric guard
@@ -257,6 +284,52 @@ def test_one_repair_pass_is_applied_once_when_validator_reports_hard_violations(
     text = _extract_text(out)
     assert isinstance(text, str) and text
     assert 'REPAIRED RESPONSE' in text
+
+
+
+def test_repair_pass_is_rate_limited_counts_as_second_call():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+
+    # Stub CSC strict to a no-op so we can focus purely on repair + limiter behavior.
+    api._apply_csc_strict = lambda text, user_raw=None, is_command=False: (text, None)
+
+    class DummyValidator:
+        def __init__(self):
+            self.validate_calls = 0
+
+        def _required_trace_steps_for_variant(self, vk: str):
+            return []
+
+        def validate(self, *, text, state, expect_menu, expect_trace, is_command, user_prompt):
+            self.validate_calls += 1
+            return ["Hard violation: missing contract block"], []
+
+        def build_repair_prompt(self, *, user_prompt, raw_response, state, hard_violations, soft_violations):
+            return "REPAIR: produce compliant output"
+
+    api.validator = DummyValidator()
+
+    # Rate limit: allow only ONE call per minute -> repair pass must be blocked.
+    api.rate_limit_enabled = True
+    api.rate_limiter = mod.RateLimiter(per_minute=1, per_hour=100, clock=lambda: 0.0)
+
+    dummy = DummySession([
+        "BAD RESPONSE (no required blocks)",
+        "REPAIRED RESPONSE SHOULD NOT BE CONSUMED",
+    ])
+    api.chat_session = dummy
+
+    out = api.ask("Hello")
+
+    # Only the first model call must happen; repair attempt should be blocked before calling the model.
+    assert len(dummy.calls) == 1, "Repair pass must count as a second call and be blocked by the limiter"
+
+    text = _extract_text(out)
+    assert "CONTROL LAYER BLOCK" in text
+    assert "Reason: repair" in text
 
 
 # -----------------------------
@@ -490,4 +563,90 @@ def test_cross_version_guard_emits_control_layer_warning_and_keeps_active_versio
     assert 'Cross-Version' in txt
     assert active_ver in txt
     assert foreign_ver not in txt
+    assert len(dummy.calls) == 1
+
+
+# -----------------------------
+# Rate limiting: core + integration
+# -----------------------------
+
+def test_rate_limiter_core_blocks_with_retry_after():
+    mod = load_fix_module()
+
+    # Deterministic clock
+    t = {'now': 1000.0}
+    def clock():
+        return t['now']
+
+    rl = mod.RateLimiter(per_minute=2, per_hour=0, clock=clock)
+
+    ok1, _, r1 = rl.allow_call(reason='chat', return_retry=True)
+    ok2, _, r2 = rl.allow_call(reason='chat', return_retry=True)
+    ok3, msg3, r3 = rl.allow_call(reason='chat', return_retry=True)
+
+    assert ok1 is True and ok2 is True
+    assert r1 == 0 and r2 == 0
+    assert r3 >= 1
+
+    assert ok3 is False
+    assert 'Retry after' in msg3
+    assert r3 == 60
+
+    # After 60s it should allow again
+    t['now'] += 60.0
+    ok4, _, r4 = rl.allow_call(reason='chat', return_retry=True)
+    assert ok4 is True
+    assert r4 == 0
+
+
+def test_api_ask_rate_limit_blocks_without_model_call():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None  # isolate behavior
+
+    # Force a very tight limiter: 1/minute, and consume one slot immediately.
+    api.rate_limit_enabled = True
+    api.rate_limiter = mod.RateLimiter(per_minute=1, per_hour=0)
+    _ = api.rate_limiter.allow_call(reason='pre')
+
+    dummy = DummySession([
+        "OK\nQC-Matrix: Clarity 3 (Δ0) · Brevity 3 (Δ0) · Evidence 3 (Δ0) · Empathy 3 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)",
+    ])
+    api.chat_session = dummy
+
+    out = api.ask("Hello")
+
+    # Must not call the model if blocked.
+    assert dummy.calls == []
+
+    text = _extract_text(out)
+    assert isinstance(text, str) and text
+    assert 'CONTROL LAYER BLOCK' in text
+    assert 'Rate limit exceeded' in text
+    assert 'Retry after' in text
+
+
+def test_no_network_calls_via_urllib_urlopen(monkeypatch):
+    # Safety net: unit tests must never perform real HTTP calls.
+    import urllib.request as _urlreq
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("Network call attempted (urllib.request.urlopen)")
+
+    monkeypatch.setattr(_urlreq, "urlopen", _boom, raising=True)
+
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None  # isolate behavior
+
+    dummy = DummySession([
+        "OK\nQC-Matrix: Clarity 3 (Δ0) · Brevity 3 (Δ0) · Evidence 3 (Δ0) · Empathy 3 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)",
+    ])
+    api.chat_session = dummy
+
+    _out = api.ask("Hello")
     assert len(dummy.calls) == 1
