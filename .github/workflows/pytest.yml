@@ -25,5 +25,8 @@ jobs:
       - name: Run tests
         env:
           OPENROUTER_API_KEY: ""
+        # run: |
+        #  python -m pytest -vv -s --tb=long Test-070.py
+        - name: Run tests
         run: |
-          python -m pytest -vv -s --tb=long Test-070.py
+          python -m pytest -vv -s --tb=long
