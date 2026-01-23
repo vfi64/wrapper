@@ -3,25 +3,28 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for fix70.
+"""Unified pytest suite for Wrapper-071.
 
-Place this file in the same folder as:
-- Wrapper-071.py    
-- Comm-SCI-v19.6.8.json
+Expected repo layout:
+- Wrapper-071.py
+- Test-071.py
+- JSON/Comm-SCI-v19.6.8.json
 
 Run:
-  pytest -vv tTest-065.py
+  python -m pytest -vv -s --tb=long Test-071.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
 FIX_PATH = HERE / 'Wrapper-071.py'
-JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
+# Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
+_json_candidate = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
+JSON_PATH = _json_candidate if _json_candidate.exists() else (HERE / 'Comm-SCI-v19.6.8.json')
 
 
 def load_fix_module():
-    spec = importlib.util.spec_from_file_location('Wrapper-069', FIX_PATH)
+    spec = importlib.util.spec_from_file_location('Wrapper-071', FIX_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     spec.loader.exec_module(module)  # type: ignore[attr-defined]
