@@ -3,27 +3,27 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-072.
+"""Unified pytest suite for Wrapper-074.
 
 Expected repo layout:
-- Wrapper-073.py
-- Test-073.py
+- Wrapper-076.py
+- Test-076.py
 - JSON/Comm-SCI-v19.6.8.json
 
 Run:
-  python -m pytest -vv -s --tb=long Test-073.py
+  python -m pytest -vv -s --tb=long Test-076.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-073.py'
+FIX_PATH = HERE / 'Wrapper-076.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
 
 
 def load_fix_module():
-    spec = importlib.util.spec_from_file_location('Wrapper-072', FIX_PATH)
+    spec = importlib.util.spec_from_file_location('Wrapper-074', FIX_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     spec.loader.exec_module(module)  # type: ignore[attr-defined]
@@ -652,3 +652,65 @@ def test_no_network_calls_via_urllib_urlopen(monkeypatch):
 
     _out = api.ask("Hello")
     assert len(dummy.calls) == 1
+
+
+from datetime import datetime
+
+
+def test_export_v2_schema():
+    mod = load_fix_module()
+    api = mod.Api()
+    # create at least one history entry
+    api.history.append({'role': 'user', 'content': 'test', 'ts': datetime.now().isoformat()})
+    _, audit_path = api.export_audit_v2(audit_only=True)
+    data = json.loads(Path(audit_path).read_text(encoding='utf-8'))
+    assert data.get('export_version') == '2.0'
+    assert 'session_metadata' in data
+    assert 'environment' in data
+    assert 'provider_config' in data
+    assert 'governance_config' in data
+
+
+def test_export_v2_no_secrets():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.history.append({'role': 'user', 'content': 'test', 'ts': datetime.now().isoformat()})
+    _, audit_path = api.export_audit_v2(audit_only=True)
+    raw = Path(audit_path).read_text(encoding='utf-8')
+    # Must not contain typical key/token prefixes
+    assert 'sk-' not in raw
+    assert 'hf_' not in raw
+    # Allow mentioning env var names as sources
+    assert '"api_key"' not in raw.lower()  # should not contain actual key fields
+
+
+def test_export_v2_timestamps_present():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.history.append({'role': 'user', 'content': 'u', 'ts': datetime.now().isoformat()})
+    api.history.append({'role': 'bot', 'content': 'b', 'ts': datetime.now().isoformat()})
+    _, audit_path = api.export_audit_v2(audit_only=True)
+    data = json.loads(Path(audit_path).read_text(encoding='utf-8'))
+    for msg in data.get('conversation', []):
+        assert 'ts' in msg
+
+
+def test_export_v2_provider_config_minimum():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.history.append({'role': 'user', 'content': 'test', 'ts': datetime.now().isoformat()})
+    _, audit_path = api.export_audit_v2(audit_only=True)
+    data = json.loads(Path(audit_path).read_text(encoding='utf-8'))
+    pc = data.get('provider_config') or {}
+    assert 'active_provider' in pc
+    assert 'model' in pc
+
+
+def test_export_v2_ruleset_hash_present_or_unknown():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.history.append({'role': 'user', 'content': 'test', 'ts': datetime.now().isoformat()})
+    _, audit_path = api.export_audit_v2(audit_only=True)
+    data = json.loads(Path(audit_path).read_text(encoding='utf-8'))
+    rh = (data.get('governance_config') or {}).get('ruleset_hash', 'unknown')
+    assert rh == 'unknown' or str(rh).startswith('sha256:')

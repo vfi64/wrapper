@@ -71,205 +71,151 @@ class _NullContext:
 
 
 class RateLimiter:
-    """In-memory sliding-window limiter for LLM calls.
+    """Simple sliding-window rate limiter (minute/hour) with optional scopes.
 
-    Goals:
-    - Cheap, dependency-free, testable.
-    - Backward compatible with the old API: allow() -> (ok: bool, msg: str)
+    Global scope is always enforced. Provider/model scopes are enforced only if configured
+    in `scopes` during initialization.
 
-    Concepts:
-    - Scopes: 'global' plus optional fine-grained keys like:
-        * 'provider:gemini'
-        * 'provider:openrouter'
-        * 'provider:huggingface'
-        * 'model:openrouter:<model_id>'
-      Scopes are only enforced if configured; otherwise only 'global' applies.
+    Interface for tests:
+      - allow_call(..., return_retry=True) -> (ok, msg, retry_after_s)
+      - allow_call(..., return_retry=False) -> (ok, msg)
     """
 
-    def __init__(self, *, per_minute: int = 30, per_hour: int = 120, scopes: dict | None = None, clock=None):
-        import time as _time
-        self._clock = clock or getattr(_time, 'monotonic', _time.time)
+    def __init__(
+        self,
+        per_minute: int = 0,
+        per_hour: int = 0,
+        *,
+        scopes=None,
+        clock=None,
+    ):
+        from collections import defaultdict, deque
+        import threading
 
-        # Normalize limits
-        self.per_minute = int(per_minute or 0)
-        self.per_hour = int(per_hour or 0)
+        self._clock = clock or time.time
+        self._lock = threading.Lock()
 
-        self._limits = {'global': {'per_minute': self.per_minute, 'per_hour': self.per_hour}}
+        self._limits = {
+            "global": {"per_minute": int(per_minute or 0), "per_hour": int(per_hour or 0)}
+        }
 
-        # Merge optional scopes (backward compatible; ignore malformed structures)
-        self._merge_scopes(scopes or {})
-
-        # Per-scope timestamp deques
-        self._events = defaultdict(deque)
-
-        # Defensive thread-safety (pywebview callbacks may interleave)
-        import threading as _threading
-        self._lock = _threading.Lock()
-
-    def _merge_scopes(self, scopes: dict):
-        try:
-            if not isinstance(scopes, dict):
-                return
-            # Support both flat and nested structures:
-            #   flat: {'provider:openrouter': {'per_minute': 10, 'per_hour': 50}}
-            #   nested: {'global': {...}, 'providers': {'openrouter': {...}}, 'models': {'openrouter': {'<id>': {...}}}}
-            flat = {}
-            for k, v in scopes.items():
-                if not isinstance(v, dict):
+        # Optional per-scope overrides
+        if isinstance(scopes, dict):
+            for sc, lim in scopes.items():
+                try:
+                    self._limits[str(sc)] = {
+                        "per_minute": int((lim or {}).get("per_minute", 0) or 0),
+                        "per_hour": int((lim or {}).get("per_hour", 0) or 0),
+                    }
+                except Exception:
                     continue
-                flat[str(k)] = v
 
-            # Nested provider limits
-            provs = scopes.get('providers') if isinstance(scopes, dict) else None
-            if isinstance(provs, dict):
-                for pname, lim in provs.items():
-                    if isinstance(lim, dict):
-                        flat[f'provider:{str(pname).strip().lower()}'] = lim
+        self._buckets = defaultdict(deque)
 
-            # Nested model limits (optional)
-            mods = scopes.get('models') if isinstance(scopes, dict) else None
-            if isinstance(mods, dict):
-                for pname, models in mods.items():
-                    if not isinstance(models, dict):
-                        continue
-                    for mid, lim in models.items():
-                        if isinstance(lim, dict):
-                            p = str(pname).strip().lower()
-                            m = str(mid).strip()
-                            if p and m:
-                                flat[f'model:{p}:{m}'] = lim
-
-            # Apply
-            for sk, lim in flat.items():
-                if not isinstance(lim, dict):
-                    continue
-                pm = lim.get('per_minute', None)
-                ph = lim.get('per_hour', None)
-                if pm is None and ph is None:
-                    continue
-                key = str(sk).strip()
-                if not key:
-                    continue
-                cur = dict(self._limits.get(key, {}))
-                if pm is not None:
-                    try:
-                        cur['per_minute'] = int(pm or 0)
-                    except Exception:
-                        pass
-                if ph is not None:
-                    try:
-                        cur['per_hour'] = int(ph or 0)
-                    except Exception:
-                        pass
-                # Ensure missing keys fall back to global defaults
-                if 'per_minute' not in cur:
-                    cur['per_minute'] = self.per_minute
-                if 'per_hour' not in cur:
-                    cur['per_hour'] = self.per_hour
-                self._limits[key] = cur
-        except Exception:
-            # Never crash caller
-            return
-
-    def _prune(self, scope: str, now: float):
-        dq = self._events[scope]
-        # prune older than 1 hour (largest supported window)
-        cutoff_h = now - 3600.0
-        while dq and dq[0] < cutoff_h:
+    def _prune(self, dq, now: float):
+        cutoff = now - 3600.0
+        while dq and dq[0] < cutoff:
             dq.popleft()
 
+    def _count_last_minute(self, dq, now: float):
+        cutoff = now - 60.0
+        c = 0
+        for t in reversed(dq):
+            if t >= cutoff:
+                c += 1
+            else:
+                break
+        return c
+
     def _check_one_scope(self, scope: str, now: float):
-        lim = self._limits.get(scope) or self._limits.get('global') or {}
-        per_h = int(lim.get('per_hour', 0) or 0)
-        per_m = int(lim.get('per_minute', 0) or 0)
+        lim = self._limits.get(scope) or {"per_minute": 0, "per_hour": 0}
+        per_h = int(lim.get("per_hour", 0) or 0)
+        per_m = int(lim.get("per_minute", 0) or 0)
 
-        dq = self._events[scope]
-        self._prune(scope, now)
+        dq = self._buckets[scope]
+        self._prune(dq, now)
 
-        # Hour window
+        worst_retry = 0.0
+        worst_msg = ""
+
         if per_h > 0 and len(dq) >= per_h:
-            retry = max(0.0, (dq[0] + 3600.0) - now)
-            return False, retry, f"Rate limit exceeded: {per_h}/hour (scope: {scope})"
+            earliest = dq[0]
+            retry = max(0.0, (earliest + 3600.0) - now)
+            worst_retry = retry
+            worst_msg = f"Rate limit exceeded (hourly) for scope '{scope}': {per_h}/hour"
 
-        # Minute window
         if per_m > 0:
-            cutoff_m = now - 60.0
-            # count events in last minute
-            n_m = 0
-            for t in reversed(dq):
-                if t <= cutoff_m:
-                    break
-                n_m += 1
-            if n_m >= per_m:
-                # find the event that will drop the count below the limit
-                # (oldest event within the last-minute window among the last 'per_m' events)
-                recent = [t for t in dq if t > cutoff_m]
-                # recent is already sorted
-                if recent and len(recent) >= per_m:
-                    t_block = recent[len(recent) - per_m]  # earliest among the last 'per_m' events
-                    retry = max(0.0, (t_block + 60.0) - now)
-                else:
-                    retry = 60.0
-                return False, retry, f"Rate limit exceeded: {per_m}/minute (scope: {scope})"
+            used = self._count_last_minute(dq, now)
+            if used >= per_m:
+                cutoff = now - 60.0
+                oldest_in_window = None
+                for t in dq:
+                    if t >= cutoff:
+                        oldest_in_window = t
+                        break
+                if oldest_in_window is None:
+                    oldest_in_window = dq[-1] if dq else now
+                retry = max(0.0, (oldest_in_window + 60.0) - now)
+                if retry >= worst_retry:
+                    worst_retry = retry
+                    worst_msg = f"Rate limit exceeded (per-minute) for scope '{scope}': {per_m}/min"
 
-        return True, 0.0, "ok"
+        ok = (worst_retry <= 0.0)
+        return ok, worst_retry, worst_msg
 
-    def allow_call(self, *, provider: str = "", model: str = "", reason: str = "", consume: bool = True, return_retry: bool = False):
-        """Check (and optionally consume) a slot for an LLM call.
+    def allow_call(
+        self,
+        *,
+        provider: str = "",
+        model: str = "",
+        reason: str = "",
+        consume: bool = True,
+        return_retry: bool = False,
+    ):
+        with self._lock:
+            now = float(self._clock())
 
-        Returns (ok: bool, msg: str) by default.
-        If return_retry=True, returns (ok: bool, msg: str, retry_after_s: int).
-        """
-        with getattr(self, '_lock', None) or _NullContext():
-                now = float(self._clock())
+            scopes = ["global"]
+            p = (provider or "").strip().lower()
+            m = (model or "").strip()
 
-                # Decide which scopes to enforce. Only enforce configured scopes.
-                scopes = ['global']
-                p = (provider or '').strip().lower()
-                m = (model or '').strip()
+            # optional scopes only if configured
+            if p and f"provider:{p}" in self._limits:
+                scopes.append(f"provider:{p}")
+            if p and m and f"model:{p}:{m}" in self._limits:
+                scopes.append(f"model:{p}:{m}")
 
-                if p and f'provider:{p}' in self._limits:
-                    scopes.append(f'provider:{p}')
-                if p and m and f'model:{p}:{m}' in self._limits:
-                    scopes.append(f'model:{p}:{m}')
+            worst_retry = 0.0
+            worst_msg = ""
 
-                # Check all scopes first, find the strongest block (max retry)
-                worst_retry = 0.0
-                worst_msg = ""
-                for sc in scopes:
-                    ok, retry, msg = self._check_one_scope(sc, now)
-                    if not ok:
-                        if retry >= worst_retry:
-                            worst_retry = retry
-                            worst_msg = msg
+            for sc in scopes:
+                ok, retry, msg = self._check_one_scope(sc, now)
+                if not ok and retry >= worst_retry:
+                    worst_retry = retry
+                    worst_msg = msg or worst_msg
 
-                if worst_msg:
-                    retry_s = int(worst_retry + 0.999)  # ceiling seconds
-                    hint = f"{worst_msg}. Retry after {retry_s}s."
-                    if reason:
-                        hint += f" Reason: {reason}."
-                    if p:
-                        hint += f" Provider: {p}."
-                    if m:
-                        hint += f" Model: {m}."
-                    if return_retry:
-                        return False, hint, retry_s
-                    return False, hint
-
-                if consume:
-                    for sc in scopes:
-                        self._events[sc].append(now)
-
+            if worst_retry > 0.0:
+                retry_s = int(worst_retry + 0.999)  # ceil
+                msg = worst_msg or "Rate limit exceeded"
+                # Unit-test contract: message includes a Retry-after hint
+                msg = f"{msg} | Retry after {retry_s}s"
+                if reason:
+                    msg = f"{msg} | Reason: {reason}"
                 if return_retry:
-                    return True, "ok", 0
-                return True, "ok"
+                    return False, msg, retry_s
+                return False, msg
 
+            if consume:
+                for sc in scopes:
+                    self._buckets[sc].append(now)
+
+            if return_retry:
+                return True, "", 0
+            return True, ""
+
+    # Backward-compatible API
     def allow(self):
-        """Backward-compatible API (global scope only)."""
-        return self.allow_call(consume=True)
-
-
-
+        return self.allow_call()
 def _derive_fernet_key(passphrase: str, salt_b64: str) -> bytes:
     """Derive a Fernet key from passphrase + salt (urlsafe base64)."""
     salt = base64.urlsafe_b64decode((salt_b64 or '').encode('utf-8'))
@@ -464,7 +410,8 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
         return {"kind": "noop"}
 
     # Resolve ruleset / commands safely (no assumptions about globals).
-    gov_obj = gov_manager or getattr(api_instance, 'gov', None) or globals().get('gov')
+    # Prefer explicit injection; otherwise use the Api instance.
+    gov_obj = gov_manager or getattr(api_instance, 'gov', None)
     commands = {}
     try:
         commands = (getattr(gov_obj, 'data', {}) or {}).get('commands', {}) or {}
@@ -6016,11 +5963,17 @@ class CSCRefiner:
                         elif _provider_rl in ('huggingface', 'hf'):
                             fb = str(getattr(cfg, 'get_model', lambda: '')() or '')
                             _model_rl = (self._provider_model('huggingface', fallback_model=fb) or '').strip()
+                            self.session_requests = int(getattr(self, 'session_requests', 0) or 0) + 1
                     except Exception:
                         _model_rl = ''
 
                     ok, msg, retry_s = self.rate_limiter.allow_call(provider=_provider_rl, model=_model_rl, reason='chat', consume=True, return_retry=True)
                     if not ok:
+                        try:
+                            self.session_rate_limit_hits = int(getattr(self, 'session_rate_limit_hits', 0) or 0) + 1
+                            self.session_events.append({'ts': datetime.now().isoformat(), 'type': 'rate_limit_hit', 'data': {'message': msg}})
+                        except Exception:
+                            pass
                         ts = datetime.now().isoformat()
                         warn = (
                             "<div style='border:1px solid #fca5a5; background:#fef2f2; padding:10px; "
@@ -6098,6 +6051,11 @@ class CSCRefiner:
                     )
 
                     if hard_vios:
+                        try:
+                            self.session_repair_passes = int(getattr(self, 'session_repair_passes', 0) or 0) + 1
+                            self.session_events.append({'ts': datetime.now().isoformat(), 'type': 'repair_pass', 'data': {'violations': list(hard_vios)}})
+                        except Exception:
+                            pass
                         # Exactly ONE repair pass via the model.
                         repair_prompt = validator.build_repair_prompt(
                             user_prompt=raw_txt,
@@ -6141,6 +6099,7 @@ class CSCRefiner:
                                     return {"html": warn + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None}
                         except Exception:
                             pass
+                            self.session_requests = int(getattr(self, 'session_requests', 0) or 0) + 1
 
                         raw2 = self._llm_call(repair_for_model, reason="repair")
 
@@ -6198,6 +6157,11 @@ class CSCRefiner:
 
             # --- Render ONCE (CSC renderer produces final HTML) ---
             final_work, meta = self._apply_csc_strict(repaired_raw, user_raw=raw_txt, is_command=False)
+            try:
+                if isinstance(meta, dict) and meta.get('applied'):
+                    self.session_csc_applied_count = int(getattr(self, 'session_csc_applied_count', 0) or 0) + 1
+            except Exception:
+                pass
             # If CSC was applied on prompt-side, prefer that metadata when renderer didn't produce any.
             if (meta is None) and pre_meta is not None:
                 meta = pre_meta
@@ -6213,6 +6177,10 @@ class CSCRefiner:
             # Cross-Version Guard: if user text contained foreign Comm-SCI version tokens, show a deterministic alert.
             try:
                 _hits = list(getattr(self.gov_state, 'cross_version_guard_hits', []) or [])
+                try:
+                    self.session_guard_hits = int(getattr(self, 'session_guard_hits', 0) or 0) + len(_hits)
+                except Exception:
+                    pass
                 if _hits and bool(getattr(self.gov_state, 'comm_active', False)):
                     _hits_s = ', '.join(str(x) for x in _hits)
                     _active_v = str((self.gov.data or {}).get('version', '') or '').strip()
@@ -6878,6 +6846,151 @@ class CSCRefiner:
             print(f"[System] Export-Error (Audit): {e}")
 
         return chat_path, audit_path
+
+    def _provider_snapshot(self) -> dict:
+        """Sanitized provider config snapshot (no secrets). Best-effort."""
+        try:
+            provider = 'unknown'
+            try:
+                if hasattr(self, '_active_provider'):
+                    provider = self._active_provider() or 'unknown'
+            except Exception:
+                provider = 'unknown'
+
+            model = None
+            try:
+                model = cfg_get_model()
+            except Exception:
+                model = None
+
+            snap = {
+                'active_provider': provider or 'unknown',
+                'model': model or 'unknown',
+            }
+
+            # Provider-specific (best-effort)
+            if provider == 'gemini':
+                snap['temperature'] = 0.0
+                snap['top_p'] = 0.1
+                snap['max_tokens'] = 65536
+                snap['api_key_source'] = (
+                    'env:GEMINI_API_KEY' if os.getenv('GEMINI_API_KEY')
+                    else 'env:GOOGLE_API_KEY' if os.getenv('GOOGLE_API_KEY')
+                    else 'file:Config/Comm-SCI-API-Keys.json'
+                )
+            elif provider == 'openrouter':
+                snap['api_key_source'] = (
+                    'env:OPENROUTER_API_KEY' if os.getenv('OPENROUTER_API_KEY')
+                    else 'file:Config/Comm-SCI-API-Keys.json'
+                )
+                try:
+                    snap['base_url'] = getattr(getattr(self, 'provider_router', None), 'openrouter_base_url', None) or 'unknown'
+                except Exception:
+                    snap['base_url'] = 'unknown'
+            elif provider == 'huggingface':
+                snap['api_key_source'] = (
+                    'env:HF_TOKEN' if os.getenv('HF_TOKEN')
+                    else 'file:Config/Comm-SCI-API-Keys.json'
+                )
+            return snap
+        except Exception:
+            return {'active_provider': 'unknown', 'model': 'unknown'}
+
+
+    def export_audit_v2(self, *, audit_event=None, audit_only: bool = False):
+        """Enhanced audit export (v2). Keeps legacy export() untouched."""
+        import platform
+        import sys
+        import hashlib
+
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+
+        def file_hash(path: str) -> str:
+            try:
+                with open(path, 'rb') as f:
+                    return 'sha256:' + hashlib.sha256(f.read()).hexdigest()[:16]
+            except Exception:
+                return 'unknown'
+
+        def ruleset_hash() -> str:
+            try:
+                raw = getattr(gov, 'raw_json', '') or ''
+                if raw:
+                    return 'sha256:' + hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]
+                fn = getattr(gov, 'current_filename', '') or ''
+                return file_hash(fn) if fn else 'unknown'
+            except Exception:
+                return 'unknown'
+
+        def duration_seconds():
+            try:
+                start = getattr(self, 'session_start_dt', None)
+                if start:
+                    return int((datetime.now() - start).total_seconds())
+            except Exception:
+                pass
+            return None
+
+        payload = {
+            'export_version': '2.0',
+            'export_timestamp': datetime.now().isoformat(),
+            'session_metadata': {
+                'session_id': getattr(self, 'session_id', 'unknown'),
+                'session_start': getattr(self, 'session_start_dt', datetime.now()).isoformat(),
+                'session_end': datetime.now().isoformat(),
+                'duration_seconds': duration_seconds(),
+                'total_requests': getattr(self, 'session_requests', getattr(self, 'session_req_count', 0)),
+                'rate_limit_hits': getattr(self, 'session_rate_limit_hits', 0),
+                'repair_passes': getattr(self, 'session_repair_passes', 0),
+                'csc_applied_count': getattr(self, 'session_csc_applied_count', 0),
+                'cross_version_guard_hits': getattr(self, 'session_guard_hits', 0),
+            },
+            'environment': {
+                'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                'os': platform.system(),
+                'platform': platform.platform(),
+                'pywebview_version': getattr(webview, '__version__', 'unknown'),
+                'comm_sci_version': (getattr(gov, 'data', {}) or {}).get('version', 'unknown'),
+                'wrapper_file_hash': file_hash(__file__),
+            },
+            'provider_config': self._provider_snapshot(),
+            'governance_config': {
+                'ruleset_file': os.path.basename(getattr(gov, 'current_filename', 'unknown') or 'unknown'),
+                'ruleset_version': (getattr(gov, 'data', {}) or {}).get('version', 'unknown'),
+                'ruleset_hash': ruleset_hash(),
+                'default_profile': (getattr(gov, 'data', {}) or {}).get('default_profile', 'Standard'),
+                'cross_version_guard_enabled': True,
+            },
+            'conversation': getattr(self, 'history', []) or [],
+            'governance_logs_tail': (getattr(gov, 'logs', []) or [])[-50:],
+            'session_events': getattr(self, 'session_events', []) or [],
+        }
+
+        if audit_event:
+            payload['audit_event'] = audit_event
+
+        # Write audit file
+        audit_path = os.path.join(AUDIT_LOG_DIR, f"Audit_{ts}.json")
+        try:
+            os.makedirs(AUDIT_LOG_DIR, exist_ok=True)
+            with open(audit_path, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+            print(f"Exportiert (Audit v2): {audit_path}")
+        except Exception as e:
+            print(f"[Export] Audit v2 write failed: {e}")
+
+        chat_path = None
+        if not audit_only:
+            chat_path = os.path.join(CHAT_LOG_DIR, f"Log_{ts}.json")
+            try:
+                os.makedirs(CHAT_LOG_DIR, exist_ok=True)
+                with open(chat_path, 'w', encoding='utf-8') as f:
+                    json.dump({'meta': '19.14', 'model': cfg_get_model(), 'history': getattr(self, 'history', []) or []}, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"[Export] Chat write failed: {e}")
+
+        return chat_path, audit_path
+
     def get_ui(self):
         data = gov.get_ui_data()
         # Enrich with provider/model lists for panel dropdowns
@@ -7104,7 +7217,16 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
             chat_path, audit_path = self.export(audit_event=audit_event, audit_only=True)
         except Exception:
             try:
-                self.export(audit_event=audit_event)
+                try:
+                    if hasattr(self, 'export_audit_v2'):
+                        self.export_audit_v2(audit_event=audit_event, audit_only=True)
+                    else:
+                        self.export(audit_event=audit_event, audit_only=True)
+                except Exception:
+                    try:
+                        self.export(audit_event=audit_event)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -8339,6 +8461,19 @@ class Api(CSCRefiner):
         # Provider routing (single-file adapters)
         try:
             self.provider_router = ProviderRouter(globals().get('cfg'))
+            
+            # --- B5 MVP: Session tracking (best-effort, no secrets) ---
+            import uuid
+            self.session_id = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
+            self.session_start_dt = datetime.now()
+            self.session_requests = 0
+            self.session_rate_limit_hits = 0
+            self.session_repair_passes = 0
+            self.session_csc_applied_count = 0
+            self.session_guard_hits = 0
+            self.session_events = []  # list of {ts,type,data}
+            # --- /B5 ---
+            
         except Exception:
             self.provider_router = None
 
