@@ -7,7 +7,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,8 +24,5 @@ jobs:
       - name: Run tests
         env:
           OPENROUTER_API_KEY: ""
-        # run: |
-        #  python -m pytest -vv -s --tb=long Test-070.py
-        - name: Run tests
         run: |
           python -m pytest -vv -s --tb=long
