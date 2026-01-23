@@ -17,7 +17,8 @@ This suite avoids starting the GUI or doing real model calls.
 
 HERE = Path(__file__).resolve().parent
 FIX_PATH = HERE / 'Wrapper-070.py'
-JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
+# JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
+JSON_PATH = Path(__file__).resolve().parent / "JSON" / "Comm-SCI-v19.6.8.json"
 
 
 def load_fix_module():
