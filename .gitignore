@@ -1,0 +1,20 @@
+# Secrets
+Config/Comm-SCI-API-Keys.json
+Config/huggingface_catalog_cache.json
+Config/openrouter_models_cache.json
+
+# Logs: Inhalt ignorieren, Ordnerstruktur erlauben
+Logs/**
+!Logs/**/
+!Logs/**/.gitkeep
+
+# Config: Inhalt ignorieren, Ordnerstruktur erlauben
+Config/
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
