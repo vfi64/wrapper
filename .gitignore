@@ -2,6 +2,8 @@
 Config/Comm-SCI-API-Keys.json
 Config/huggingface_catalog_cache.json
 Config/openrouter_models_cache.json
+output.txt
+Config/output.txt
 
 # Logs: Inhalt ignorieren, Ordnerstruktur erlauben
 Logs/**
