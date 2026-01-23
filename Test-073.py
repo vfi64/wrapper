@@ -6,18 +6,18 @@ from pathlib import Path
 """Unified pytest suite for Wrapper-072.
 
 Expected repo layout:
-- Wrapper-072.py
-- Test-072.py
+- Wrapper-073.py
+- Test-073.py
 - JSON/Comm-SCI-v19.6.8.json
 
 Run:
-  python -m pytest -vv -s --tb=long Test-072.py
+  python -m pytest -vv -s --tb=long Test-073.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-072.py'
+FIX_PATH = HERE / 'Wrapper-073.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
 

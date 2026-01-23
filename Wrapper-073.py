@@ -314,6 +314,8 @@ except Exception:
 # Project paths (relative to script directory)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+PROJECT_DIR = SCRIPT_DIR  # backwards-compat alias
+
 JSON_DIR = os.path.join(SCRIPT_DIR, 'JSON')
 CONFIG_DIR = os.path.join(SCRIPT_DIR, 'Config')
 
@@ -445,7 +447,7 @@ def ui_overlay(v: str) -> str:
 # ----------------------------
 # NOTE: This must NOT assume a global 'gov' exists. Always resolve safely.
 
-def route_input(raw_txt: str, state, api_instance) -> dict:
+def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
     """Deterministically route raw user input.
 
     Returns dict with keys:
@@ -462,7 +464,7 @@ def route_input(raw_txt: str, state, api_instance) -> dict:
         return {"kind": "noop"}
 
     # Resolve ruleset / commands safely (no assumptions about globals).
-    gov_obj = getattr(api_instance, 'gov', None) or globals().get('gov')
+    gov_obj = gov_manager or getattr(api_instance, 'gov', None) or globals().get('gov')
     commands = {}
     try:
         commands = (getattr(gov_obj, 'data', {}) or {}).get('commands', {}) or {}
