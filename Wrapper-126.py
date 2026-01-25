@@ -62,6 +62,28 @@ def sanitize_html(html_text: str) -> str:
     except Exception:
         return html_text
 
+# ----------------------------
+# WRAPPER IDENTITY (dynamic, derived from filename)
+# ----------------------------
+
+def _detect_wrapper_identity() -> tuple[str, str]:
+    """Return (WRAPPER_NAME, WRAPPER_VERSION) based on this file's name.
+
+    Expected filename: Wrapper-<NNN>.py. Falls back safely if pattern is missing.
+    """
+    try:
+        stem = Path(__file__).stem  # e.g. 'Wrapper-115'
+        m = re.match(r'^(Wrapper)-(\d+)$', stem)
+        if m:
+            return f"Wrapper-{m.group(2)}", m.group(2)
+    except Exception:
+        pass
+    return "Wrapper", "000"
+
+WRAPPER_NAME, WRAPPER_VERSION = _detect_wrapper_identity()
+MAIN_WINDOW_TITLE = f"{WRAPPER_NAME} Comm-SCI-Control"
+PANEL_WINDOW_TITLE = f"{WRAPPER_NAME} Panel"
+
 
 class _NullContext:
     def __enter__(self):
@@ -277,6 +299,39 @@ for _d in (JSON_DIR, CONFIG_DIR, LOGS_DIR, AUDIT_LOG_DIR, CHAT_LOG_DIR, USAGE_LO
         os.makedirs(_d, exist_ok=True)
     except Exception:
         pass
+
+# ----------------------------
+# STUFE 0: Golden Run Checklist (manual, non-network)
+# ----------------------------
+# This is a compact, in-code reference so regressions can be spotted quickly.
+# It is intentionally non-normative (the JSON ruleset remains the Source of Truth).
+GOLDEN_RUN_STUFE0 = [
+    "Comm Start -> Comm Help -> Comm State",
+    "Profile switch (e.g., Expert/Sparring) -> SCI menu appears -> choose A -> ask a real question",
+    "Color on/off toggles evidence tag rendering",
+    "Comm Audit exports (no provider call)",
+    "Comm Stop -> no governance pinned -> UI remains responsive",
+    "Clear Chat resets runtime state (incl. QC overrides if present)",
+]
+
+
+def _safe_preview_text(s: str, limit: int = 160) -> str:
+    try:
+        s = str(s or "")
+    except Exception:
+        return ""
+    s = s.replace("\r", " ").replace("\n", " ")
+    if len(s) > limit:
+        return s[:limit] + "…"
+    return s
+
+
+def _safe_sha256(s: str) -> str:
+    try:
+        b = (s or "").encode("utf-8", errors="replace")
+        return hashlib.sha256(b).hexdigest()[:16]
+    except Exception:
+        return ""
 
 # Default ruleset location: ./JSON/Comm-SCI-v19.6.8.json
 DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v19.6.8.json')
@@ -665,6 +720,38 @@ class ConfigManager:
         else:
             self.save()
 
+        # Startup defaults (requested): always start with Gemini + gemini-2.0-flash.
+        # This is applied after loading (or creating) the config and will override any
+        # previously persisted provider/model selection.
+        try:
+            changed = False
+            if (self.config.get('active_provider') or '').strip().lower() != 'gemini':
+                self.config['active_provider'] = 'gemini'
+                changed = True
+
+            provs = self.config.get('providers')
+            if not isinstance(provs, dict):
+                provs = {}
+                self.config['providers'] = provs
+                changed = True
+            g = provs.get('gemini')
+            if not isinstance(g, dict):
+                g = {}
+                provs['gemini'] = g
+                changed = True
+            if (g.get('default_model') or '').strip() != 'gemini-2.0-flash':
+                g['default_model'] = 'gemini-2.0-flash'
+                changed = True
+            # Back-compat key for Gemini
+            if (self.config.get('model') or '').strip() != 'gemini-2.0-flash':
+                self.config['model'] = 'gemini-2.0-flash'
+                changed = True
+
+            if changed:
+                self.save()
+        except Exception:
+            pass
+
     def save(self):
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -685,18 +772,49 @@ class ConfigManager:
         except Exception:
             return 'gemini'
 
-    def set_active_provider(self, provider: str):
+    def _config_path(self) -> str:
+        """Return the current config path (dynamic; honors runtime CONFIG_DIR/CONFIG_FILENAME overrides)."""
         try:
-            provider = (provider or 'gemini').strip().lower()
-            # Accept known providers shown in the panel
-            if provider in ('hf',):
-                provider = 'huggingface'
-            if provider not in ('gemini', 'openrouter', 'huggingface'):
-                provider = 'gemini'
-            self.config['active_provider'] = provider
-            self.save()
+            return os.path.join(CONFIG_DIR, CONFIG_FILENAME)
         except Exception:
-            pass
+            return CONFIG_PATH
+
+    def _write_to_disk(self, path: str, payload: dict) -> None:
+        """Atomic JSON write. Raises on failure."""
+        # If callers pass the module-level CONFIG_PATH (which can become stale in tests),
+        # prefer the dynamic path derived from current CONFIG_DIR/CONFIG_FILENAME.
+        if not path or path == CONFIG_PATH:
+            path = self._config_path()
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+
+
+    def set_active_provider(self, provider: str):
+        """Persist the currently active provider in the config.
+
+        Must be safe to call repeatedly (panel refreshes can call it often).
+        """
+        provider = (provider or 'gemini').strip().lower()
+        # Accept common aliases from the UI
+        if provider in ('hf',):
+            provider = 'huggingface'
+
+        # No-op guard: avoid duplicate reconnect paths when provider already active
+        cur = (self.get_active_provider() or 'gemini').strip().lower()
+        if provider == cur:
+            return {'ok': True, 'skipped': True, 'reason': 'already_active'}
+
+        try:
+            self.config['active_provider'] = provider
+            self._write_to_disk(CONFIG_PATH, self.config)
+            return {'ok': True, 'skipped': False}
+        except Exception as e:
+            # Keep UI resilient: persistence errors must not crash the app.
+            return {'ok': False, 'error': str(e)}
 
     def _merged_provider_conf(self, provider: str) -> dict:
         """Merge provider config from Comm-SCI-Config.json and Comm-SCI-API-Keys.json (best-effort).
@@ -939,7 +1057,7 @@ class GovernanceManager:
         lang_instruction = "IMPORTANT: You must reply in English. All explanations and outputs must be in English unless the active profile explicitly requires otherwise."
 
         version_info = f"loaded_file: {os.path.basename(self.current_filename)}"
-        return f"GOVERNANCE RULES (v19.14 - {version_info}):\n{self.raw_json}\n\n--- LANGUAGE SETTING ---\n{lang_instruction}\n\nAdhere strictly to these rules."
+        return f"GOVERNANCE RULES ({WRAPPER_NAME} - {version_info}):\n{self.raw_json}\n\n--- LANGUAGE SETTING ---\n{lang_instruction}\n\nAdhere strictly to these rules."
 
     def get_ui_data(self):
         """Return UI data in the schema expected by the original HTML_PANEL.
@@ -1998,7 +2116,7 @@ def _init_state_from_rules():
 
 # --- HTML TEMPLATES ---
 
-HTML_CHAT = """
+HTML_CHAT_TEMPLATE = """
 <!doctype html>
 <html>
 <head>
@@ -2133,7 +2251,7 @@ HTML_CHAT = """
 <body>
   <div class="top">
     <div style="display:flex; align-items:center;">
-        <span style="font-weight:bold; margin-right:10px;">Comm-SCI v19.14</span>
+        <span style="font-weight:bold; margin-right:10px;">__WRAPPER_LABEL__</span>
         
         <button class="load-btn" onclick="window.pywebview.api.load_rule_file()" title="Load ruleset">📂</button>
         <span id="rulefile" style="font-size:11px; color:#8ab4f8; margin-right:10px;"></span>
@@ -2341,6 +2459,7 @@ window.resetChatFromHistory = function(history, statusMsg) {
 </body>
 </html>
 """
+HTML_CHAT = HTML_CHAT_TEMPLATE.replace('__WRAPPER_LABEL__', html.escape(WRAPPER_NAME))
 
 HTML_PANEL = """
 <!doctype html>
@@ -2937,6 +3056,13 @@ async function fetchHFCatalog(){
 </body>
 </html>
 """
+# Inject dynamic wrapper name into embedded HTML templates (no f-strings → avoids brace issues)
+try:
+    HTML_CHAT = (HTML_CHAT or '').replace('Wrapper-115', WRAPPER_NAME)
+    HTML_PANEL = (HTML_PANEL or '').replace('Wrapper-115', WRAPPER_NAME)
+except Exception:
+    pass
+
 
 
 HTML_QC_OVERRIDE = """
@@ -3875,7 +4001,12 @@ class CSCRefiner:
         sci_norm = (sci or "OFF").strip()
         sci_l = sci_norm.lower()
         sci_out = "OFF" if sci_l in {"", "off", "none"} else sci_norm.upper()
-        return f"{sys} v{ver} · Active profile: {profile} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
+        # IMPORTANT: avoid accidental shadowing by the imported `sys` module.
+        # The status line must use the system name from the ruleset (sysname).
+        return (
+            f"{sysname} v{ver} · Active profile: {profile} · SCI: {sci_out} · Overlay: {overlay} · "
+            f"Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
+        )
     def _qc_footer_for_profile(self, profile_name: str) -> str:
         """Create a deterministic QC-Matrix line based on the active profile's qc_target (use upper bounds).
 
@@ -4552,6 +4683,13 @@ class CSCRefiner:
         return "\n".join(out)
 
     def start_background_thread(self):
+        # Idempotent: pywebview can (depending on backend/window lifecycle) call the start callback more than once.
+        try:
+            if getattr(self, "_bg_started", False):
+                return
+            setattr(self, "_bg_started", True)
+        except Exception:
+            pass
         t = threading.Thread(target=self._init_process)
         t.daemon = True
         t.start()
@@ -4638,6 +4776,7 @@ class CSCRefiner:
             )
         )
 
+        self.session_with_governance = bool(with_governance)
         # reset pinned-governance injection flags on session resets
         try:
             self._gov_pinned_sent = False
@@ -4662,99 +4801,126 @@ class CSCRefiner:
 
         This method sets self.ready_status for the UI. For stateless providers we do not create a chat session.
         """
-        provider = (self._active_provider() or 'gemini').strip().lower()
+        # Prevent duplicate concurrent connects (startup + panel can trigger twice)
+        if getattr(self, '_connect_inflight', False):
+            return
+        self._connect_inflight = True
+        try:
+            provider = (self._active_provider() or 'gemini').strip().lower()
 
-        # --- Stateless provider (OpenRouter) ---
-        if provider in ('openrouter', 'huggingface', 'hf', 'openai', 'openai_compat'):
-            pr = getattr(self, 'provider_router', None)
-            client = None
+            # Defensive: connect can be triggered more than once during startup/window lifecycle.
             try:
-                if pr is not None:
-                    if provider in ('huggingface', 'hf') and hasattr(pr, 'build_huggingface_client'):
-                        client = pr.build_huggingface_client()
-                    elif hasattr(pr, 'build_openrouter_client'):
-                        client = pr.build_openrouter_client()
+                sig_model = (cfg_get_model() or '').strip()
             except Exception:
+                sig_model = ''
+            try:
+                sig_lang = str(UI_LANG or '').strip().lower()
+            except Exception:
+                sig_lang = ''
+            sig = f"{provider}:{sig_model}:{sig_lang}"
+            try:
+                if getattr(self, "_last_connect_sig", None) == sig:
+                    rs = getattr(self, "ready_status", {}) or {}
+                    if bool(rs.get("status")) and (provider != "gemini" or getattr(self, "chat_session", None)):
+                        return
+                setattr(self, "_last_connect_sig", sig)
+            except Exception:
+                pass
+
+
+            # --- Stateless provider (OpenRouter) ---
+            if provider in ('openrouter', 'huggingface', 'hf', 'openai', 'openai_compat'):
+                pr = getattr(self, 'provider_router', None)
                 client = None
-
-            # Validate key presence (best-effort)
-            ok = False
-            try:
-                ok = bool(getattr(client, 'api_key', '') or '')
-            except Exception:
-                ok = False
-
-            model = ''
-            try:
-                model = (getattr(cfg, 'get_provider_model', lambda _p: '')(provider) or '').strip()
-            except Exception:
-                model = ''
-            if not model:
                 try:
-                    model = (cfg_get_model() or '').strip()
+                    if pr is not None:
+                        if provider in ('huggingface', 'hf') and hasattr(pr, 'build_huggingface_client'):
+                            client = pr.build_huggingface_client()
+                        elif hasattr(pr, 'build_openrouter_client'):
+                            client = pr.build_openrouter_client()
+                except Exception:
+                    client = None
+
+                # Validate key presence (best-effort)
+                ok = False
+                try:
+                    ok = bool(getattr(client, 'api_key', '') or '')
+                except Exception:
+                    ok = False
+
+                model = ''
+                try:
+                    model = (getattr(cfg, 'get_provider_model', lambda _p: '')(provider) or '').strip()
                 except Exception:
                     model = ''
+                if not model:
+                    try:
+                        model = (cfg_get_model() or '').strip()
+                    except Exception:
+                        model = ''
 
-            # Do not touch Gemini client/session in this path.
-            if ok:
+                # Do not touch Gemini client/session in this path.
+                if ok:
+                    try:
+                        gov.log(f"Provider ready ({provider_name}) · model: {model or 'n/a'}")
+                    except Exception:
+                        pass
+                    self.ready_status = {"status": True, "msg": f"Ready [openrouter:{model or 'n/a'}]", "filename": gov.current_filename}
+                    return
+                else:
+                    # Do NOT hard-exit on missing OpenRouter key.
+                    # Keep the UI alive and fall back to Gemini if possible.
+                    try:
+                        gov.log("OpenRouter API key missing. You can set it in the PANEL. Falling back to Gemini if available.")
+                    except Exception:
+                        pass
+                    try:
+                        setattr(self, "_openrouter_key_missing", True)
+                    except Exception:
+                        pass
+                    # If OpenRouter was selected as active provider, switch to Gemini so the app can start.
+                    try:
+                        if hasattr(cfg, "set_active_provider"):
+                            cfg.set_active_provider("gemini")
+                    except Exception:
+                        pass
+                    try:
+                        if getattr(self, "gov_state", None) is not None:
+                            setattr(self.gov_state, "active_provider", "gemini")
+                    except Exception:
+                        pass
+                    # Fall through to Gemini connect below (may still fail if Gemini key is missing).
+
+            # --- Gemini provider (stateful chat_session) ---
+            api_key = get_api_key()
+            current_model = cfg_get_model()
+            lang = UI_LANG
+
+            if api_key:
                 try:
-                    gov.log(f"Provider ready ({provider_name}) · model: {model or 'n/a'}")
-                except Exception:
-                    pass
-                self.ready_status = {"status": True, "msg": f"Ready [openrouter:{model or 'n/a'}]", "filename": gov.current_filename}
-                return
+                    gov.log(f"Connecting model ({current_model}, language: {lang})...")
+                    self.client = genai.Client(api_key=api_key)
+
+                    # create initial chat session with active governance
+                    self._recreate_chat_session(with_governance=True, reason="connect")
+                    gov.log("Connected.")
+
+                    self.ready_status = {
+                        "status": True,
+                        "msg": f"Ready [{current_model}] ({lang.upper()})",
+                        "filename": gov.current_filename
+                    }
+
+                except Exception as e:
+                    gov.log(f"API CRASH: {e}")
+                    self.ready_status = {"status": False, "msg": f"API ERROR: {e}"}
             else:
-                # Do NOT hard-exit on missing OpenRouter key.
-                # Keep the UI alive and fall back to Gemini if possible.
-                try:
-                    gov.log("OpenRouter API key missing. You can set it in the PANEL. Falling back to Gemini if available.")
-                except Exception:
-                    pass
-                try:
-                    setattr(self, "_openrouter_key_missing", True)
-                except Exception:
-                    pass
-                # If OpenRouter was selected as active provider, switch to Gemini so the app can start.
-                try:
-                    if hasattr(cfg, "set_active_provider"):
-                        cfg.set_active_provider("gemini")
-                except Exception:
-                    pass
-                try:
-                    if getattr(self, "gov_state", None) is not None:
-                        setattr(self.gov_state, "active_provider", "gemini")
-                except Exception:
-                    pass
-                # Fall through to Gemini connect below (may still fail if Gemini key is missing).
-
-        # --- Gemini provider (stateful chat_session) ---
-        api_key = get_api_key()
-        current_model = cfg_get_model()
-        lang = UI_LANG
-
-        if api_key:
-            try:
-                gov.log(f"Connecting model ({current_model}, language: {lang})...")
-                self.client = genai.Client(api_key=api_key)
-
-                # create initial chat session with active governance
-                self._recreate_chat_session(with_governance=True, reason="connect")
-                gov.log("Connected.")
-
-                self.ready_status = {
-                    "status": True,
-                    "msg": f"Ready [{current_model}] ({lang.upper()})",
-                    "filename": gov.current_filename
-                }
-
-            except Exception as e:
-                gov.log(f"API CRASH: {e}")
-                self.ready_status = {"status": False, "msg": f"API ERROR: {e}"}
-        else:
-            gov.log("API key missing.")
-            self.ready_status = {"status": False, "msg": "API key missing (check JSON or ENV)!"}
+                gov.log("API key missing.")
+                self.ready_status = {"status": False, "msg": "API key missing (check JSON or ENV)!"}
 
 
+        finally:
+            self._connect_inflight = False
     def _auto_comm_start(self, reason="startup"):
         """Sendet deterministisch 'Comm Start' nach Connect/Reload (optional sichtbar als Systemmeldung)."""
         try:
@@ -6180,6 +6346,11 @@ class CSCRefiner:
         """
         provider = (self._active_provider() or 'gemini').strip().lower()
 
+        try:
+            self.log_event('provider_call_start', {'provider': provider, 'reason': reason})
+        except Exception:
+            pass
+
         # Gemini path: keep fix19 behavior (chat_session.send_message) to avoid breaking stability.
         if provider == 'gemini':
             t0 = time.time()
@@ -6197,6 +6368,10 @@ class CSCRefiner:
             try:
                 ms = int((time.time() - t0) * 1000)
                 self.last_call_info = {'provider': 'gemini', 'model': str(getattr(self, 'model_name', '') or ''), 'ms': ms, 'usage': {}}
+                try:
+                    self.log_event('provider_call_end', {'provider': 'gemini', 'ms': ms, 'model': str(getattr(self, 'model_name', '') or '')})
+                except Exception:
+                    pass
             except Exception:
                 pass
             return getattr(resp, 'text', '') or ''
@@ -6319,6 +6494,10 @@ class CSCRefiner:
                         try:
                             ms = int((time.time() - t0) * 1000)
                             self.last_call_info = {'provider': 'openrouter', 'model': mname, 'ms': ms, 'usage': _usage or {}}
+                            try:
+                                self.log_event('provider_call_end', {'provider': provider, 'ms': ms, 'model': mname})
+                            except Exception:
+                                pass
                         except Exception:
                             pass
                         return txt or ''
@@ -6417,17 +6596,51 @@ class CSCRefiner:
             timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             raw_txt = txt or ""
 
+            # STUFE 0: lightweight observability (never raises)
+            try:
+                self.log_event(
+                    'input',
+                    {
+                        'len': len(raw_txt),
+                        'sha': _safe_sha256(raw_txt),
+                        'preview': _safe_preview_text(raw_txt, 160),
+                    },
+                )
+            except Exception:
+                pass
+
             # 1. Routing
             route = route_input(raw_txt, self.gov_state, self)
+
+            try:
+                self.log_event(
+                    'route',
+                    {
+                        'kind': route.get('kind'),
+                        'is_command': bool(route.get('kind') == 'command'),
+                        'is_sci_selection': bool(route.get('is_sci_selection')),
+                        'standalone_only_violation': bool(route.get('standalone_only_violation')),
+                    },
+                )
+            except Exception:
+                pass
 
             if route["kind"] == "error":
                 self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
                 self.history.append({"role": "bot", "content": "Blocked.", "ts": datetime.now().isoformat()})
+                try:
+                    self.log_event('blocked', {'reason': _safe_preview_text(route.get('html') or '', 120)})
+                except Exception:
+                    pass
                 return {"html": route["html"], "csc": None}
 
             # SCI Selection (A-H)
             if route.get("is_sci_selection"):
                 self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
+                try:
+                    self.log_event('sci_selection', {'value': _safe_preview_text(route.get('query_text') or '', 16)})
+                except Exception:
+                    pass
                 return self._handle_sci_selection(route["query_text"])
 
             if route["kind"] == "noop":
@@ -6438,13 +6651,27 @@ class CSCRefiner:
                 self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
                 cmd = route["canonical_cmd"]
 
+                try:
+                    self.log_event('command', {'cmd': cmd, 'phase': 'begin'})
+                except Exception:
+                    pass
+
                 # Special Renderers (help/state/config/audit/anchor etc.)
                 handled_res = self._handle_command_deterministic(cmd, timestamp)
                 if handled_res:
+                    try:
+                        self.log_event('command', {'cmd': cmd, 'phase': 'deterministic'})
+                    except Exception:
+                        pass
                     return handled_res
 
                 # State Change
                 self._execute_legacy_command(cmd)
+
+                try:
+                    self.log_event('command', {'cmd': cmd, 'phase': 'state_changed'})
+                except Exception:
+                    pass
 
                 # After state change: update the model state WITHOUT recreating the session (huge token savings)
                 try:
@@ -6493,6 +6720,10 @@ class CSCRefiner:
                         html_content = self._render_comm_state_html()
 
                 self.history.append({"role": "bot", "content": f"Command executed: {cmd}", "ts": datetime.now().isoformat()})
+                try:
+                    self.log_event('command', {'cmd': cmd, 'phase': 'end', 'profile': getattr(self.gov_state, 'active_profile', '')})
+                except Exception:
+                    pass
                 return {"html": html_content, "csc": None}
 
             # 3. Chat (Normal Question)
@@ -6717,7 +6948,10 @@ class CSCRefiner:
 
                         # --- Normalize RAW model output for validation (plain text only) ---
             repaired_raw = raw_resp
+            governance_enabled_now = bool(getattr(self, 'session_with_governance', True))
             try:
+                if not governance_enabled_now:
+                    raise RuntimeError('governance disabled')
                 _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
                 repaired_raw = enforce_qc_footer_deltas(repaired_raw, gov, _prof_now)
             except Exception:
@@ -6727,6 +6961,8 @@ class CSCRefiner:
             except Exception:
                 pass
             try:
+                if not governance_enabled_now:
+                    raise RuntimeError('governance disabled')
                 _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
                 repaired_raw = enforce_self_debunking_contract(repaired_raw, gov, _prof_now, is_command=False, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
             except Exception:
@@ -6741,6 +6977,8 @@ class CSCRefiner:
             meta = None
             try:
                 validator = getattr(self, 'validator', None)
+                if not governance_enabled_now:
+                    validator = None
                 if validator is not None:
                     # Expect SCI trace iff the selected variant actually has required steps (A typically has none).
                     vk = getattr(self.gov_state, 'sci_variant', '') or ''
@@ -6829,6 +7067,8 @@ class CSCRefiner:
                         # Normalize again (raw text)
                         repaired_raw = raw2
                         try:
+                            if not governance_enabled_now:
+                                raise RuntimeError('governance disabled')
                             _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
                             repaired_raw = enforce_qc_footer_deltas(repaired_raw, gov, _prof_now)
                         except Exception:
@@ -7183,9 +7423,14 @@ class CSCRefiner:
                     p = ''
                 if p:
                     try:
-                        self.set_provider(p)
+                        curp = (self.cfg.get_active_provider() or 'gemini').strip().lower()
                     except Exception:
-                        pass
+                        curp = 'gemini'
+                    if p != curp:
+                        try:
+                            self.set_provider(p)
+                        except Exception:
+                            pass
                 return {'ok': True, 'action': action_s, 'result': self.refresh_models()}
             if action_s == 'hf_catalog':
                 top_n = payload.get('top_n', 200)
@@ -7260,6 +7505,7 @@ class CSCRefiner:
             try:
                 import uuid as _uuid
                 self.session_id = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + _uuid.uuid4().hex[:6]
+                self.trace_id = self.session_id
                 self.session_start_dt = datetime.now()
             except Exception:
                 pass
@@ -7669,6 +7915,29 @@ class CSCRefiner:
         except Exception:
             provider = 'gemini'
 
+        # No-op guard: selecting the same model again should not trigger a reconnect storm.
+        try:
+            _new_model = str(model or '').strip()
+        except Exception:
+            _new_model = ''
+        try:
+            _cur_model = ''
+            if hasattr(cfg, 'get_provider_model'):
+                _cur_model = str(cfg.get_provider_model(provider) or '').strip()
+            if not _cur_model and hasattr(cfg, 'get_model'):
+                try:
+                    _cur_model = str(cfg.get_model() or '').strip()
+                except Exception:
+                    _cur_model = ''
+            if _cur_model and _new_model and _cur_model == _new_model:
+                try:
+                    self.log_event("provider", {"event": "set_model_noop", "provider": provider, "model": _new_model})
+                except Exception:
+                    pass
+                return {"ok": True, "provider": provider, "model": _new_model, "noop": True}
+        except Exception:
+            pass
+
         print(f"Switching model for {provider} to: {model}")
         try:
             if hasattr(cfg, 'set_provider_model'):
@@ -7790,7 +8059,7 @@ class CSCRefiner:
         # Panel window must receive the same js_api object as the main window.
         # (Secondary windows can otherwise miss methods like get_ui/ping on some backends.)
         kwargs = dict(
-            title="Panel",
+            title=PANEL_WINDOW_TITLE,
             html=HTML_PANEL,
             js_api=(self.panel_bridge or self),
             width=panel_w,
@@ -8039,7 +8308,7 @@ class CSCRefiner:
         # Panel window must receive the same js_api object as the main window.
         # (Secondary windows can otherwise miss methods like get_ui/ping on some backends.)
         kwargs = dict(
-            title="Panel",
+            title=PANEL_WINDOW_TITLE,
             html=HTML_PANEL,
             js_api=(self.panel_bridge or self),
             width=panel_w,
@@ -8242,7 +8511,7 @@ class CSCRefiner:
             chat_path = os.path.join(CHAT_LOG_DIR, chat_name)
             try:
                 with open(chat_path, "w", encoding="utf-8") as f:
-                    json.dump({"meta": "19.14", "model": cfg_get_model(), "history": self.history}, f, indent=2)
+                    json.dump({"meta": WRAPPER_NAME, "model": cfg_get_model(), "history": self.history}, f, indent=2)
                 print(f"Exportiert (Chat): {chat_path}")
             except Exception as e:
                 print(f"[System] Export-Error (Chat): {e}")
@@ -8252,7 +8521,7 @@ class CSCRefiner:
         audit_path = os.path.join(AUDIT_LOG_DIR, audit_name)
         try:
             payload = {
-                "meta": "19.14",
+                "meta": WRAPPER_NAME,
                 "ts": datetime.now().isoformat(),
                 "model": cfg_get_model(),
                 "ruleset": os.path.basename(getattr(gov, "current_filename", "") or ""),
@@ -8359,6 +8628,8 @@ class CSCRefiner:
             'export_timestamp': datetime.now().isoformat(),
             'session_metadata': {
                 'session_id': getattr(self, 'session_id', 'unknown'),
+                'trace_id': getattr(self, 'trace_id', getattr(self, 'session_id', 'unknown')),
+
                 'session_start': getattr(self, 'session_start_dt', datetime.now()).isoformat(),
                 'session_end': datetime.now().isoformat(),
                 'duration_seconds': duration_seconds(),
@@ -8408,7 +8679,7 @@ class CSCRefiner:
             try:
                 os.makedirs(CHAT_LOG_DIR, exist_ok=True)
                 with open(chat_path, 'w', encoding='utf-8') as f:
-                    json.dump({'meta': '19.14', 'model': cfg_get_model(), 'history': getattr(self, 'history', []) or []}, f, indent=2, ensure_ascii=False)
+                    json.dump({'meta': WRAPPER_NAME, 'model': cfg_get_model(), 'history': getattr(self, 'history', []) or []}, f, indent=2, ensure_ascii=False)
             except Exception as e:
                 print(f"[Export] Chat write failed: {e}")
 
@@ -8493,6 +8764,7 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
             try:
                 import uuid as _uuid
                 self.session_id = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + _uuid.uuid4().hex[:6]
+                self.trace_id = self.session_id
                 self.session_start_dt = datetime.now()
                 # Reset counters/events (best-effort)
                 self.session_requests = 0
@@ -8809,8 +9081,16 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
         # Render
         msg = "Audit exported."
         detail = ""
+        rel_audit = ""
         if audit_path:
-            detail = f"<br><code>{html.escape(os.path.basename(audit_path))}</code>"
+            # Prefer a stable relative path for UI/logs; never require it.
+            try:
+                rel_audit = os.path.relpath(audit_path, start=os.getcwd())
+                if str(rel_audit).startswith(".."):
+                    rel_audit = os.path.join("Logs", "Audit", os.path.basename(audit_path))
+            except Exception:
+                rel_audit = os.path.basename(audit_path)
+            detail = f"<br><code>{html.escape(str(rel_audit))}</code>"
 
         # Last call debug line (best-effort)
         last_line = ""
@@ -8858,7 +9138,13 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
         html_content += f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>'
 
         try:
-            self.history.append({"role": "bot", "content": "Comm Audit", "ts": datetime.now().isoformat(), "csc": None})
+            bot_txt = "Comm Audit"
+            try:
+                if rel_audit:
+                    bot_txt += f"\nExportiert (Audit): {rel_audit}"
+            except Exception:
+                pass
+            self.history.append({"role": "bot", "content": bot_txt, "ts": datetime.now().isoformat(), "csc": None})
         except Exception:
             pass
 
@@ -10067,6 +10353,8 @@ class Api(CSCRefiner):
     def __init__(self):
         # Bind governance + config safely
         super().__init__(globals().get('gov'), globals().get('cfg'))
+        # True iff the current model chat-session was created with the ruleset injected
+        self.session_with_governance: bool = True
         try:
             _g = globals().get('gov')
             if _g is not None:
@@ -10112,6 +10400,7 @@ class Api(CSCRefiner):
 
         # Closing guard (prevents double-exit)
         self.is_closing = False
+        self._connect_inflight = False  # connect dedupe guard
 
         # Persisted geometry (best-effort)
         self.panel_geom = {}
@@ -10175,6 +10464,73 @@ class Api(CSCRefiner):
                 setattr(_gov, 'csc_refiner', self)
         except Exception:
             pass
+
+
+    # ----------------------------
+    # STUFE 0: Minimal observability
+    # ----------------------------
+    def log_event(self, kind: str, payload=None, *, level: str = "info") -> None:
+        """Append a lightweight, JSON-safe runtime event entry.
+
+        Design goals:
+        - Never raise (fail-safe).
+        - No secrets: store only short previews + hashes by default.
+        - Keeps existing session_events behavior intact (additive).
+        """
+        try:
+            k = str(kind or "").strip() or "event"
+            lvl = str(level or "info").strip().lower() or "info"
+
+            # Ensure list exists (defensive for older states/tests)
+            if not isinstance(getattr(self, 'session_events', None), list):
+                self.session_events = []
+
+            data = payload
+            # Make payload JSON-ish without deep recursion
+            if isinstance(payload, (str, int, float, bool)) or payload is None:
+                data = payload
+            elif isinstance(payload, dict):
+                safe = {}
+                for kk, vv in list(payload.items())[:50]:
+                    try:
+                        sk = str(kk)
+                    except Exception:
+                        continue
+                    # short-circuit big strings
+                    if isinstance(vv, str) and len(vv) > 300:
+                        safe[sk] = _safe_preview_text(vv, 300)
+                    elif isinstance(vv, (str, int, float, bool)) or vv is None:
+                        safe[sk] = vv
+                    else:
+                        safe[sk] = _safe_preview_text(vv, 120)
+                data = safe
+            else:
+                data = _safe_preview_text(payload, 200)
+
+            # Attach minimal correlation/diagnostics context (no behavior changes).
+            try:
+                _prov = self.cfg.get_provider() if hasattr(self, 'cfg') else None
+            except Exception:
+                _prov = None
+            try:
+                _gs = getattr(self, 'gov_state', None)
+            except Exception:
+                _gs = None
+
+            self.session_events.append({
+                'ts': datetime.now().isoformat(),
+                'type': k,
+                'level': lvl,
+                'trace_id': getattr(self, 'trace_id', getattr(self, 'session_id', None)),
+                'provider': _prov,
+                'profile': getattr(_gs, 'active_profile', None),
+                'sci_active': getattr(_gs, 'sci_active', None),
+                'sci_variant': getattr(_gs, 'sci_variant', None),
+                'comm_active': getattr(_gs, 'comm_active', None),
+                'data': data,
+            })
+        except Exception:
+            return
 
 
 
@@ -10413,7 +10769,7 @@ if __name__ == '__main__':
         raise SystemExit('google-genai is required. Install with: pip install google-genai')
     api = Api()
     api.main_win = webview.create_window(
-        "Comm-SCI 19.14", html=HTML_CHAT, js_api=api, 
+        MAIN_WINDOW_TITLE, html=HTML_CHAT, js_api=api, 
         width=1100, height=1000,
         x=0, y=0
     )

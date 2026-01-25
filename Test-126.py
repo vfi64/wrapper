@@ -4,27 +4,27 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-105.
+"""Unified pytest suite for Wrapper-126.
 
 Expected repo layout:
-- Wrapper-110.py
-- Test-105.py
+- Wrapper-126.py
+- Test-119.py
 - JSON/Comm-SCI-v19.6.8.json
 
 Run:
-  python -m pytest -vv -s --tb=long Test-105.py
+  python3 -m pytest -vv -s --tb=long Test-119.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-110.py'
+FIX_PATH = HERE / 'Wrapper-126.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
 
 
 def load_fix_module():
-    spec = importlib.util.spec_from_file_location('Wrapper-109', FIX_PATH)
+    spec = importlib.util.spec_from_file_location(FIX_PATH.stem, FIX_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     spec.loader.exec_module(module)  # type: ignore[attr-defined]
@@ -951,6 +951,64 @@ def test_panel_html_uses_panel_action_and_not_remote_cmd():
     assert 'remote_cmd' not in html
 
 
+def test_chat_header_displays_wrapper_prompt_label():
+    """UI invariant: the chat header must show the current Wrapper-NNN label (no legacy tag)."""
+    mod = load_fix_module()
+    html = getattr(mod, 'HTML_CHAT', '')
+    assert isinstance(html, str) and html
+    wrapper_name = getattr(mod, 'WRAPPER_NAME', '') or Path(getattr(mod, '__file__', '')).stem
+    assert wrapper_name and wrapper_name in html
+    # Must not use the old arrow-style header and must not wrap the wrapper label in square brackets.
+    assert 'Wrapper-&gt;' not in html
+    assert f'>{wrapper_name}<' in html
+    assert '[Wrapper-' not in html
+
+
+def test_main_window_title_is_dynamic_and_matches_wrapper_name():
+    """We don't start pywebview in tests; validate the computed title and the create_window usage."""
+    mod = load_fix_module()
+    expected_name = FIX_PATH.stem
+    assert getattr(mod, 'WRAPPER_NAME', '') == expected_name
+    assert getattr(mod, "MAIN_WINDOW_TITLE", "") == f"{expected_name} Comm-SCI-Control"
+
+    txt = FIX_PATH.read_text(encoding='utf-8')
+    assert 'MAIN_WINDOW_TITLE' in txt  # create_window must use the variable, not a stale literal
+    assert 'Comm-SCi v19.14' not in txt
+
+def test_startup_default_provider_and_model_are_gemini():
+    """Config invariant: startup must always default to gemini + gemini-2.0-flash."""
+    mod = load_fix_module()
+    cfg = getattr(mod, 'cfg', None)
+    assert cfg is not None
+    assert getattr(cfg, 'get_active_provider', lambda: None)() == 'gemini'
+    assert getattr(cfg, 'get_provider_model', lambda _p=None: '')('gemini') == 'gemini-2.0-flash'
+
+def test_can_switch_back_to_gemini_after_other_provider():
+    """Regression: switching back to gemini must not be blocked by a broken no-op guard."""
+    mod = load_fix_module()
+    cfg = getattr(mod, 'cfg', None)
+    assert cfg is not None
+
+    # switch away
+    st1 = cfg.set_active_provider('openrouter')
+    assert isinstance(st1, dict) and st1.get('ok')
+    assert cfg.get_active_provider() == 'openrouter'
+
+    # switch back
+    st2 = cfg.set_active_provider('gemini')
+    assert isinstance(st2, dict) and st2.get('ok')
+    assert cfg.get_active_provider() == 'gemini'
+
+    # and again via HF alias
+    st3 = cfg.set_active_provider('hf')
+    assert isinstance(st3, dict) and st3.get('ok')
+    assert cfg.get_active_provider() == 'huggingface'
+    st4 = cfg.set_active_provider('gemini')
+    assert isinstance(st4, dict) and st4.get('ok')
+    assert cfg.get_active_provider() == 'gemini'
+
+
+
 
 def test_panel_html_qc_override_button_is_not_hf_only():
     mod = load_fix_module()
@@ -1231,3 +1289,194 @@ def test_enforcement_policy_strict_warn_prepends_warning_but_keeps_content():
     assert "RULE VIOLATION DETECTED" in html
     # content should still be visible in strict_warn
     assert "Antwort" in html
+
+
+# ------------------------
+# Stufe 0 smoke tests
+# ------------------------
+
+def test_comm_help_renders_without_llm_call_and_emits_events():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None  # isolate
+
+    dummy = DummySession(["SHOULD NOT BE USED"])
+    api.chat_session = dummy
+
+    out = api.ask("Comm Help")
+
+    assert dummy.calls == [], "Comm Help must be UI-only (no provider call)"
+    html = _extract_html(out)
+    assert isinstance(html, str) and html.strip()
+    assert "Comm" in html
+
+    # Regression guard: help header must show the ruleset system name, not the imported `sys` module.
+    # (Bug observed in v112 logs: "<module 'sys' (built-in)> v19.6.8 ...")
+    assert "<module 'sys'" not in html
+
+    # Minimal observability: input/route/command events should be recorded
+    ev = getattr(api, "session_events", []) or []
+    kinds = {str((e or {}).get("type")) for e in ev if isinstance(e, dict)}
+    assert "input" in kinds
+    assert "route" in kinds
+    assert "command" in kinds
+
+
+def test_comm_state_renders_without_llm_call():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None
+
+    dummy = DummySession(["SHOULD NOT BE USED"])
+    api.chat_session = dummy
+
+    out = api.ask("Comm State")
+    assert dummy.calls == [], "Comm State must be UI-only (no provider call)"
+    html = _extract_html(out)
+    assert isinstance(html, str) and html.strip()
+
+
+def test_comm_audit_exports_without_llm_call():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None
+
+    dummy = DummySession(["SHOULD NOT BE USED"])
+    api.chat_session = dummy
+
+    # Snapshot current audit files
+    audit_dir = getattr(mod, "AUDIT_LOG_DIR", None)
+    assert audit_dir is not None
+    before = set()
+    try:
+        before = set(os.listdir(audit_dir))
+    except Exception:
+        before = set()
+
+    out = api.ask("Comm Audit")
+    assert dummy.calls == [], "Comm Audit must be UI-only (no provider call)"
+    html = _extract_html(out)
+    assert isinstance(html, str)
+
+    after = set()
+    try:
+        after = set(os.listdir(audit_dir))
+    except Exception:
+        after = set()
+
+    # Must create at least one new audit file (or overwrite with new timestamped name)
+    created = [x for x in (after - before) if str(x).startswith("Audit_") and str(x).endswith(".json")]
+    assert created, "Expected Comm Audit to create a new Audit_*.json file"
+
+
+
+def test_comm_audit_history_contains_export_note():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None
+
+    dummy = DummySession(["SHOULD NOT BE USED"])
+    api.chat_session = dummy
+
+    out = api.ask("Comm Audit")
+    assert dummy.calls == [], "Comm Audit must be UI-only (no provider call)"
+
+    hist = getattr(api, "history", []) or []
+    assert hist, "Expected history to contain the Comm Audit bot message"
+    last = hist[-1] or {}
+    txt = str(last.get("content") or "")
+    assert "Comm Audit" in txt
+    # The wrapper should include a short export note (path may vary in tests).
+    assert "Exportiert (Audit)" in txt
+
+
+def test_start_background_thread_is_idempotent(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+
+    started = {"n": 0}
+
+    class DummyThread:
+        def __init__(self, target=None):
+            self.target = target
+            self.daemon = False
+
+        def start(self):
+            started["n"] += 1
+
+    monkeypatch.setattr(mod.threading, "Thread", DummyThread)
+
+    api.start_background_thread()
+    api.start_background_thread()
+    assert started["n"] == 1, "start_background_thread must not start twice"
+
+
+
+def test_comm_stop_disables_governance_postprocessing():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None  # isolate postprocessing
+
+    # Ensure a known profile with qc_target corridor exists.
+    api.gov_state.active_profile = 'Standard'
+
+    # Stub recreate to avoid requiring a real client while still tracking session governance state.
+    def _fake_recreate(with_governance: bool = True, reason: str = ""):
+        api.session_with_governance = bool(with_governance)
+
+    api._recreate_chat_session = _fake_recreate  # type: ignore
+
+    bad_qc = (
+        "Answer\n"
+        "QC-Matrix: Clarity 3 (Δ+9) · Brevity 1 (Δ0) · Evidence 2 (Δ0) · "
+        "Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ-7)"
+    )
+
+    # With governance enabled, deltas must be corrected.
+    api.session_with_governance = True
+    dummy1 = DummySession([bad_qc])
+    api.chat_session = dummy1
+    out1 = api.ask("Hello")
+    text1 = _extract_text(out1)
+    assert 'Clarity 3 (Δ0)' in text1
+    assert 'Δ+9' not in text1
+
+    # Now disable governance via Comm Stop -> no correction should happen.
+    api.chat_session = DummySession([bad_qc])
+    api.ask("Comm Stop")
+    out2 = api.ask("Hello")
+    text2 = _extract_text(out2)
+    assert 'Clarity 3 (Δ+9)' in text2
+    assert 'Δ+9' in text2
+
+
+
+def test_log_event_does_not_crash_without_dirs():
+    mod = load_fix_module()
+    api = mod.Api()
+    # log_event must be safe regardless of filesystem state
+    api.log_event('ui', {'msg': 'hello'})
+    api.log_event('provider', {'provider': 'gemini', 'model': 'x'})
+    api.log_event('gov', {'comm_active': True})
+
+
+def test_trace_id_present_in_audit_v2_if_enabled():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.history.append({'role': 'user', 'content': 'test', 'ts': datetime.now().isoformat()})
+    _, audit_path = api.export_audit_v2(audit_only=True)
+    data = json.loads(Path(audit_path).read_text(encoding='utf-8'))
+    sm = data.get('session_metadata', {})
+    assert sm.get('trace_id') is not None
