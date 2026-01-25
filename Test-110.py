@@ -1,29 +1,30 @@
 import json
+import os
 import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-074.
+"""Unified pytest suite for Wrapper-105.
 
 Expected repo layout:
-- Wrapper-076.py
-- Test-076.py
+- Wrapper-110.py
+- Test-105.py
 - JSON/Comm-SCI-v19.6.8.json
 
 Run:
-  python -m pytest -vv -s --tb=long Test-076.py
+  python -m pytest -vv -s --tb=long Test-105.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-076.py'
+FIX_PATH = HERE / 'Wrapper-110.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
 
 
 def load_fix_module():
-    spec = importlib.util.spec_from_file_location('Wrapper-074', FIX_PATH)
+    spec = importlib.util.spec_from_file_location('Wrapper-109', FIX_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     spec.loader.exec_module(module)  # type: ignore[attr-defined]
@@ -446,6 +447,97 @@ def test_qc_delta_corrected_by_python_enforcement_for_at_least_two_dimensions():
 # Evidence tag normalization
 # -----------------------------
 
+def test_qc_override_changes_delta_calculation():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    class DummySession:
+        def send_message(self, prompt):
+            class R:
+                text = (
+                    "Antwort.\n\n"
+                    "QC-Matrix: K=3 · Clarity 3 (Δ0) · Brevity 1 (Δ-1) · Evidence 2 (Δ0) · "
+                    "Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ0)"
+                )
+            return R()
+
+    api = mod.Api()
+    api.chat_session = DummySession()
+    api.gov_state.comm_active = True
+
+    # Apply via the official API (mirrors to gov-manager used by QC enforcement).
+    api.qc_override_apply({"Brevity": 1})
+
+    out = api.ask("hi")
+    txt = _extract_text(out)
+    assert "QC-Matrix:" in txt
+    assert "Brevity 1 (Δ0)" in txt
+
+
+def test_qc_override_injects_prompt_behavior_directives():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    class DummySession:
+        def __init__(self):
+            self.calls = []
+        def send_message(self, prompt):
+            self.calls.append(prompt)
+            class R:
+                text = (
+                    "Antwort.\n\n"
+                    "QC-Matrix: K=3 · Clarity 3 (Δ0) · Brevity 0 (Δ0) · Evidence 3 (Δ0) · "
+                    "Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ0)"
+                )
+            return R()
+
+    sess = DummySession()
+    api = mod.Api()
+    api.chat_session = sess
+    api.gov_state.comm_active = True
+
+    # Set overrides and ensure they are injected into the model prompt.
+    api.qc_override_apply({"Brevity": 0, "Evidence": 3})
+
+    _ = api.ask("hi")
+    assert sess.calls, "Model should have been called exactly once in this test"
+    sent = sess.calls[-1]
+    assert "[QC OVERRIDES]" in sent
+    assert "Brevity=0" in sent
+    assert "Evidence=3" in sent
+    assert "[QC BEHAVIOR]" in sent
+
+
+
+def test_expected_qc_deltas_respects_runtime_overrides():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    gov = getattr(mod, 'gov', None)
+    assert gov is not None
+
+    overrides = {"Brevity": 0, "Empathy": 2}
+    cur = {
+        "Clarity": 3,
+        "Brevity": 2,
+        "Evidence": 2,
+        "Empathy": 1,
+        "Consistency": 2,
+        "Neutrality": 2,
+    }
+    d = gov.expected_qc_deltas("Expert", cur, overrides=overrides)
+    assert d.get("Brevity") == 2
+    assert d.get("Empathy") == -1
+
+def test_qc_bridge_qc_get_state_accepts_payload_dict():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    br = mod.QCBridge(api)
+    res = br.qc_get_state({})
+    assert isinstance(res, dict)
+    # ok can be False if ruleset not loaded, but should not crash and should include ok key
+    assert 'ok' in res
+
 def test_evidence_tagging_normalizes_origin_suffix_into_brackets_and_strips_trailing_origin_token():
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -714,3 +806,428 @@ def test_export_v2_ruleset_hash_present_or_unknown():
     data = json.loads(Path(audit_path).read_text(encoding='utf-8'))
     rh = (data.get('governance_config') or {}).get('ruleset_hash', 'unknown')
     assert rh == 'unknown' or str(rh).startswith('sha256:')
+def test_b6_set_api_key_persists_without_leaking_to_audit(tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    # Redirect config + logs to temp
+    mod.PROJECT_DIR = str(tmp_path)
+    mod.CONFIG_DIR = str(tmp_path / 'Config')
+    mod.LOGS_DIR = str(tmp_path / 'Logs')
+    mod.AUDIT_LOG_DIR = str(tmp_path / 'Logs' / 'Audit')
+    mod.CHAT_LOG_DIR = str(tmp_path / 'Logs' / 'Chats')
+    for d in [mod.CONFIG_DIR, mod.LOGS_DIR, mod.AUDIT_LOG_DIR, mod.CHAT_LOG_DIR]:
+        os.makedirs(d, exist_ok=True)
+
+    mod.KEYS_PATH = os.path.join(mod.CONFIG_DIR, mod.KEYS_FILENAME)
+    mod.KEYS_EXAMPLE_PATH = os.path.join(mod.CONFIG_DIR, mod.KEYS_EXAMPLE_FILENAME)
+
+    secret = "sk-THIS_IS_A_TEST_SECRET_DO_NOT_LEAK"
+    res = api.set_api_key_for_provider('openrouter', secret, write_path=mod.KEYS_PATH)
+    assert res.get('ok') is True
+
+    # Export audit v2 and ensure secret is NOT present
+    _, audit_path = api.export_audit_v2(audit_only=True)
+    with open(audit_path, 'r', encoding='utf-8') as f:
+        raw = f.read()
+    assert secret not in raw
+    assert "api_key_source" in raw
+
+def test_b7_load_log_from_path_and_fork(tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    legacy_path = tmp_path / "Log_legacy.json"
+    legacy = {
+        "meta": "x",
+        "model": "dummy",
+        "history": [
+            {"role": "user", "content": "hi", "ts": "2026-01-01T00:00:00"},
+            {"role": "bot", "content": "<b>hello</b>", "ts": "2026-01-01T00:00:01"},
+        ],
+    }
+    legacy_path.write_text(json.dumps(legacy), encoding='utf-8')
+
+    sid_before = getattr(api, 'session_id', None)
+    res = api.load_log_from_path(str(legacy_path), fork=False)
+    assert res.get('ok') is True
+    assert len(api.history) == 2
+    assert api.history[0]['content'] == "hi"
+    assert getattr(api, 'session_id', None) == sid_before
+
+    api2 = mod.Api()
+    sid2_before = getattr(api2, 'session_id', None)
+    res2 = api2.load_log_from_path(str(legacy_path), fork=True)
+    assert res2.get('ok') is True
+    assert len(api2.history) == 2
+    assert getattr(api2, 'session_id', None) != sid2_before
+
+
+def test_panel_ping_exists_and_returns_ok():
+    mod = load_fix_module()
+    api = mod.Api()
+    assert hasattr(api, 'ping')
+    res = api.ping()
+    assert isinstance(res, dict)
+    assert res.get('ok') is True
+
+def test_panel_get_ui_returns_minimum_keys():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    ui = api.get_ui()
+    assert isinstance(ui, dict)
+    assert 'providers' in ui
+    assert 'current_provider' in ui
+    assert 'current_model' in ui
+    assert 'available_models' in ui
+
+    # When the ruleset is primed, UI must include command sections for the Panel buttons.
+    assert isinstance(ui.get('comm'), list)
+    assert len(ui.get('comm')) > 0
+    assert isinstance(ui.get('profiles'), list)
+    assert len(ui.get('profiles')) > 0
+
+    # Log list keys must exist (may be empty in tests, but must not crash).
+    assert 'chat_logs' in ui
+
+
+def test_panel_get_ui_safe_without_priming():
+    mod = load_fix_module()
+    api = mod.Api()
+    ui = api.get_ui()
+    assert isinstance(ui, dict)
+    assert 'providers' in ui
+    assert 'current_provider' in ui
+    assert 'current_model' in ui
+    assert 'available_models' in ui
+
+def test_list_chat_logs_safe_and_returns_list():
+    mod = load_fix_module()
+    api = mod.Api()
+    assert hasattr(api, 'list_chat_logs')
+    res = api.list_chat_logs()
+    assert isinstance(res, dict)
+    assert res.get('ok') is True
+    assert isinstance(res.get('logs'), list)
+
+
+def test_panel_action_list_chat_logs_returns_list():
+    mod = load_fix_module()
+    api = mod.Api()
+    assert hasattr(api, 'panel_action')
+    res = api.panel_action('list_chat_logs', {'limit': 10})
+    assert isinstance(res, dict)
+    assert res.get('ok') is True
+    assert isinstance(res.get('logs'), list)
+
+
+def test_panel_action_cmd_executes_local_command_without_model_call():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    # Guard: if the implementation accidentally tries to call the model, we'd see a send_message call.
+    api.chat_session = DummySession(['LLM'])  # type: ignore[attr-defined]
+    out = api.panel_action('cmd', {'text': 'Comm State'})
+    assert isinstance(out, dict)
+    assert out.get('ok') is True
+    # Must not call the model for deterministic local commands
+    assert api.chat_session.calls == []  # type: ignore[attr-defined]
+    # panel_action('cmd') queues into the main UI pipeline; it returns metadata only.
+    assert out.get('queued') in (True, None)
+
+# ------------------------
+# Panel bridge wiring
+# ------------------------
+
+def test_panel_html_uses_panel_action_and_not_remote_cmd():
+    mod = load_fix_module()
+    assert isinstance(getattr(mod, 'HTML_PANEL', None), str)
+    html = mod.HTML_PANEL
+    # Panel must not rely on remote_cmd injection (which is backend-unstable)
+    assert 'panel_action' in html
+    assert 'remote_cmd' not in html
+
+
+
+def test_panel_html_qc_override_button_is_not_hf_only():
+    mod = load_fix_module()
+    html = getattr(mod, 'HTML_PANEL', '')
+    assert isinstance(html, str) and html
+    i_btn = html.find('id="qcOverrideBtn"')
+    assert i_btn != -1, "QC Override button must be present in panel HTML"
+    i_hf = html.find('id="hfCatalogRow"')
+    assert i_hf != -1
+    # Button should be outside HF-only row (so it appears for Gemini/OpenRouter as well)
+    assert i_btn < i_hf, "QC Override button must not be nested inside HF-only controls"
+
+
+def test_panel_html_qc_override_onclick_is_valid():
+    mod = load_fix_module()
+    html = getattr(mod, 'HTML_PANEL', '')
+    assert isinstance(html, str) and html
+    # Ensure the onclick handler is not over-escaped (must be valid JS)
+    i = html.find('id="qcOverrideBtn"')
+    assert i != -1
+    snippet = html[i:i+200]
+    assert "onclick=\"run('QC Override')\"" in snippet, snippet
+
+def test_panel_bridge_forwards_ping_get_ui_and_panel_action():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    pb = getattr(api, 'panel_bridge', None)
+    assert pb is not None, 'Api must expose panel_bridge'
+
+    r = pb.ping()
+    assert isinstance(r, dict)
+    assert r.get('ok') is True
+
+    ui = pb.get_ui()
+    assert isinstance(ui, dict)
+    assert 'providers' in ui and 'current_provider' in ui
+
+    # Local command via panel_action must not call model
+    api.chat_session = DummySession(['SHOULD NOT BE USED'])
+    out = pb.panel_action('cmd', {'text': 'Comm State'})
+    assert isinstance(out, dict)
+    assert out.get('ok') is True
+    # Must NOT call the model; command is queued into main UI pipeline.
+    assert api.chat_session.calls == []
+
+
+def test_panel_action_cmd_uses_remote_cmd_hook():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    called = {'n': 0, 'last': None}
+
+    def _rc(cmd):
+        called['n'] += 1
+        called['last'] = cmd
+
+    api.remote_cmd = _rc  # type: ignore[assignment]
+
+    out = api.panel_action('cmd', {'text': 'Comm Start'})
+    assert isinstance(out, dict)
+    assert out.get('ok') is True
+    assert called['n'] == 1
+    assert called['last'] == 'Comm Start'
+
+
+def test_panel_action_refresh_models_accepts_provider_param_without_crash():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    calls = {'set_provider': 0, 'refresh_models': 0}
+
+    def _sp(p):
+        calls['set_provider'] += 1
+        return {'ok': True, 'provider': p}
+
+    def _rm():
+        calls['refresh_models'] += 1
+        return {'ok': True}
+
+    api.set_provider = _sp  # type: ignore[assignment]
+    api.refresh_models = _rm  # type: ignore[assignment]
+
+    out = api.panel_action('refresh_models', {'provider': 'openrouter'})
+    assert isinstance(out, dict)
+    assert out.get('ok') is True
+    assert calls['set_provider'] == 1
+    assert calls['refresh_models'] == 1
+
+
+
+def test_refresh_models_hf_populates_cache():
+    """When provider is huggingface, refresh_models() must populate _hf_models_cache so the panel dropdown is not empty."""
+    mod = load_fix_module()
+
+    class DummyPR:
+        def get_active_provider(self):
+            return 'huggingface'
+        def get_huggingface_models_cached(self, force_refresh=False):
+            return (['hf/model-a', 'hf/model-b'], {'source': 'test'})
+
+    api = mod.Api()
+    api.provider_router = DummyPR()
+    api.main_win = None
+    api.panel_win = None
+
+    res = api.refresh_models()
+    assert isinstance(res, dict)
+    assert res.get('status') is True
+    assert res.get('provider') in ('huggingface', 'hf')
+    assert getattr(api, '_hf_models_cache', None) == ['hf/model-a', 'hf/model-b']
+
+
+def test_ui_replay_loaded_history_fallback_incremental():
+    """_ui_replay_loaded_history should fall back to incremental replay if resetChatFromHistory is unavailable/fails."""
+    mod = load_fix_module()
+
+    class DummyWin:
+        def __init__(self):
+            self.calls = []
+        def evaluate_js(self, js):
+            self.calls.append(js)
+            # Simulate that the bulk helper is missing/fails
+            if 'resetChatFromHistory' in js:
+                return 'NOFUNC'
+            return 'OK'
+
+    api = mod.Api()
+    api.main_win = DummyWin()
+    api.history = [
+        {'role': 'system', 'content': 'sys msg'},
+        {'role': 'user', 'content': 'hi'},
+        {'role': 'assistant', 'content': 'hello <b>world</b>'},
+    ]
+    api._ui_replay_loaded_history(status_msg='Loaded X')
+
+    # Must attempt reset status and then add messages
+    joined = '\n'.join(api.main_win.calls)
+    assert 'resetChatToStatus' in joined or 'resetChatToStatus' in joined  # status reset call
+    assert "addMsg('user'" in joined
+    assert "addMsg('bot'" in joined
+
+
+def test_panel_action_clear_chat_resets_history_and_calls_resetChatToStatus():
+    mod = load_fix_module()
+
+    class DummyWin:
+        def __init__(self):
+            self.calls = []
+        def evaluate_js(self, js):
+            self.calls.append(js)
+            return 'OK'
+
+    api = mod.Api()
+    api.main_win = DummyWin()
+    api.history = [{'role': 'user', 'content': 'hi'}]
+
+    res = api.panel_action('clear_chat', {})
+    assert isinstance(res, dict)
+    assert res.get('ok') is True
+    assert getattr(api, 'history', None) == []
+    joined = '\n'.join(api.main_win.calls)
+    assert 'resetChatToStatus' in joined
+
+
+def test_bind_panel_window_events_attaches_closing_and_closed_handlers():
+    mod = load_fix_module()
+
+    class Hook:
+        def __init__(self):
+            self.handlers = []
+        def __iadd__(self, fn):
+            self.handlers.append(fn)
+            return self
+
+    class Events:
+        def __init__(self):
+            self.closing = Hook()
+            self.closed = Hook()
+
+    class DummyWin:
+        def __init__(self):
+            self.events = Events()
+
+    api = mod.Api()
+    w = DummyWin()
+
+    api._bind_panel_window_events(w)
+
+    assert api.on_panel_closing in w.events.closing.handlers
+    assert api.on_panel_closed in w.events.closed.handlers
+
+
+def test_on_panel_closing_returns_false_and_attempts_hide():
+    mod = load_fix_module()
+    api = mod.Api()
+
+    called = {"hide": False}
+    def fake_hide_panel():
+        called["hide"] = True
+
+    api._hide_panel = fake_hide_panel  # type: ignore[assignment]
+    res = api.on_panel_closing()
+
+    assert res is False
+    assert called["hide"] is True
+
+
+
+def test_enforcement_policy_strict_block_blocks_hard_violations():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    # Enable strict block
+    mod.cfg.config["enforcement_policy"] = "strict_block"
+    mod.cfg.config["active_provider"] = "gemini"
+
+    class DummyValidator:
+        def validate(self, text=None, state=None, profile=None, **kwargs):
+            return (["hard_violation"], [])
+        def build_repair_prompt(self, user_prompt=None, raw_response=None, state=None, hard_violations=None, soft_violations=None, **kwargs):
+            return "repair"
+
+
+    class DummyChatSession:
+        def send_message(self, prompt):
+            class R:
+                text = "Antwort ohne QC."
+            return R()
+
+    api = mod.Api()
+    api.chat_session = DummyChatSession()
+    api.validator = DummyValidator()
+    api.gov_state.comm_active = True
+
+    out = api.ask("hi")
+    assert isinstance(out, dict)
+    html = out.get("html", "") or ""
+    if isinstance(html, dict):
+        html = html.get("html", "") or ""
+    assert "STRICT BLOCK" in html
+    assert "Content withheld" in html
+
+
+def test_enforcement_policy_strict_warn_prepends_warning_but_keeps_content():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    mod.cfg.config["enforcement_policy"] = "strict_warn"
+    mod.cfg.config["active_provider"] = "gemini"
+
+    class DummyValidator:
+        def validate(self, text=None, state=None, profile=None, **kwargs):
+            return (["hard_violation"], [])
+        def build_repair_prompt(self, user_prompt=None, raw_response=None, state=None, hard_violations=None, soft_violations=None, **kwargs):
+            return "repair"
+
+
+    class DummyChatSession:
+        def send_message(self, prompt):
+            class R:
+                text = "Antwort ohne QC."
+            return R()
+
+    api = mod.Api()
+    api.chat_session = DummyChatSession()
+    api.validator = DummyValidator()
+    api.gov_state.comm_active = True
+
+    out = api.ask("hi")
+    assert isinstance(out, dict)
+    html = out.get("html", "") or ""
+    if isinstance(html, dict):
+        html = html.get("html", "") or ""
+    assert "RULE VIOLATION DETECTED" in html
+    # content should still be visible in strict_warn
+    assert "Antwort" in html

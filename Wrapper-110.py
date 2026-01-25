@@ -427,6 +427,14 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
     except Exception:
         all_cmds = []
 
+
+    # Wrapper-local commands (not part of the ruleset JSON)
+    for _c in ("QC Override",):
+        try:
+            if _c not in all_cmds:
+                all_cmds.append(_c)
+        except Exception:
+            pass
     sci_pending = False
     try:
         sci_pending = bool(getattr(state, 'sci_pending', False))
@@ -613,6 +621,7 @@ class ConfigManager:
         self.config = {
             "model": "gemini-2.0-flash",
             "active_provider": "gemini",
+            "enforcement_policy": "audit_only",  # audit_only | strict_warn | strict_block
             "providers": {
               "gemini": {
                 "default_model": "gemini-2.0-flash"
@@ -1077,15 +1086,27 @@ class GovernanceManager:
         prof = (self.data.get("profiles", {}) or {}).get(profile_name, {}) or {}
         return prof.get("qc_target", {}) or {}
 
-    def expected_qc_deltas(self, profile_name: str, current_values: dict):
-        """Compute expected deltas using the canonical delta_calculation."""
+    def expected_qc_deltas(self, profile_name: str, current_values: dict, overrides: dict = None):
+        """Compute expected deltas from QC targets.
+
+        Overrides are treated as fixed (mn=mx=value) corridors.
+        """
         targets = self.get_profile_qc_target(profile_name)
+        ov = overrides or {}
         out = {}
         for dim, c in (current_values or {}).items():
-            corridor = targets.get(dim)
-            if not corridor or len(corridor) != 2:
+            # Apply QC override if present (fixed corridor)
+            if dim in ov and isinstance(ov.get(dim), (int, float)):
+                mn = mx = int(ov.get(dim))
+            else:
+                corridor = targets.get(dim)
+                if not corridor or len(corridor) != 2:
+                    continue
+                mn, mx = corridor
+            try:
+                c = int(c)
+            except Exception:
                 continue
-            mn, mx = corridor
             if c < mn:
                 out[dim] = c - mn
             elif c > mx:
@@ -1291,7 +1312,31 @@ def enforce_qc_footer_deltas(text: str, gov_mgr, profile_name: str) -> str:
             key = label_to_key.get(label_norm)
             if not key:
                 return m.group(0)
-            rng = qc_target.get(key)
+                        # QC override support (session-local): if gov_state.qc_overrides is set,
+            # treat the override value as a fixed corridor [v..v] for delta computation.
+            rng = None
+            try:
+                _ovs = getattr(getattr(gov_mgr, 'runtime_state', None), 'qc_overrides', {}) or getattr(gov_mgr, 'qc_overrides', {}) or {}
+                if isinstance(_ovs, dict):
+                    _ov = _ovs.get(label_norm)
+                    if _ov is None:
+                        _ov = _ovs.get(label_norm.lower())
+                    if _ov is None:
+                        _ov = _ovs.get(key)
+                    if _ov is not None:
+                        try:
+                            _ov_i = int(_ov)
+                        except Exception:
+                            _ov_i = None
+                        if _ov_i is not None:
+                            if _ov_i < 0: _ov_i = 0
+                            if _ov_i > 3: _ov_i = 3
+                            rng = [_ov_i, _ov_i]
+            except Exception:
+                rng = None
+            if rng is None:
+                rng = qc_target.get(key)
+
             if not (isinstance(rng, (list, tuple)) and len(rng) >= 2):
                 return m.group(0)
 
@@ -1642,6 +1687,7 @@ class GovernanceRuntimeState:
     sci_variant: str = ""
     sci_active: bool = False
 
+    qc_overrides: dict = field(default_factory=dict)
 def try_enter_sci_recursion(state, *, max_depth: int = 2) -> bool:
     """Deterministically enter SCI recursion if depth allows."""
     try:
@@ -2329,7 +2375,8 @@ HTML_PANEL = """
       <option value="huggingface">Provider: Hugging Face</option>
     </select>
     <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch /models and refresh cache (OpenRouter/HF)">Refresh Models</button>
-  </div>
+    <button class="smallbtn" id="qcOverrideBtn" onclick="run('QC Override')" title="QC Override">⚙ QC</button>
+</div>
 
   <div id="hfCatalogRow" class="row" style="display:none;">
     <select id="hfProviderFilter" class="setting-select" onchange="onHFProviderFilterChange()">
@@ -2887,6 +2934,226 @@ async function fetchHFCatalog(){
   await buildUI();
 }
 </script>
+</body>
+</html>
+"""
+
+
+HTML_QC_OVERRIDE = """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>QC Override</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 16px; color: #111; }
+  h2 { margin: 0 0 10px 0; font-size: 18px; }
+  .sub { margin: 0 0 14px 0; color: #444; font-size: 13px; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+  .lbl { width: 120px; font-weight: 600; font-size: 13px; }
+  input[type=range] { flex: 1; }
+  .val { width: 26px; text-align: right; font-variant-numeric: tabular-nums; }
+  .status { margin-top: 10px; font-size: 12px; color: #444; }
+  .err { color: #b00020; white-space: pre-wrap; font-size: 12px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 10px 0; }
+  .presets button { padding: 6px 10px; font-size: 12px; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .actions button { flex: 1; padding: 10px 12px; font-size: 13px; }
+</style>
+<script>
+(function(){
+  function qs(sel){ return document.querySelector(sel); }
+  function setStatus(txt, isErr){
+    const el = qs('#status');
+    if(!el) return;
+    el.className = isErr ? 'err' : 'status';
+    el.textContent = txt || '';
+  }
+  window.addEventListener('error', function(ev){
+    try{ setStatus('JS Error: ' + (ev && ev.message ? ev.message : String(ev)), true); }catch(e){}
+  });
+
+  const DIMENSIONS = [
+    ['Clarity','clarity'],
+    ['Brevity','brevity'],
+    ['Evidence','evidence'],
+    ['Empathy','empathy'],
+    ['Consistency','consistency'],
+    ['Neutrality','neutrality']
+  ];
+
+  function readValues(){
+    const out = {};
+    for(const [label, key] of DIMENSIONS){
+      const inp = qs('#sl-' + key);
+      if(inp) out[label] = parseInt(inp.value, 10);
+    }
+    return out;
+  }
+
+  function setValues(vals){
+    for(const [label, key] of DIMENSIONS){
+      const v = vals && (vals[label] !== undefined ? vals[label] : vals[key]);
+      if(v === undefined || v === null) continue;
+      const inp = qs('#sl-' + key);
+      const sp = qs('#v-' + key);
+      if(inp){ inp.value = String(v); }
+      if(sp){ sp.textContent = String(v); }
+    }
+  }
+
+  function attach(){
+    for(const [label, key] of DIMENSIONS){
+      const inp = qs('#sl-' + key);
+      const sp = qs('#v-' + key);
+      if(inp && sp){
+        inp.addEventListener('input', function(){ sp.textContent = String(inp.value); });
+      }
+    }
+  }
+
+  async function callApi(fn, payload){
+    if(!window.pywebview || !pywebview.api || !pywebview.api[fn]){
+      throw new Error('Bridge not ready: ' + fn);
+    }
+    return await pywebview.api[fn](payload || {});
+  }
+
+  async function boot(){
+    setStatus('Offline (bridge not ready). Trying…', false);
+    attach();
+
+    for(let i=0;i<40;i++){
+      try{
+        if(window.pywebview && pywebview.api && pywebview.api.ping){
+          const pong = await pywebview.api.ping();
+          if(pong && pong.ok){
+            const st = await callApi('qc_get_state', {});
+            if(st && st.ok){
+              const prof = st.profile || 'Standard';
+              document.title = 'QC-Vorgaben temporär anpassen – Profil: ' + prof;
+              const h = qs('#title');
+              if(h) h.textContent = 'QC-Vorgaben temporär anpassen – Profil: ' + prof;
+
+              const defaults = st.defaults || {};
+              const ovs = st.overrides || {};
+              const base = {};
+              for(const [label, key] of DIMENSIONS){
+                const d = defaults[key];
+                let v = 2;
+                if(Array.isArray(d) && d.length>=2){
+                  v = parseInt(d[1],10);
+                }else if(typeof d === 'number'){
+                  v = d;
+                }
+                base[label] = v;
+              }
+              setValues(base);
+              setValues(ovs);
+              setStatus(st.note || 'Online.', false);
+            }else{
+              setStatus('Online, aber qc_get_state fehlgeschlagen.', true);
+            }
+            return;
+          }
+        }
+      }catch(e){}
+      await new Promise(r => setTimeout(r, 250));
+    }
+    setStatus('Bridge not ready (offline). You can still adjust sliders, then Apply will retry.', false);
+  }
+
+  async function onApply(){
+    try{
+      const vals = readValues();
+      const res = await callApi('qc_override_apply', vals);
+      if(res && res.ok){
+        setStatus('Applied.', false);
+      }else{
+        setStatus('Apply failed: ' + (res && res.error ? res.error : 'unknown'), true);
+      }
+    }catch(e){
+      setStatus('Apply error: ' + String(e), true);
+    }
+  }
+
+  async function onClear(){
+    try{
+      const res = await callApi('qc_override_clear', {});
+      if(res && res.ok){
+        try{
+          const st = await callApi('qc_get_state', {});
+          if(st && st.ok){
+            const defaults = st.defaults || {};
+            const base = {};
+            for(const [label, key] of DIMENSIONS){
+              const d = defaults[key];
+              let v = 2;
+              if(Array.isArray(d) && d.length>=2){
+                v = parseInt(d[1],10);
+              }else if(typeof d === 'number'){
+                v = d;
+              }
+              base[label] = v;
+            }
+            setValues(base);
+          }
+        }catch(e){}
+        setStatus('Cleared.', false);
+      }else{
+        setStatus('Clear failed: ' + (res && res.error ? res.error : 'unknown'), true);
+      }
+    }catch(e){
+      setStatus('Clear error: ' + String(e), true);
+    }
+  }
+
+  async function onCancel(){
+    try{
+      await callApi('qc_override_cancel', {});
+    }catch(e){
+      try{ window.close(); }catch(_){}
+    }
+  }
+
+  function preset(kind){
+    const vals = readValues();
+    if(kind==='verbose'){ vals['Brevity']=0; vals['Clarity']=3; }
+    if(kind==='short'){ vals['Brevity']=3; vals['Clarity']=2; }
+    if(kind==='evidence'){ vals['Evidence']=3; vals['Clarity']=3; }
+    if(kind==='neutral'){ vals['Neutrality']=3; vals['Empathy']=1; }
+    setValues(vals);
+  }
+
+  window.QCUI = { boot, onApply, onClear, onCancel, preset };
+})();
+</script>
+</head>
+<body onload="QCUI.boot()">
+  <h2 id="title">QC-Vorgaben temporär anpassen – Profil: ?</h2>
+  <p class="sub">Temporäre QC-Anpassung (gilt bis Profilwechsel / Clear)</p>
+
+  <div class="row"><div class="lbl">Clarity</div><input id="sl-clarity" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-clarity">2</div></div>
+  <div class="row"><div class="lbl">Brevity</div><input id="sl-brevity" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-brevity">2</div></div>
+  <div class="row"><div class="lbl">Evidence</div><input id="sl-evidence" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-evidence">2</div></div>
+  <div class="row"><div class="lbl">Empathy</div><input id="sl-empathy" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-empathy">2</div></div>
+  <div class="row"><div class="lbl">Consistency</div><input id="sl-consistency" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-consistency">2</div></div>
+  <div class="row"><div class="lbl">Neutrality</div><input id="sl-neutrality" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-neutrality">2</div></div>
+
+  <div class="presets">
+    <button onclick="QCUI.preset('verbose')">Ausführlicher</button>
+    <button onclick="QCUI.preset('short')">Kürzer</button>
+    <button onclick="QCUI.preset('evidence')">Evidenzlastig</button>
+    <button onclick="QCUI.preset('neutral')">Neutral</button>
+  </div>
+
+  <div class="actions">
+    <button onclick="QCUI.onApply()">Apply</button>
+    <button onclick="QCUI.onClear()">Clear Overrides</button>
+    <button onclick="QCUI.onCancel()">Abbrechen</button>
+  </div>
+
+  <div id="status" class="status"></div>
 </body>
 </html>
 """
@@ -4294,6 +4561,17 @@ class CSCRefiner:
         gov.load_file() # Lädt Standard-Datei
         self.gov_state = _init_state_from_rules()
 
+        
+        
+        
+        
+        try:
+            _g = globals().get('gov')
+            if _g is not None:
+                setattr(_g, 'runtime_state', self.gov_state)
+        except Exception:
+            pass
+
         # ENONLY startup defaults (requested):
         # 1) Comm Start automatically after successful ruleset load
         # 2) Color on by default
@@ -4837,7 +5115,7 @@ class CSCRefiner:
                 enforced_txt = enforce_qc_footer_deltas(raw_response, gov, _prof)
                 cur_qc, rep_delta = gov.parse_qc_footer(enforced_txt)
                 if cur_qc:
-                    exp_delta = gov.expected_qc_deltas(_prof, cur_qc)
+                    exp_delta = gov.expected_qc_deltas(_prof, cur_qc, overrides=getattr(self.gov_state, "qc_overrides", {}))
                     if rep_delta:
                         mism = [f"{k}: expected Δ{v}, got Δ{rep_delta[k]}" for k, v in exp_delta.items() if rep_delta.get(k) != v]
                         if mism:
@@ -4902,7 +5180,7 @@ class CSCRefiner:
             try:
                 cur_qc, _rep = gov.parse_qc_footer(raw_for_render)
                 if cur_qc:
-                    exp_delta = gov.expected_qc_deltas(prof, cur_qc)
+                    exp_delta = gov.expected_qc_deltas(prof, cur_qc, overrides=getattr(self.gov_state, "qc_overrides", {}))
                     self.gov_state.last_qc = dict(cur_qc)
                     self.gov_state.last_qc_deltas = dict(exp_delta or {})
             except Exception:
@@ -4935,6 +5213,64 @@ class CSCRefiner:
             # A: Header voranstellen
             if header:
                 raw_for_render = header + "\n\n" + raw_for_render
+            # Strict enforcement gate (optional): validate final text (pre-render) and optionally warn/block.
+            strict_banner_html = ""
+            try:
+                pol = self._get_enforcement_policy()
+            except Exception:
+                pol = "audit_only"
+            if pol in ("strict_warn", "strict_block"):
+                try:
+                    hv2, sv2 = self.validator.validate(
+                        raw_for_render,
+                        state=self.gov_state,
+                        profile=prof,
+                        expect_menu=False,
+                        expect_trace=False,
+                        is_command=False,
+                        user_prompt=user_raw,
+                        raw_response=raw_for_render,
+                    )
+                except Exception as e:
+                    hv2, sv2 = [], []
+                    # Fail-soft: show a warning in chat, but never crash.
+                    try:
+                        self._append_system_message(f"⚠️ QC/Validator error in strict enforcement: {e}")
+                    except Exception:
+                        pass
+                if hv2:
+                    if pol == "strict_block":
+                        blocked_html = (
+                            "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
+                            "<summary>⛔ STRICT BLOCK (hard violations)</summary>"
+                            "<div class='csc-details'>"
+                            "<p>Die Modellantwort wurde vom Wrapper blockiert, weil nach Repair/Enforcement weiterhin harte Regelverstöße vorliegen.</p>"
+                            "<ul>"
+                            + "".join(f"<li>{html.escape(str(x))}</li>" for x in hv2)
+                            + "</ul>"
+                            "<p><i>(Content withheld by wrapper)</i></p>"
+                            "</div></details>"
+                        )
+                        try:
+                            return ({"html": sanitize_html(blocked_html), "text": "", "csc": None}, {"strict_enforcement": "blocked", "hard_violations": hv2})
+                        except Exception:
+                            return ({"html": blocked_html, "text": "", "csc": None}, {"strict_enforcement": "blocked", "hard_violations": hv2})
+                    else:
+                        # strict_warn
+                        strict_banner_html = (
+                            "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
+                            "<summary>⚠️ RULE VIOLATION DETECTED (strict_warn)</summary>"
+                            "<div class='csc-details'>"
+                            "<p>Die folgende Antwort hat nach Repair/Enforcement weiterhin harte Regelverstöße:</p>"
+                            "<ul>"
+                            + "".join(f"<li>{html.escape(str(x))}</li>" for x in hv2)
+                            + "</ul>"
+                            "</div></details><hr>"
+                        )
+            # Strict warn: show banner above the normal alerts/content
+            if strict_banner_html:
+                alert_html = strict_banner_html + alert_html
+
             
             # B: Bilder einbetten
             raw_for_render = _auto_embed_image_urls(raw_for_render)
@@ -5002,6 +5338,107 @@ class CSCRefiner:
             lines = []
             lines.append(f"[OUTPUT LANGUAGE] Final answer content in {lang_name} ({lang}). Keep ALL headings/labels/scaffolding in English.")
             lines.append("[ANSWER LENGTH] Be slightly more detailed than minimal (+10-20%). Avoid one-liners.")
+
+            # QC overrides (session-local): these should influence BOTH
+            # - delta calculation / enforcement (Python side) and
+            # - the model's writing behavior (prompt side)
+            # without touching any other governance logic.
+            try:
+                ovs_raw = getattr(getattr(self, 'gov_state', None), 'qc_overrides', None)
+            except Exception:
+                ovs_raw = None
+            ovs = ovs_raw if isinstance(ovs_raw, dict) else {}
+            if ovs:
+                # Normalize keys + clamp values.
+                canon = {
+                    'clarity': 'Clarity',
+                    'brevity': 'Brevity',
+                    'evidence': 'Evidence',
+                    'empathy': 'Empathy',
+                    'consistency': 'Consistency',
+                    'neutrality': 'Neutrality',
+                }
+                clean = {}
+                for k, v in ovs.items():
+                    try:
+                        kk = (str(k) or '').strip().lower()
+                        kk = canon.get(kk, None)
+                        if not kk:
+                            continue
+                        iv = int(v)
+                        if iv < 0:
+                            iv = 0
+                        if iv > 3:
+                            iv = 3
+                        clean[kk] = iv
+                    except Exception:
+                        continue
+
+                if clean:
+                    # Let a Brevity override take precedence over the generic answer-length hint.
+                    b = clean.get('Brevity')
+                    if isinstance(b, int):
+                        if b <= 1:
+                            lines[1] = "[ANSWER LENGTH] Be detailed and thorough. Do not compress; include steps/examples when helpful."
+                        elif b >= 3:
+                            lines[1] = "[ANSWER LENGTH] Be concise. Use short sentences; minimize background; prefer bullets."
+
+                    parts = [f"{k}={v}" for k, v in clean.items()]
+                    lines.append(f"[QC OVERRIDES] Active temporary targets override profile defaults: {', '.join(parts)}")
+
+                    # Minimal, deterministic behavior hints. Note: in this QC scale,
+                    # higher Brevity => more concise; lower Brevity => more detailed.
+                    hints = []
+                    for k, v in clean.items():
+                        if k == 'Brevity':
+                            if v <= 0:
+                                hints.append("Brevity=0: be very detailed; include steps/examples; avoid compressing.")
+                            elif v == 1:
+                                hints.append("Brevity=1: be detailed (but not endless); include key steps.")
+                            elif v == 2:
+                                hints.append("Brevity=2: moderate length; balance detail and concision.")
+                            else:
+                                hints.append("Brevity=3: be as concise as possible; short answer, minimal extras.")
+                        elif k == 'Evidence':
+                            if v >= 3:
+                                hints.append("Evidence=3: make claims traceable; cite sources/assumptions; mark uncertainty.")
+                            elif v == 2:
+                                hints.append("Evidence=2: support key claims with reasoning; state assumptions.")
+                            elif v == 1:
+                                hints.append("Evidence=1: light justification; avoid over-claiming.")
+                            else:
+                                hints.append("Evidence=0: minimal justification; keep it practical.")
+                        elif k == 'Clarity':
+                            if v >= 3:
+                                hints.append("Clarity=3: be extremely clear; structure with headings/bullets; define terms.")
+                            elif v == 2:
+                                hints.append("Clarity=2: clear structure; avoid ambiguity.")
+                            else:
+                                hints.append("Clarity<=1: keep it understandable; skip extra pedagogy.")
+                        elif k == 'Empathy':
+                            if v >= 3:
+                                hints.append("Empathy=3: warm and supportive tone.")
+                            elif v == 2:
+                                hints.append("Empathy=2: considerate tone.")
+                            else:
+                                hints.append("Empathy<=1: neutral-professional tone.")
+                        elif k == 'Consistency':
+                            if v >= 3:
+                                hints.append("Consistency=3: self-check; keep internal logic tight; avoid contradictions.")
+                            elif v == 2:
+                                hints.append("Consistency=2: keep reasoning consistent.")
+                            else:
+                                hints.append("Consistency<=1: keep it simple; avoid conflicting statements.")
+                        elif k == 'Neutrality':
+                            if v >= 3:
+                                hints.append("Neutrality=3: strictly neutral wording; avoid loaded language.")
+                            elif v == 2:
+                                hints.append("Neutrality=2: mostly neutral tone.")
+                            else:
+                                hints.append("Neutrality<=1: neutral by default; avoid polarizing phrasing.")
+
+                    if hints:
+                        lines.append("[QC BEHAVIOR] " + " ".join(hints))
             lines.append("")
             return "\n".join(lines) + raw
         except Exception:
@@ -5143,6 +5580,19 @@ class CSCRefiner:
             profiles = (data or {}).get("profiles", {}) if isinstance(data, dict) else {}
             if isinstance(profiles, dict) and pname in profiles:
                 self.gov_state.active_profile = pname
+                # QC overrides are session-local and must reset on profile switch
+                try:
+                    self.gov_state.qc_overrides = {}
+                except Exception:
+                    pass
+                try:
+                    gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
+                    if gov_obj2 is not None:
+                        setattr(gov_obj2, 'qc_overrides', {})
+                        setattr(gov_obj2, 'runtime_state', self.gov_state)
+                except Exception:
+                    pass
+
                 # Reset pending counters on any explicit profile switch
                 try:
                     self.gov_state.sci_pending_turns = 0
@@ -6482,7 +6932,7 @@ class CSCRefiner:
                 cur_qc, _rep = gov.parse_qc_footer(final_work)
                 if isinstance(cur_qc, dict) and cur_qc:
                     try:
-                        exp_delta = gov.expected_qc_deltas(_prof_now, cur_qc) or {}
+                        exp_delta = gov.expected_qc_deltas(_prof_now, cur_qc, overrides=getattr(self.gov_state, "qc_overrides", {})) or {}
                     except Exception:
                         exp_delta = {}
                     try:
@@ -6679,7 +7129,7 @@ class CSCRefiner:
         # Wird gerufen, wenn man das X drückt
         self.close_app()
 
-    def ping(self):
+    def ping(self, _payload=None):
         """Panel health check."""
         try:
             return {'ok': True, 'ts': datetime.now().isoformat()}
@@ -6797,6 +7247,12 @@ class CSCRefiner:
             # 1) Clear history
             try:
                 self.history = []
+            except Exception:
+                pass
+
+            # Clear QC overrides (session-local)
+            try:
+                self.gov_state.qc_overrides = {}
             except Exception:
                 pass
 
@@ -7305,9 +7761,264 @@ class CSCRefiner:
                 pass
         return geom
 
+
     def _create_panel(self):
         # Geometry: prefer persisted config; fallback to current defaults
         geom = self.panel_geom or {}
+        def _safe_int(v, default):
+            try:
+                return int(v)
+            except Exception:
+                return int(default)
+
+        panel_x = _safe_int(geom.get('x', 1100), 1100)
+        panel_y = _safe_int(geom.get('y', 0), 0)
+        panel_w = _safe_int(geom.get('width', 340), 340)
+        panel_h = _safe_int(geom.get('height', 1000), 1000)
+
+        # macOS/pywebview: a persisted off-screen position makes the panel look 'missing'.
+        # Keep values in a sane corridor; otherwise reset to defaults near top-left.
+        if panel_w < 250:
+            panel_w = 250
+        if panel_h < 300:
+            panel_h = 300
+        if panel_x < 0 or panel_x > 5000:
+            panel_x = 50
+        if panel_y < 0 or panel_y > 3000:
+            panel_y = 50
+
+        # Panel window must receive the same js_api object as the main window.
+        # (Secondary windows can otherwise miss methods like get_ui/ping on some backends.)
+        kwargs = dict(
+            title="Panel",
+            html=HTML_PANEL,
+            js_api=(self.panel_bridge or self),
+            width=panel_w,
+            height=panel_h,
+            on_top=False
+        )
+
+        # Only set x/y if we have something sensible
+        if panel_x is not None and panel_y is not None:
+            kwargs.update(dict(x=panel_x, y=panel_y))
+
+        # Pre-create hidden (best effort): avoids Cocoa bridge issues and prevents a 'flash' at startup.
+        win = None
+        try:
+            win = webview.create_window(**kwargs, hidden=True)
+            self.panel_hidden = True
+        except TypeError:
+            win = webview.create_window(**kwargs)
+            self.panel_hidden = False
+
+        self.panel_win = win
+        try:
+            self._bind_panel_window_events(self.panel_win)
+        except Exception:
+            # fallback: at least bind closed
+            try:
+                self.panel_win.events.closed += self.on_panel_closed
+            except Exception:
+                pass
+
+    def _create_qc_override(self):
+        """Pre-create the QC Override dialog window (hidden) to avoid macOS/Cocoa bridge init issues."""
+        try:
+            if getattr(self, 'qc_win', None) is not None:
+                return
+        except Exception:
+            pass
+        try:
+            self.qc_bridge = QCBridge(self)
+        except Exception:
+            self.qc_bridge = None
+        try:
+            self.qc_win = webview.create_window(
+                "QC-Vorgaben temporär anpassen – Profil: ?",
+                html=HTML_QC_OVERRIDE,
+                width=450,
+                height=550,
+                resizable=False,
+                hidden=True,
+                on_top=True,
+                js_api=getattr(self, 'qc_bridge', None) or self
+            )
+        except Exception:
+            try:
+                self.qc_win = None
+            except Exception:
+                pass
+
+    def show_qc_override(self):
+        """Show QC Override dialog window."""
+        try:
+            win = getattr(self, 'qc_win', None)
+            if win is None:
+                self._create_qc_override()
+                win = getattr(self, 'qc_win', None)
+            if win is None:
+                return {'ok': False, 'error': 'qc_win unavailable'}
+            try:
+                win.show()
+            except Exception:
+                pass
+            try:
+                win.bring_to_front()
+            except Exception:
+                pass
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
+    def qc_get_state(self, _payload=None):
+        """Return current QC defaults (corridors) and current overrides for UI."""
+        try:
+            prof = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
+            defaults = {}
+            try:
+                gov_obj = getattr(self, 'gov', None) or globals().get('gov')
+                prof_data = ((getattr(gov_obj, 'data', {}) or {}).get('profiles', {}) or {}).get(prof, {}) or {}
+                defaults = prof_data.get('qc_target') or {}
+                if not isinstance(defaults, dict):
+                    defaults = {}
+            except Exception:
+                defaults = {}
+            ovs = {}
+            try:
+                ovs = getattr(self.gov_state, 'qc_overrides', {}) or {}
+                if not isinstance(ovs, dict):
+                    ovs = {}
+            except Exception:
+                ovs = {}
+            return {'ok': True, 'profile': prof, 'defaults': defaults, 'overrides': ovs, 'note': 'Online.'}
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
+    def qc_override_apply(self, values):
+        """Apply QC overrides from UI; session-local."""
+        try:
+            if not isinstance(values, dict):
+                return {'ok': False, 'error': 'values must be dict'}
+            clean = {}
+            mapping = {
+                'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'
+            }
+            for k, v in values.items():
+                try:
+                    vi = int(v)
+                except Exception:
+                    continue
+                if vi < 0: vi = 0
+                if vi > 3: vi = 3
+                kk = (k or '').strip()
+                if not kk:
+                    continue
+                low = kk.lower()
+                if low in mapping:
+                    kk = mapping[low]
+                clean[kk] = vi
+
+            try:
+                self.gov_state.qc_overrides = dict(clean)
+            except Exception:
+                try:
+                    setattr(self.gov_state, 'qc_overrides', dict(clean))
+                except Exception:
+                    pass
+            # Mirror overrides to gov-manager for deterministic QC enforcement (session-local).
+            try:
+                gov_obj = getattr(self, 'gov', None) or globals().get('gov')
+                if gov_obj is not None:
+                    setattr(gov_obj, 'qc_overrides', dict(clean))
+                    setattr(gov_obj, 'runtime_state', self.gov_state)
+            except Exception:
+                pass
+
+            msg_parts = []
+            for lab in ['Clarity','Brevity','Evidence','Empathy','Consistency','Neutrality']:
+                if lab in clean:
+                    msg_parts.append(f"{lab}={clean[lab]}")
+            msg = "QC-Overrides gesetzt: " + (", ".join(msg_parts) if msg_parts else "(leer)")
+
+            try:
+                self.history.append({'role': 'sys', 'content': msg, 'ts': datetime.now().isoformat()})
+            except Exception:
+                pass
+
+            try:
+                if getattr(self, 'main_win', None) is not None:
+                    import json as _json
+                    js_msg = _json.dumps(msg, ensure_ascii=False)
+                    self.main_win.evaluate_js(f"addMsg('sys', {js_msg});")
+            except Exception:
+                pass
+
+            try:
+                if getattr(self, 'qc_win', None) is not None:
+                    try:
+                        self.qc_win.hide()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            return {'ok': True, 'overrides': clean}
+        except Exception as e:
+            try:
+                if getattr(self, 'main_win', None) is not None:
+                    import json as _json
+                    js_msg = _json.dumps(f"[WARN] QC Override Apply failed: {type(e).__name__}: {e}", ensure_ascii=False)
+                    self.main_win.evaluate_js(f"addMsg('sys', {js_msg});")
+            except Exception:
+                pass
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
+    def qc_override_clear(self, _payload=None):
+        """Clear QC overrides."""
+        try:
+            try:
+                self.gov_state.qc_overrides = {}
+            except Exception:
+                try:
+                    setattr(self.gov_state, 'qc_overrides', {})
+                except Exception:
+                    pass
+            # Mirror clear to gov-manager as well.
+            try:
+                gov_obj = getattr(self, 'gov', None) or globals().get('gov')
+                if gov_obj is not None:
+                    setattr(gov_obj, 'qc_overrides', {})
+                    setattr(gov_obj, 'runtime_state', self.gov_state)
+            except Exception:
+                pass
+            msg = "QC-Overrides zurückgesetzt"
+            try:
+                self.history.append({'role': 'sys', 'content': msg, 'ts': datetime.now().isoformat()})
+            except Exception:
+                pass
+            try:
+                if getattr(self, 'main_win', None) is not None:
+                    import json as _json
+                    js_msg = _json.dumps(msg, ensure_ascii=False)
+                    self.main_win.evaluate_js(f"addMsg('sys', {js_msg});")
+            except Exception:
+                pass
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
+    def qc_override_cancel(self, _payload=None):
+        """Close QC dialog without changes."""
+        try:
+            try:
+                if getattr(self, 'qc_win', None) is not None:
+                    self.qc_win.hide()
+            except Exception:
+                pass
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
         def _safe_int(v, default):
             try:
                 return int(v)
@@ -7989,6 +8700,13 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
     Returns a dict (e.g. {html, csc, t_in, t_out, total_in, total_out}) if handled, else None.
     """
     cmd = (canonical_cmd or "").strip()
+    # QC Override (wrapper-local UI dialog)
+    if cmd == "QC Override":
+        try:
+            self.show_qc_override()
+        except Exception:
+            pass
+        return {"html": "<div class='sys'>QC Override dialog opened.</div>", "csc": None}
     if not cmd:
         return None
 
@@ -9349,6 +10067,13 @@ class Api(CSCRefiner):
     def __init__(self):
         # Bind governance + config safely
         super().__init__(globals().get('gov'), globals().get('cfg'))
+        try:
+            _g = globals().get('gov')
+            if _g is not None:
+                setattr(_g, 'runtime_state', self.gov_state)
+        except Exception:
+            pass
+
 
         # Provider routing (single-file adapters)
         try:
@@ -9454,6 +10179,18 @@ class Api(CSCRefiner):
 
 
 
+    def _get_enforcement_policy(self) -> str:
+        """Return enforcement policy from config. Defaults to 'audit_only'."""
+        try:
+            pol = (getattr(cfg, "config", {}) or {}).get("enforcement_policy", "audit_only")
+            pol = str(pol).strip().lower()
+        except Exception:
+            pol = "audit_only"
+        if pol not in ("audit_only", "strict_warn", "strict_block"):
+            pol = "audit_only"
+        return pol
+
+
     def clear_chat(self):
         """Clear in-memory history and reset the main chat UI (no model call, no provider switch)."""
         try:
@@ -9490,6 +10227,43 @@ class Api(CSCRefiner):
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
 
+class QCBridge:
+    """Minimal JS bridge for the QC Override dialog."""
+    def __init__(self, api):
+        self._api = api
+
+    def ping(self, _payload=None):
+        try:
+            import time as _time
+            return {"ok": True, "ts": _time.time()}
+        except Exception:
+            return {"ok": True}
+
+    def qc_get_state(self, _payload=None):
+        try:
+            return self._api.qc_get_state()
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def qc_override_apply(self, values):
+        try:
+            return self._api.qc_override_apply(values)
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def qc_override_clear(self, _payload=None):
+        try:
+            return self._api.qc_override_clear()
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def qc_override_cancel(self, _payload=None):
+        try:
+            return self._api.qc_override_cancel()
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 class PanelBridge:
     """Separate JS-API bridge for the Panel window.
 
@@ -9506,7 +10280,7 @@ class PanelBridge:
     def __init__(self, api):
         self._api = api
 
-    def ping(self):
+    def ping(self, _payload=None):
         return self._api.ping()
 
     def get_ui(self):
@@ -9647,6 +10421,7 @@ if __name__ == '__main__':
     # On macOS/Cocoa, creating secondary windows from a JS->Python callback can leave the JS API bridge uninitialized,
     # resulting in a Panel stuck at 'Loading panel...'.
     api._create_panel()
+    api._create_qc_override()
     # HIER: Binden des Schließen-Events ("X") an unsere Logik
     api.main_win.events.closed += api.on_main_window_close
     
