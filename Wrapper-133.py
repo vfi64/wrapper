@@ -7932,6 +7932,19 @@ class CSCRefiner:
         OpenRouter is stateless; no reconnect is required.
         """
         try:
+            # Snapshot old provider/model for auditability (best-effort; no behavior change)
+            try:
+                _old_p = (getattr(cfg, 'get_active_provider', lambda: 'gemini')() or 'gemini').strip().lower()
+            except Exception:
+                _old_p = 'gemini'
+            try:
+                _old_m = ''
+                if hasattr(cfg, 'get_provider_model'):
+                    _old_m = str(cfg.get_provider_model(_old_p) or '').strip()
+                if not _old_m:
+                    _old_m = str(cfg_get_model() or '').strip()
+            except Exception:
+                _old_m = str(cfg_get_model() or '').strip()
             provider = (provider or 'gemini').strip().lower()
             if provider in ('hf',):
                 provider = 'huggingface'
@@ -7955,6 +7968,48 @@ class CSCRefiner:
                 if cur_m:
                     if hasattr(cfg, 'set_provider_model'):
                         cfg.set_provider_model(provider, cur_m)
+            except Exception:
+                pass
+
+            # Record provider switch event (history + session_events) before any reconnect
+            try:
+                _new_p = provider
+            except Exception:
+                _new_p = 'gemini'
+            try:
+                _new_m = ''
+                if hasattr(cfg, 'get_provider_model'):
+                    _new_m = str(cfg.get_provider_model(_new_p) or '').strip()
+                if not _new_m:
+                    _new_m = str(cfg_get_model() or '').strip()
+            except Exception:
+                _new_m = str(cfg_get_model() or '').strip()
+            try:
+                if not isinstance(getattr(self, 'provider_model_history', None), list):
+                    self.provider_model_history = []
+                self.provider_model_history.append({
+                    'ts': datetime.now().isoformat(),
+                    'event': 'provider_switch',
+                    'old_provider': _old_p,
+                    'old_model': _old_m,
+                    'new_provider': _new_p,
+                    'new_model': _new_m,
+                })
+            except Exception:
+                pass
+            try:
+                self.log_event('provider', {
+                    'event': 'provider_switch',
+                    'old_provider': _old_p,
+                    'old_model': _old_m,
+                    'new_provider': _new_p,
+                    'new_model': _new_m,
+                })
+            except Exception:
+                pass
+            try:
+                msg = f"Provider switched: {_old_p} → {_new_p} (model: {_new_m})"
+                self.history.append({'role': 'sys', 'content': msg, 'ts': datetime.now().isoformat()})
             except Exception:
                 pass
 
@@ -8081,6 +8136,16 @@ class CSCRefiner:
         except Exception:
             provider = 'gemini'
 
+        # Snapshot old model for auditability (best-effort; no behavior change)
+        try:
+            _old_model = ''
+            if hasattr(cfg, 'get_provider_model'):
+                _old_model = str(cfg.get_provider_model(provider) or '').strip()
+            if not _old_model:
+                _old_model = str(cfg_get_model() or '').strip()
+        except Exception:
+            _old_model = str(cfg_get_model() or '').strip()
+
         # No-op guard: selecting the same model again should not trigger a reconnect storm.
         try:
             _new_model = str(model or '').strip()
@@ -8115,6 +8180,39 @@ class CSCRefiner:
                 cfg.set_model(model)
             except Exception:
                 pass
+
+        # Record model switch event (history + session_events)
+        try:
+            _new_model_eff = str(model or '').strip()
+        except Exception:
+            _new_model_eff = ''
+        try:
+            if not isinstance(getattr(self, 'provider_model_history', None), list):
+                self.provider_model_history = []
+            self.provider_model_history.append({
+                'ts': datetime.now().isoformat(),
+                'event': 'model_switch',
+                'provider': provider,
+                'old_model': _old_model,
+                'new_model': _new_model_eff,
+            })
+        except Exception:
+            pass
+        try:
+            self.log_event('provider', {
+                'event': 'model_switch',
+                'provider': provider,
+                'old_model': _old_model,
+                'new_model': _new_model_eff,
+            })
+        except Exception:
+            pass
+        try:
+            msg = f"Model switched ({provider}): {_old_model} → {_new_model_eff}"
+            self.history.append({'role': 'sys', 'content': msg, 'ts': datetime.now().isoformat()})
+        except Exception:
+            pass
+
 
         if provider == 'gemini':
             self._trigger_reconnect(f"Modellwechsel ({model})...")
@@ -8680,7 +8778,32 @@ class CSCRefiner:
             chat_path = os.path.join(CHAT_LOG_DIR, chat_name)
             try:
                 with open(chat_path, "w", encoding="utf-8") as f:
-                    json.dump({"meta": WRAPPER_NAME, "model": cfg_get_model(), "history": self.history}, f, indent=2)
+                    _chat_payload = {"meta": WRAPPER_NAME, "model": cfg_get_model(), "history": self.history}
+                    # --- B8: Persist provider/model + fork metadata (additive; backwards compatible) ---
+                    try:
+                        pr = getattr(self, 'provider_router', None)
+                        _p = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else None)
+                        _p = (_p or (getattr(cfg, 'get_active_provider', lambda: 'gemini')() or 'gemini')).strip().lower()
+                    except Exception:
+                        _p = 'gemini'
+                    try:
+                        _m = ''
+                        if hasattr(cfg, 'get_provider_model'):
+                            _m = str(cfg.get_provider_model(_p) or '').strip()
+                        if not _m:
+                            _m = str(cfg_get_model() or '').strip()
+                    except Exception:
+                        _m = str(cfg_get_model() or '').strip()
+                    try:
+                        _chat_payload["active_provider"] = _p
+                        _chat_payload["active_model"] = _m
+                        _chat_payload["provider_model_history"] = list(getattr(self, "provider_model_history", []) or [])
+                        _chat_payload["forked_from_log_path"] = getattr(self, "forked_from_log_path", None)
+                        _chat_payload["fork_parent_trace_id"] = getattr(self, "fork_parent_trace_id", None)
+                    except Exception:
+                        pass
+                    # --- /B8 ---
+                    json.dump(_chat_payload, f, indent=2)
                 print(f"Exportiert (Chat): {chat_path}")
             except Exception as e:
                 print(f"[System] Export-Error (Chat): {e}")
@@ -8942,6 +9065,21 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
                 self.session_csc_applied_count = 0
                 self.session_guard_hits = 0
                 self.session_events = []
+                # Fork metadata (exported in chat logs; no secrets)
+                try:
+                    self.forked_from_log_path = p
+                except Exception:
+                    pass
+                try:
+                    self.fork_parent_trace_id = data.get('trace_id') or data.get('session_id') or data.get('meta_trace_id')
+                except Exception:
+                    self.fork_parent_trace_id = None
+                try:
+                    import os as _os
+                    msg = f"Forked from chat log: {_os.path.basename(p)}"
+                    self.history.append({'role': 'sys', 'content': msg, 'ts': datetime.now().isoformat()})
+                except Exception:
+                    pass
             except Exception:
                 pass
 

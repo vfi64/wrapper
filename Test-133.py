@@ -4,21 +4,21 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-132.
+"""Unified pytest suite for Wrapper-133.
 
 Expected repo layout:
-- Wrapper-132.py
-- Test-132.py
+- Wrapper-133.py
+- Test-133.py
 - JSON/Comm-SCI-v19.6.8.json
 
 Run:
-  python3 -m pytest -vv -s --tb=long Test-132.py
+  python3 -m pytest -vv -s --tb=long Test-133.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-132.py'
+FIX_PATH = HERE / 'Wrapper-133.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
 if not JSON_PATH.exists():
@@ -922,15 +922,17 @@ def test_b7_load_log_from_path_and_fork(tmp_path):
     sid_before = getattr(api, 'session_id', None)
     res = api.load_log_from_path(str(legacy_path), fork=False)
     assert res.get('ok') is True
-    assert len(api.history) == 2
+    assert len(api.history) >= 2
     assert api.history[0]['content'] == "hi"
+    assert api.history[1]['content'] == "<b>hello</b>"
     assert getattr(api, 'session_id', None) == sid_before
 
     api2 = mod.Api()
     sid2_before = getattr(api2, 'session_id', None)
     res2 = api2.load_log_from_path(str(legacy_path), fork=True)
     assert res2.get('ok') is True
-    assert len(api2.history) == 2
+    assert any((m.get('role') == 'sys' and 'Forked from chat log:' in str(m.get('content',''))) for m in api2.history if isinstance(m, dict))
+    assert len(api2.history) >= 2
     assert getattr(api2, 'session_id', None) != sid2_before
 
 
@@ -1584,3 +1586,73 @@ def test_comm_state_shows_effective_qc_values_and_optional_override_line():
     assert "QC-Matrix:" in html
     assert "Brevity 1 (Δ0)" in html
     assert "QC-Overrides:" in html and "Brevity=1" in html
+
+
+
+def test_chat_export_includes_provider_model_metadata_and_history(tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    # Redirect config + logs to temp
+    mod.PROJECT_DIR = str(tmp_path)
+    mod.CONFIG_DIR = str(tmp_path / 'Config')
+    mod.LOGS_DIR = str(tmp_path / 'Logs')
+    mod.AUDIT_LOG_DIR = str(tmp_path / 'Logs' / 'Audit')
+    mod.CHAT_LOG_DIR = str(tmp_path / 'Logs' / 'Chats')
+    for d in [mod.CONFIG_DIR, mod.LOGS_DIR, mod.AUDIT_LOG_DIR, mod.CHAT_LOG_DIR]:
+        os.makedirs(d, exist_ok=True)
+
+    # Ensure we can switch without triggering network (OpenRouter path is stateless)
+    api.set_provider('openrouter')
+    api.set_model('openrouter/test-model')
+
+    # Export and verify additive fields exist
+    chat_path, _audit_path = api.export()
+    data = json.loads(Path(chat_path).read_text(encoding='utf-8'))
+
+    assert data.get('active_provider') == 'openrouter'
+    assert data.get('active_model') == 'openrouter/test-model'
+    hist = data.get('provider_model_history') or []
+    assert isinstance(hist, list)
+    # at least one provider/model event should be present
+    assert any(e.get('event') in ('provider_switch', 'model_switch') for e in hist)
+
+
+def test_fork_records_source_metadata_and_sys_history_line(tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    # Redirect config + logs to temp
+    mod.PROJECT_DIR = str(tmp_path)
+    mod.CONFIG_DIR = str(tmp_path / 'Config')
+    mod.LOGS_DIR = str(tmp_path / 'Logs')
+    mod.AUDIT_LOG_DIR = str(tmp_path / 'Logs' / 'Audit')
+    mod.CHAT_LOG_DIR = str(tmp_path / 'Logs' / 'Chats')
+    for d in [mod.CONFIG_DIR, mod.LOGS_DIR, mod.AUDIT_LOG_DIR, mod.CHAT_LOG_DIR]:
+        os.makedirs(d, exist_ok=True)
+
+    # Create a seed log to fork from
+    api.history.append({'role': 'user', 'content': 'seed', 'ts': datetime.now().isoformat()})
+    seed_chat_path, _ = api.export()
+
+    # Fork-load from the exported chat log
+    res = api.load_log_from_path(seed_chat_path, fork=True)
+    assert res.get('ok') is True
+    assert res.get('forked') is True
+    assert getattr(api, 'forked_from_log_path', None) == seed_chat_path
+
+    # The fork should have a visible sys marker line in history
+    assert any(
+        (m.get('role') == 'sys' and 'Forked from chat log:' in str(m.get('content', '')))
+        for m in (api.history or [])
+        if isinstance(m, dict)
+    )
+
+    # Export again and ensure fork metadata is persisted
+    fork_chat_path, _ = api.export()
+    fork_data = json.loads(Path(fork_chat_path).read_text(encoding='utf-8'))
+    assert fork_data.get('forked_from_log_path') == seed_chat_path
+    # parent trace id may be None (legacy logs), but key should exist
+    assert 'fork_parent_trace_id' in fork_data
