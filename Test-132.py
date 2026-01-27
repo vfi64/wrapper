@@ -4,23 +4,25 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-126.
+"""Unified pytest suite for Wrapper-132.
 
 Expected repo layout:
-- Wrapper-126.py
-- Test-119.py
+- Wrapper-132.py
+- Test-132.py
 - JSON/Comm-SCI-v19.6.8.json
 
 Run:
-  python3 -m pytest -vv -s --tb=long Test-119.py
+  python3 -m pytest -vv -s --tb=long Test-132.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-126.py'
+FIX_PATH = HERE / 'Wrapper-132.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
+if not JSON_PATH.exists():
+    JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
 
 
 def load_fix_module():
@@ -446,6 +448,73 @@ def test_qc_delta_corrected_by_python_enforcement_for_at_least_two_dimensions():
 # -----------------------------
 # Evidence tag normalization
 # -----------------------------
+
+
+
+def test_qc_footer_normalizes_non_integer_values_to_ints():
+    """Regression: some providers emit QC values like 0.8/1.2; footer must normalize to integer ratings."""
+    mod = load_fix_module()
+    fn = getattr(mod, 'enforce_qc_footer_deltas', None)
+    assert callable(fn)
+
+    text = "QC-Matrix: clarity 0.8 (Δ0); brevity 2.2 (Δ0); evidence 3 (Δ0); neutrality 1.6 (Δ0); consistency 2 (Δ0)"
+    # Corridor doesn't matter for normalization itself, but we pass a plausible one.
+    expected = {'clarity': (2, 3), 'brevity': (2, 3), 'evidence': (2, 3), 'neutrality': (2, 3), 'consistency': (2, 3)}
+    out = fn(text, expected, profile_name='Standard')
+
+    # Values must be integers now (0.8->1, 2.2->2, 1.6->2).
+    assert "clarity 1" in out
+    assert "brevity 2" in out
+    assert "neutrality 2" in out
+
+
+def test_qc_alternative_footer_is_canonicalized_and_respects_override():
+    """Regression (Known-Good 2): model emits an alternative QC summary (no QC-Matrix line).
+
+    Expectation: Wrapper must produce a canonical QC-Matrix footer with correct deltas,
+    and QC overrides must be respected (fixed corridor => Δ0).
+    """
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None  # isolate behavior
+    api.gov_state.comm_active = True
+    api.gov_state.active_profile = 'Standard'
+
+    # Apply override: Brevity fixed to 1 => expected Δ0 for Brevity 1.
+    api.qc_override_apply({"Brevity": 1})
+
+    dummy = DummySession([
+        "Antwort in einem Satz: Ein elektrisches Feld ist der Raum um Ladungen, in dem auf andere Ladungen eine Kraft wirkt.\n"
+        "Profile: Standard QC: Clarity 3 · Brevity 1 · Evidence 2 · Empathy 2 · Consistency 2 · Neutrality 2"
+    ])
+    api.chat_session = dummy
+
+    out = api.ask("Gib mir eine 1-Satz-Antwort: Was ist ein elektrisches Feld?")
+    assert len(dummy.calls) == 1
+
+    txt = _extract_text(out)
+    assert "QC-Matrix:" in txt
+    assert "Profile: Standard QC:" not in txt  # replaced in-place
+    # Values are ints and deltas are canonical.
+    assert "Clarity 3 (Δ0)" in txt
+    assert "Brevity 1 (Δ0)" in txt
+    assert "Evidence 2 (Δ0)" in txt
+    assert "Empathy 2 (Δ0)" in txt
+    assert "Consistency 2 (Δ0)" in txt
+    assert "Neutrality 2 (Δ0)" in txt
+
+    # Additionally ensure that without override, Brevity 1 would be Δ-1 under Standard corridor.
+    corr = mod.gov.get_profile_qc_target('Standard')
+    txt2 = mod.enforce_qc_footer_deltas(
+        "X\nProfile: Standard QC: Clarity 3 · Brevity 1 · Evidence 2 · Empathy 2 · Consistency 2 · Neutrality 2",
+        corr,
+        profile_name='Standard'
+    )
+    assert "Brevity 1 (Δ-1)" in txt2
+
+
 
 def test_qc_override_changes_delta_calculation():
     mod = load_fix_module()
@@ -1480,3 +1549,38 @@ def test_trace_id_present_in_audit_v2_if_enabled():
     data = json.loads(Path(audit_path).read_text(encoding='utf-8'))
     sm = data.get('session_metadata', {})
     assert sm.get('trace_id') is not None
+
+
+def test_qc_footer_is_moved_to_end_when_model_puts_it_early():
+    mod = load_fix_module()
+    # Build a valid QC line (canonical), but place it before the answer.
+    early = (
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 1 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)\n"
+        "[GREEN] Ein elektrisches Feld ist der Raum um eine elektrische Ladung, in dem auf andere Ladungen eine Kraft wirkt.\n\n"
+        "Self-Debunking:\n- Punkt 1\n- Punkt 2\n"
+    )
+    out = mod.ensure_qc_footer_is_last(early)
+    # QC must be last block
+    assert out.strip().endswith("Neutrality 2 (Δ0)"), out
+    # Answer must remain present and appear before the footer
+    assert "[GREEN]" in out
+    assert out.find("[GREEN]") < out.rfind("QC-Matrix:")
+
+
+def test_comm_state_shows_effective_qc_values_and_optional_override_line():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None
+    api.chat_session = DummySession(["SHOULD NOT BE USED"])
+
+    # Set an override and verify Comm State reflects it deterministically.
+    api.gov_state.qc_overrides = {"brevity": 1}
+
+    out = api.ask("Comm State")
+    html = _extract_html(out)
+
+    assert "QC-Matrix:" in html
+    assert "Brevity 1 (Δ0)" in html
+    assert "QC-Overrides:" in html and "Brevity=1" in html

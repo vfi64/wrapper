@@ -9,6 +9,7 @@ import hashlib
 import base64
 from collections import deque, defaultdict
 from pathlib import Path
+import math
 try:
     import markdown  # type: ignore
 except Exception:
@@ -1204,34 +1205,76 @@ class GovernanceManager:
         prof = (self.data.get("profiles", {}) or {}).get(profile_name, {}) or {}
         return prof.get("qc_target", {}) or {}
 
-    def expected_qc_deltas(self, profile_name: str, current_values: dict, overrides: dict = None):
-        """Compute expected deltas from QC targets.
+    def _normalize_qc_key(self, k) -> str:
+        s = ("" if k is None else str(k)).strip().lower()
+        m = {
+            "clarity":"clarity","brevity":"brevity","evidence":"evidence","empathy":"empathy","consistency":"consistency","neutrality":"neutrality",
+            "klarheit":"clarity","kürze":"brevity","kuerze":"brevity","evidenz":"evidence","empathie":"empathy","konsistenz":"consistency","neutralität":"neutrality","neutralitaet":"neutrality",
+        }
+        return m.get(s, s)
 
-        Overrides are treated as fixed (mn=mx=value) corridors.
-        """
-        targets = self.get_profile_qc_target(profile_name)
-        ov = overrides or {}
+    def normalize_qc_overrides(self, overrides: dict | None) -> dict:
+        """Return overrides as canonical lowercase keys -> int (clamped 0..3)."""
+        ov = overrides if isinstance(overrides, dict) else {}
         out = {}
-        for dim, c in (current_values or {}).items():
-            # Apply QC override if present (fixed corridor)
-            if dim in ov and isinstance(ov.get(dim), (int, float)):
-                mn = mx = int(ov.get(dim))
-            else:
-                corridor = targets.get(dim)
-                if not corridor or len(corridor) != 2:
-                    continue
-                mn, mx = corridor
+        for k, v in (ov or {}).items():
+            key = self._normalize_qc_key(k)
             try:
-                c = int(c)
+                iv = int(float(str(v).replace(",", ".").strip()))
             except Exception:
                 continue
-            if c < mn:
-                out[dim] = c - mn
-            elif c > mx:
-                out[dim] = c - mx
-            else:
-                out[dim] = 0
+            if iv < 0:
+                iv = 0
+            if iv > 3:
+                iv = 3
+            out[key] = iv
         return out
+
+    def get_effective_qc_corridor(self, profile_name: str, overrides: dict | None = None) -> dict:
+        """Single Source of Truth: effective corridor dim->(mn,mx), incl. overrides as fixed [v..v]."""
+        base = self.get_profile_qc_target(profile_name) or {}
+        eff = {}
+        if isinstance(base, dict):
+            for k, v in base.items():
+                key = self._normalize_qc_key(k)
+                try:
+                    lo, hi = v
+                    eff[key] = (int(lo), int(hi))
+                except Exception:
+                    continue
+        ov = self.normalize_qc_overrides(overrides)
+        for k, iv in ov.items():
+            eff[k] = (iv, iv)
+        return eff
+
+    def get_effective_qc_values(self, profile_name: str, overrides: dict | None = None) -> dict:
+        """Effective target values using upper bound (override becomes that fixed value)."""
+        corr = self.get_effective_qc_corridor(profile_name, overrides)
+        return {k: int(hi) for k, (lo, hi) in (corr or {}).items()}
+
+
+    def expected_qc_deltas(self, profile_name: str, current_values: dict, overrides: dict = None):
+        """Compute expected deltas against the *effective* corridor (profile + overrides)."""
+        corr = self.get_effective_qc_corridor(profile_name, overrides)
+        out = {}
+        for dim, c in (current_values or {}).items():
+            key = self._normalize_qc_key(dim)
+            corridor = corr.get(key)
+            if not corridor:
+                continue
+            mn, mx = corridor
+            try:
+                c_int = int(c)
+            except Exception:
+                continue
+            if c_int < mn:
+                out[QC_LABELS.get(key, key)] = c_int - mn
+            elif c_int > mx:
+                out[QC_LABELS.get(key, key)] = c_int - mx
+            else:
+                out[QC_LABELS.get(key, key)] = 0
+        return out
+
 
     def parse_qc_footer(self, text: str):
         """Extract QC current values and reported deltas from a model response."""
@@ -1342,151 +1385,243 @@ def dedupe_qc_lines(text: str) -> str:
 
 
 
-def enforce_qc_footer_deltas(text: str, gov_mgr, profile_name: str) -> str:
+def enforce_qc_footer_deltas(text: str, gov_mgr_or_expected, profile_name: str = 'Standard') -> str:
+    """Normalize QC footer values to ints and correct deltas against the expected corridor.
+
+    Fix (Wrapper-132):
+      - If no canonical 'QC-Matrix:' line exists but a QC summary line exists (e.g. "QC:" or "Profile: ... QC: ..."),
+        we deterministically convert it into a canonical QC-Matrix footer with computed deltas.
+
+    Args:
+        text: The text that may contain a QC footer line.
+        gov_mgr_or_expected: Either a corridor dict (dim->(min,max)) or a GovernanceManager-like object.
+        profile_name: Profile name used when resolving corridor via the manager.
     """
-    Deterministically correct ONLY the QC deltas in an existing QC-Matrix footer line.
+    if not text:
+        return text
 
-    - Keeps the model-provided QC *values* (Clarity 3, Brevity 1, ...) unchanged.
-    - Recomputes Δ based on the active profile's qc_target corridor [min..max]:
-        * within corridor => Δ0
-        * below min       => Δ = value - min   (negative)
-        * above max       => Δ = value - max   (positive)
-
-    If no QC footer line is present, returns text unchanged.
-    """
-    try:
-        if not text or not gov_mgr or not getattr(gov_mgr, "loaded", False):
-            return text
-
-        prof = (gov_mgr.data.get("profiles", {}) or {}).get(profile_name or "", {}) or {}
-        qc_target = prof.get("qc_target") or {}
-        if not isinstance(qc_target, dict) or not qc_target:
-            return text
-
-        # Identify the QC line (first match). Keep everything else unchanged.
-        lines = text.splitlines()
-        qc_idx = None
-        for i, line in enumerate(lines):
-            if re.match(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*", line or ""):
-                qc_idx = i
-                break
-        if qc_idx is None:
-            return text
-
-        line = lines[qc_idx]
-
-        # Map display label -> internal key
-        label_to_key = {
-            "Clarity": "clarity",
-            "Brevity": "brevity",
-            "Evidence": "evidence",
-            "Empathy": "empathy",
-            "Consistency": "consistency",
-            "Neutrality": "neutrality",
-        }
-
-        def _to_num(s: str):
-            s = (s or "").strip().replace(",", ".")
+    # Resolve expected corridor dict.
+    expected = {}
+    if isinstance(gov_mgr_or_expected, dict):
+        expected = gov_mgr_or_expected
+    else:
+        obj = gov_mgr_or_expected
+        if hasattr(obj, 'get_profile_qc_target'):
             try:
-                if "." in s:
-                    return float(s)
-                return int(s)
+                expected = obj.get_profile_qc_target(profile_name) or {}
             except Exception:
-                try:
-                    return float(s)
-                except Exception:
-                    return None
-
-        def _fmt_delta(d):
-            # keep integer formatting where possible
+                expected = {}
+        elif hasattr(obj, 'profile_get_qc_target'):
             try:
-                if isinstance(d, float) and abs(d - round(d)) < 1e-9:
-                    d = int(round(d))
+                expected = obj.profile_get_qc_target(profile_name) or {}
             except Exception:
-                pass
-            if isinstance(d, (int, float)):
-                if d == 0:
-                    return "Δ0"
-                if isinstance(d, float):
-                    ds = f"{d:.2f}".rstrip("0").rstrip(".")
-                    if not ds.startswith("-"):
-                        ds = "+" + ds
-                    return "Δ" + ds
-                return f"Δ{d:+d}"
-            return "Δ0"
+                expected = {}
 
-        # Replace each dimension's delta while keeping the value
-        dim_re = re.compile(
-            r"(?P<label>Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality)\s+"
-            r"(?P<val>[0-9]+(?:[.,][0-9]+)?)\s*"
-            r"\(\s*Δ\s*(?P<delta>[+-]?\d+(?:[.,]\d+)?)\s*\)",
-            re.IGNORECASE,
+    expected_norm = {}
+    if isinstance(expected, dict):
+        for k, v in expected.items():
+            try:
+                lo, hi = v
+                expected_norm[str(k).strip().lower()] = (int(lo), int(hi))
+            except Exception:
+                continue
+
+    # Map known labels (case-insensitive) to normalized keys.
+    label_map = {
+        'clarity': 'clarity',
+        'brevity': 'brevity',
+        'evidence': 'evidence',
+        'neutrality': 'neutrality',
+        'consistency': 'consistency',
+        'empathy': 'empathy',
+        # DE
+        'klarheit': 'clarity',
+        'kürze': 'brevity',
+        'kuerze': 'brevity',
+        'evidenz': 'evidence',
+        'empathie': 'empathy',
+        'konsistenz': 'consistency',
+        'neutralität': 'neutrality',
+        'neutralitaet': 'neutrality',
+    }
+
+    # Canonical render labels (stable order)
+    canon_order = [
+        ('clarity', 'Clarity'),
+        ('brevity', 'Brevity'),
+        ('evidence', 'Evidence'),
+        ('empathy', 'Empathy'),
+        ('consistency', 'Consistency'),
+        ('neutrality', 'Neutrality'),
+    ]
+
+    def _to_int_rating(value_raw: str):
+        s = (value_raw or '').replace(',', '.').strip()
+        try:
+            f = float(s)
+        except Exception:
+            return None
+        # Round half-up for positive ratings.
+        iv = int(f + 0.5) if f >= 0 else int(f - 0.5)
+        if iv < 0:
+            iv = 0
+        if iv > 3:
+            iv = 3
+        return iv
+
+    def _expected_delta(val_int: int, corridor):
+        if not corridor:
+            return None
+        lo, hi = corridor
+        if val_int < lo:
+            return val_int - lo
+        if val_int > hi:
+            return val_int - hi
+        return 0
+
+    # ----------------------------
+    # Case 1: canonical QC-Matrix present -> normalize values + deltas in-place (existing behavior).
+    # ----------------------------
+    if 'QC-Matrix:' in text:
+        entry_re = re.compile(
+            r'(?P<label>[A-Za-zÄÖÜäöüß]+)\s*'
+            r'(?P<value>\d+(?:[\.,]\d+)?)\s*'
+            r'\(\s*Δ\s*(?P<delta>[+-]?\d+(?:[\.,]\d+)?)\s*\)',
+            re.UNICODE,
         )
 
-        def _repl(m):
-            label = m.group("label")
-            # Normalize label casing to match our mapping keys
-            label_norm = label[0].upper() + label[1:].lower()
-            key = label_to_key.get(label_norm)
-            if not key:
-                return m.group(0)
-                        # QC override support (session-local): if gov_state.qc_overrides is set,
-            # treat the override value as a fixed corridor [v..v] for delta computation.
-            rng = None
-            try:
-                _ovs = getattr(getattr(gov_mgr, 'runtime_state', None), 'qc_overrides', {}) or getattr(gov_mgr, 'qc_overrides', {}) or {}
-                if isinstance(_ovs, dict):
-                    _ov = _ovs.get(label_norm)
-                    if _ov is None:
-                        _ov = _ovs.get(label_norm.lower())
-                    if _ov is None:
-                        _ov = _ovs.get(key)
-                    if _ov is not None:
-                        try:
-                            _ov_i = int(_ov)
-                        except Exception:
-                            _ov_i = None
-                        if _ov_i is not None:
-                            if _ov_i < 0: _ov_i = 0
-                            if _ov_i > 3: _ov_i = 3
-                            rng = [_ov_i, _ov_i]
-            except Exception:
-                rng = None
-            if rng is None:
-                rng = qc_target.get(key)
+        def _repl(m: re.Match):
+            label_raw = m.group('label')
+            value_raw = m.group('value')
+            delta_raw = m.group('delta')
 
-            if not (isinstance(rng, (list, tuple)) and len(rng) >= 2):
+            key = label_map.get(label_raw.strip().lower(), label_raw.strip().lower())
+            val_int = _to_int_rating(value_raw)
+            if val_int is None:
                 return m.group(0)
 
-            v = _to_num(m.group("val"))
-            if v is None:
-                return m.group(0)
+            corr = expected_norm.get(key)
+            d_corr = _expected_delta(val_int, corr)
 
-            try:
-                lo, hi = float(rng[0]), float(rng[1])
-                if lo > hi:
-                    lo, hi = hi, lo
-            except Exception:
-                return m.group(0)
+            # Always normalize the numeric value; correct delta only if we have a corridor.
+            if d_corr is None:
+                d = delta_raw.replace(',', '.')
+                if d.startswith('+'):
+                    d = d[1:]
+                return f"{label_raw} {val_int} (Δ{d})"
 
-            if v < lo:
-                d = v - lo
-            elif v > hi:
-                d = v - hi
-            else:
-                d = 0
+            sign = '+' if d_corr > 0 else ''
+            return f"{label_raw} {val_int} (Δ{sign}{d_corr})"
 
-            # Keep original value string as written by model
-            val_str = m.group("val")
-            return f"{label_norm} {val_str} ({_fmt_delta(d)})"
+        return entry_re.sub(_repl, text)
 
-        new_line = dim_re.sub(_repl, line)
+    # ----------------------------
+    # Case 2: No QC-Matrix present -> try to canonicalize an alternative QC summary line.
+    # ----------------------------
+    # Find the *last* QC summary line of either form:
+    #   - "QC: Clarity 3 · Brevity 1 · ..."
+    #   - "Profile: Standard QC: Clarity 3 · Brevity 1 · ..."
+    pat_profile = re.compile(r'(?im)^(?P<indent>\s*)Profile:\s*[^\n]*?\bQC\s*:\s*(?P<body>.*)\s*$', re.UNICODE)
+    pat_qc = re.compile(r'(?im)^(?P<indent>\s*)QC\s*:\s*(?P<body>.*)\s*$', re.UNICODE)
 
-        # Ensure the line still starts with "QC-Matrix:" (unchanged), but keep original prefix if present.
-        lines[qc_idx] = new_line
-        return "\n".join(lines)
-    except Exception:
+    def _last_match(pat):
+        ms = list(pat.finditer(text))
+        return ms[-1] if ms else None
+
+    m_prof = _last_match(pat_profile)
+    m_qc = _last_match(pat_qc)
+    if m_prof and m_qc:
+        m_alt = m_prof if m_prof.start() >= m_qc.start() else m_qc
+    else:
+        m_alt = m_prof or m_qc
+
+    if not m_alt:
         return text
+
+    body = (m_alt.group('body') or '').strip()
+    if not body:
+        return text
+
+    # Split items on common separators (providers often use "·" or ";" or "|").
+    items = [p.strip() for p in re.split(r'[·;\|]+', body) if p.strip()]
+    vals = {}
+    for it in items:
+        # tolerate "Label=2" / "Label: 2" / "Label 2"
+        m_it = re.match(r'^\s*([A-Za-zÄÖÜäöüß]+)\s*(?:=|:)?\s*(\d+(?:[\.,]\d+)?)\s*$', it, re.UNICODE)
+        if not m_it:
+            continue
+        lbl = (m_it.group(1) or '').strip()
+        num = (m_it.group(2) or '').strip()
+        key = label_map.get(lbl.lower())
+        if not key:
+            continue
+        iv = _to_int_rating(num)
+        if iv is None:
+            continue
+        vals[key] = iv
+
+    # Only canonicalize when we have all canonical dimensions; otherwise do not invent anything.
+    if not all(k in vals for k, _ in canon_order):
+        return text
+
+    # Build canonical QC-Matrix line with computed deltas.
+    parts = []
+    for k, disp in canon_order:
+        iv = int(vals.get(k))
+        d = _expected_delta(iv, expected_norm.get(k))
+        if d is None:
+            d = 0
+        sign = '+' if d > 0 else ''
+        parts.append(f"{disp} {iv} (Δ{sign}{d})")
+    qc_line = "QC-Matrix: " + " · ".join(parts)
+
+    indent = m_alt.group('indent') or ''
+    qc_line = indent + qc_line
+
+    # Replace the alternative summary line in-place so the footer is always present and canonical.
+    new_text = text[:m_alt.start()] + qc_line + text[m_alt.end():]
+    return new_text
+
+
+def ensure_qc_footer_is_last(text: str) -> str:
+    """Ensure QC-Matrix footer is the last block.
+
+    Moves the last QC-Matrix line to the end. If the same line also contains a
+    color-tagged answer marker like [GREEN], we keep that part in place and move
+    only the QC portion.
+    """
+    if not text or 'QC-Matrix:' not in text:
+        return text
+
+    lines = text.splitlines(True)
+    qc_idx = None
+    for i, ln in enumerate(lines):
+        if re.match(r'^\s*QC-Matrix\s*:', ln):
+            qc_idx = i
+    if qc_idx is None:
+        return text
+
+    ln = lines[qc_idx]
+    m = re.search(r'\[(GREEN|YELLOW|RED)\]', ln)
+    qc_part = ln
+    keep_part = ''
+    if m:
+        pos = m.start()
+        qc_part = ln[:pos].rstrip()
+        keep_part = ln[pos:].lstrip()
+    if keep_part:
+        lines[qc_idx] = keep_part if keep_part.endswith('\n') else keep_part + '\n'
+    else:
+        lines.pop(qc_idx)
+
+    base = ''.join(lines).rstrip()
+    qc_part = (qc_part or '').strip()
+    if not qc_part:
+        return base + ('\n' if text.endswith('\n') else '')
+    sep = '\n\n' if base and not base.endswith('\n\n') else ''
+    out = base + sep + qc_part
+    out = out.rstrip() + ('\n' if text.endswith('\n') else '')
+    return out
 
 
 def format_sci_menu(text: str) -> str:
@@ -4014,17 +4149,15 @@ class CSCRefiner:
         """
         lang = self._lang()
         try:
-            prof = (gov.data.get("profiles", {}) or {}).get(profile_name, {}) or {}
-            tgt = prof.get("qc_target", {}) or {}
+            overrides = getattr(self.gov_state, 'qc_overrides', {}) if hasattr(self, 'gov_state') else {}
+            eff = gov.get_effective_qc_values(profile_name, overrides)
             order = ["clarity", "brevity", "evidence", "empathy", "consistency", "neutrality"]
 
             parts = []
             for key in order:
-                rng = tgt.get(key)
-                if isinstance(rng, list) and len(rng) == 2:
-                    val = int(rng[1])  # upper bound
+                if key in eff:
+                    val = int(eff[key])
                 else:
-                    # safe defaults
                     val = 2 if key not in {"clarity", "consistency"} else 3
                 parts.append(f"{QC_LABELS.get(key, key)} {val} (Δ0)")
 
@@ -4383,6 +4516,14 @@ class CSCRefiner:
         try:
             prof = getattr(getattr(self, "gov_state", object()), "active_profile", "Standard") or "Standard"
             parts.append(f"<div class='minor' style='margin-top:10px'>{html.escape(self._qc_footer_for_profile(prof))}</div>")
+            try:
+                ovs = gov.normalize_qc_overrides(getattr(self.gov_state, 'qc_overrides', {}) or {})
+                if ovs:
+                    disp = {'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'}
+                    parts2 = [f"{disp.get(k,k)}={v}" for k, v in ovs.items()]
+                    parts.append(f"<div class='minor'>QC-Overrides: {html.escape(' · '.join(parts2))}</div>")
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -4428,6 +4569,14 @@ class CSCRefiner:
             out.append(f"Dynamic nudge: {dyn}")
 
         out.append(self._qc_footer_for_profile(prof))
+        try:
+            ovs = gov.normalize_qc_overrides(getattr(self.gov_state, 'qc_overrides', {}) or {})
+            if ovs:
+                disp = {'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'}
+                parts = [f"{disp.get(k,k)}={v}" for k, v in ovs.items()]
+                out.append("QC-Overrides: " + " · ".join(parts))
+        except Exception:
+            pass
         return "\n".join(out).strip()
 
 
@@ -4486,6 +4635,15 @@ class CSCRefiner:
             out.append(f"<tr><th>{html.escape(k)}</th><td>{html.escape(str(v))}</td></tr>")
         out.append('</tbody></table>')
         out.append(f"<div style='margin-top:10px'>{html.escape(self._qc_footer_for_profile(prof))}</div>")
+        try:
+            ovs = gov.normalize_qc_overrides(getattr(self.gov_state, 'qc_overrides', {}) or {})
+            if ovs:
+                disp = {'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'}
+                parts2 = [f"{disp.get(k,k)}={v}" for k, v in ovs.items()]
+                out.append(f"<div class='minor'>QC-Overrides: {html.escape(' · '.join(parts2))}</div>")
+        except Exception:
+            pass
+
         out.append('</div>')
         return "\n".join(out)
 
@@ -5278,10 +5436,14 @@ class CSCRefiner:
                 # IMPORTANT: use the same profile as shown in the header/rendering.
                 # This avoids false "expected Δ..." alerts if the runtime state changes mid-turn.
                 _prof = (prof or getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard')
-                enforced_txt = enforce_qc_footer_deltas(raw_response, gov, _prof)
+                _ovr_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
+                _ovr = gov.normalize_qc_overrides(_ovr_raw)
+                _corr = gov.get_effective_qc_corridor(_prof, _ovr)
+                enforced_txt = enforce_qc_footer_deltas(raw_response, _corr, _prof)
+                enforced_txt = ensure_qc_footer_is_last(enforced_txt)
                 cur_qc, rep_delta = gov.parse_qc_footer(enforced_txt)
                 if cur_qc:
-                    exp_delta = gov.expected_qc_deltas(_prof, cur_qc, overrides=getattr(self.gov_state, "qc_overrides", {}))
+                    exp_delta = gov.expected_qc_deltas(_prof, cur_qc, overrides=_ovr)
                     if rep_delta:
                         mism = [f"{k}: expected Δ{v}, got Δ{rep_delta[k]}" for k, v in exp_delta.items() if rep_delta.get(k) != v]
                         if mism:
@@ -5338,7 +5500,11 @@ class CSCRefiner:
             # Apply deterministic QC delta enforcement before any further rendering.
             # This keeps the QC footer stable even if the model's deltas drift.
             try:
-                raw_for_render = enforce_qc_footer_deltas(raw_response, gov, prof)
+                _ovr_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
+                _ovr = gov.normalize_qc_overrides(_ovr_raw)
+                corr = gov.get_effective_qc_corridor(prof, _ovr)
+                raw_for_render = enforce_qc_footer_deltas(raw_response, corr, prof)
+                raw_for_render = ensure_qc_footer_is_last(raw_for_render)
             except Exception:
                 raw_for_render = raw_response
 
@@ -8170,7 +8336,8 @@ class CSCRefiner:
                 return {'ok': False, 'error': 'values must be dict'}
             clean = {}
             mapping = {
-                'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'
+                'clarity':'clarity','brevity':'brevity','evidence':'evidence','empathy':'empathy','consistency':'consistency','neutrality':'neutrality',
+                'klarheit':'clarity','kürze':'brevity','kuerze':'brevity','evidenz':'evidence','empathie':'empathy','konsistenz':'consistency','neutralität':'neutrality','neutralitaet':'neutrality',
             }
             for k, v in values.items():
                 try:
@@ -8183,9 +8350,10 @@ class CSCRefiner:
                 if not kk:
                     continue
                 low = kk.lower()
-                if low in mapping:
-                    kk = mapping[low]
-                clean[kk] = vi
+                key = mapping.get(low)
+                if not key:
+                    continue
+                clean[key] = vi
 
             try:
                 self.gov_state.qc_overrides = dict(clean)
@@ -8204,9 +8372,10 @@ class CSCRefiner:
                 pass
 
             msg_parts = []
-            for lab in ['Clarity','Brevity','Evidence','Empathy','Consistency','Neutrality']:
-                if lab in clean:
-                    msg_parts.append(f"{lab}={clean[lab]}")
+            disp = {'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'}
+            for key in ['clarity','brevity','evidence','empathy','consistency','neutrality']:
+                if key in clean:
+                    msg_parts.append(f"{disp.get(key, key)}={clean[key]}")
             msg = "QC-Overrides gesetzt: " + (", ".join(msg_parts) if msg_parts else "(leer)")
 
             try:
