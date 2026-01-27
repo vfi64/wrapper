@@ -4,11 +4,11 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-133.
+"""Unified pytest suite for Wrapper-136.
 
 Expected repo layout:
-- Wrapper-134.py
-- Test-133.py
+- Wrapper-136.py
+- Test-136.py
 - JSON/Comm-SCI-v19.6.8.json
 
 Run:
@@ -18,7 +18,7 @@ This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-134.py'
+FIX_PATH = HERE / 'Wrapper-136.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
 if not JSON_PATH.exists():
