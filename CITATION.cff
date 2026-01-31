@@ -10,7 +10,7 @@ date-released: 2026-01-31
 license: Apache-2.0
 repository: https://github.com/vfi64/wrapper
 repository-code: https://github.com/vfi64/wrapper
-
+doi: 10.5281/zenodo.18445673
 preferred-citation:
   type: software
   authors:
@@ -28,4 +28,4 @@ references:
       - family-names: Fickert
         given-names: Volker
     url: https://github.com/vfi64/Comm-SCI-Control
-    doi: 10.5281/zenodo.18108395
+    doi: 10.5281/zenodo.18445673

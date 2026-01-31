@@ -4,7 +4,8 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](#)
 [![Comm-SCI-Control](https://img.shields.io/badge/Comm--SCI--Control-v19.6.8-orange.svg)](https://github.com/vfi64/Comm-SCI-Control)
-[![Zenodo](https://zenodo.org/badge/DOI/10.5281/zenodo.18108395.svg)](https://doi.org/10.5281/zenodo.18108395)
+[![DOI](https://zenodo.org/badge/1137466025.svg)](https://doi.org/10.5281/zenodo.18445673)
+[![Zenodo (ruleset)](https://zenodo.org/badge/DOI/10.5281/zenodo.18108395.svg)](https://doi.org/10.5281/zenodo.18108395)
 [![tests](https://github.com/vfi64/wrapper/actions/workflows/tests.yml/badge.svg)](https://github.com/vfi64/wrapper/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
@@ -12,7 +13,9 @@
 > **Comm-SCI-Control** = Governance-Regelwerk (JSON, *keine Runtime, keine Code-Ausführung*).  
 > **Wrapper-136.py** = technische Durchsetzung und Session-Schicht (Zustandsautomat, UI, Export, Audit, Provider-Wechsel).
 
-Referenz-Regelwerk: https://github.com/vfi64/Comm-SCI-Control  
+Referenz-Regelwerk: https://github.com/vfi64/Comm-SCI-Control
+Wrapper DOI: https://doi.org/10.5281/zenodo.18445673
+
 Empfohlene Zitierung (Regelwerk): https://doi.org/10.5281/zenodo.18108395
 
 ---
@@ -141,6 +144,8 @@ Issues und PRs sind willkommen, insbesondere für:
 ---
 
 ## Lizenz / Zitierung
+
+- **Wrapper (Zenodo):** https://doi.org/10.5281/zenodo.18445673
 
 - **Wrapper-Code:** Apache License 2.0 (siehe `LICENSE`).
 - **Comm-SCI-Control (Regelwerk):** bitte eine archivierte Zenodo-Version zitieren (siehe DOI oben). Lizenz und Attribution für das Regelwerk werden vom Upstream-Projekt Comm-SCI-Control geregelt.

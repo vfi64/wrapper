@@ -4,7 +4,8 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](#)
 [![Comm-SCI-Control](https://img.shields.io/badge/Comm--SCI--Control-v19.6.8-orange.svg)](https://github.com/vfi64/Comm-SCI-Control)
-[![Zenodo](https://zenodo.org/badge/DOI/10.5281/zenodo.18108395.svg)](https://doi.org/10.5281/zenodo.18108395)
+[![DOI](https://zenodo.org/badge/1137466025.svg)](https://doi.org/10.5281/zenodo.18445673)
+[![Zenodo (ruleset)](https://zenodo.org/badge/DOI/10.5281/zenodo.18108395.svg)](https://doi.org/10.5281/zenodo.18108395)
 [![tests](https://github.com/vfi64/wrapper/actions/workflows/tests.yml/badge.svg)](https://github.com/vfi64/wrapper/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
@@ -12,7 +13,9 @@
 > **Comm-SCI-Control** = governance ruleset (JSON, *no runtime, no code execution*).  
 > **Wrapper-136.py** = technical enforcement and session layer (state machine, UI, export, audit, provider switch).
 
-Reference ruleset: https://github.com/vfi64/Comm-SCI-Control  
+Reference ruleset: https://github.com/vfi64/Comm-SCI-Control
+Wrapper DOI: https://doi.org/10.5281/zenodo.18445673
+
 Recommended citation (ruleset): https://doi.org/10.5281/zenodo.18108395
 
 ---
@@ -144,4 +147,3 @@ Issues and PRs are welcome, especially for:
 
 - **Wrapper code:** Apache License 2.0 (see `LICENSE`).
 - **Comm-SCI-Control (ruleset):** cite an archived Zenodo release (see DOI above). Licensing and attribution for the ruleset are governed by the upstream Comm-SCI-Control project.
-

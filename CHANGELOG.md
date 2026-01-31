@@ -11,6 +11,11 @@ Format: newest versions first. Patch releases are additive and should be safe to
 ## [136] – 2026-01-31
 ### Audit v2 Export as Default (UI + Command Path)
 
+#### Release
+- First public release of the Comm-SCI-Wrapper for **Comm-SCI-Control v19.6.8**.
+- Zenodo archive (Concept DOI): https://doi.org/10.5281/zenodo.18445673
+
+
 #### Fixed
 - **Audit export always uses Audit v2**:
   - Panel export and `Comm Audit` now write **Audit v2** (includes `trace_id`, provider/model fields, and other v2 metadata).
