@@ -18,6 +18,9 @@ Wrapper DOI: https://doi.org/10.5281/zenodo.18445673
 
 Empfohlene Zitierung (Regelwerk): https://doi.org/10.5281/zenodo.18108395
 
+**Modularisierungs-Roadmap:** siehe `MODULARIZATION.md`.
+
+
 ---
 
 ## Schnellstart
