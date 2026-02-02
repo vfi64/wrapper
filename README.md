@@ -1,17 +1,17 @@
-# Comm-SCI-Wrapper v136
+# Comm-SCI-Wrapper v140
 
-**Deterministic single-file Python wrapper for auditable usage of LLMs under the normative governance specification of Comm-SCI-Control (v19.6.8).**
+**Deterministic single-file Python wrapper for auditable usage of LLMs under the normative governance specification of Comm-SCI-Control (v19.6.9).**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](#)
 [![Comm-SCI-Control](https://img.shields.io/badge/Comm--SCI--Control-v19.6.8-orange.svg)](https://github.com/vfi64/Comm-SCI-Control)
 [![DOI](https://zenodo.org/badge/1137466025.svg)](https://doi.org/10.5281/zenodo.18445673)
 [![Zenodo (ruleset)](https://zenodo.org/badge/DOI/10.5281/zenodo.18108395.svg)](https://doi.org/10.5281/zenodo.18108395)
-[![tests](https://github.com/vfi64/wrapper/actions/workflows/tests.yml/badge.svg)](https://github.com/vfi64/wrapper/actions/workflows/tests.yml)
+[![tests](https://github.com/vfi64/wrapper-private/actions/workflows/tests.yml/badge.svg)](https://github.com/vfi64/wrapper-private/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 > Core idea:  
 > **Comm-SCI-Control** = governance ruleset (JSON, *no runtime, no code execution*).  
-> **Wrapper-136.py** = technical enforcement and session layer (state machine, UI, export, audit, provider switch).
+> **Wrapper-140.py** = technical enforcement and session layer (state machine, UI, export, audit, provider switch).
 
 Reference ruleset: https://github.com/vfi64/Comm-SCI-Control
 Wrapper DOI: https://doi.org/10.5281/zenodo.18445673
@@ -31,11 +31,11 @@ Recommended citation (ruleset): https://doi.org/10.5281/zenodo.18108395
    ```
 2. Run the wrapper:
    ```bash
-   python3 Wrapper-136.py
+   python3 Wrapper-140.py
    ```
 3. Run the regression suite:
    ```bash
-   python3 -m pytest -vv -s --tb=long Test-136.py
+   python3 -m pytest -vv -s --tb=long Test-140.py
    ```
 4. In the chat window, try:
    - `Comm Help`
@@ -52,7 +52,7 @@ This wrapper is the *executor*: it maintains an external state machine and produ
 
 ---
 
-## Key Features (v136)
+## Key Features (v140)
 
 Regression suite: **67 tests** (offline, deterministic; no GUI, no real provider calls).
 
@@ -63,15 +63,15 @@ Regression suite: **67 tests** (offline, deterministic; no GUI, no real provider
 - **Guardrails** (e.g., “no network calls for UI-only actions”) + rate limiting
 - **HTML sanitization** via `bleach` (prevents unsafe HTML in rendered output)
 - **Optional encrypted key storage** (Fernet / `cryptography`)
-- **Offline regression suite** in `Test-136.py` (no GUI, no real provider calls)
+- **Offline regression suite** in `Test-140.py` (no GUI, no real provider calls)
 
 ---
 
 ## What this repository contains
 
-- [`Wrapper-136.py`](https://github.com/vfi64/wrapper/blob/main/Wrapper-136.py) — the runtime (UI, session state, guardrails, exports, audit)
-- [`Test-136.py`](https://github.com/vfi64/wrapper/blob/main/Test-136.py) — the offline regression gate (**no GUI, no real provider calls**)
-- `JSON/Comm-SCI-v19.6.8.json` — the ruleset (**source of truth**)
+- [`Wrapper-140.py`](https://github.com/vfi64/wrapper-private/blob/main/Wrapper-140.py) — the runtime (UI, session state, guardrails, exports, audit)
+- [`Test-140.py`](https://github.com/vfi64/wrapper-private/blob/main/Test-140.py) — the offline regression gate (**no GUI, no real provider calls**)
+- `JSON/Comm-SCI-v19.6.9.json` — the ruleset (**source of truth**)
 
 ---
 
@@ -81,10 +81,10 @@ Expected layout:
 
 ```text
 .
-├── Wrapper-136.py
-├── Test-136.py
+├── Wrapper-140.py
+├── Test-140.py
 ├── JSON/
-│   ├── Comm-SCI-v19.6.8.json
+│   ├── Comm-SCI-v19.6.9.json
 │   └── Comm-SCI-API-Keys.json        # local only, do NOT commit
 ├── Config/
 │   └── Comm-SCI-Config.json

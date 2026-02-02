@@ -1,17 +1,17 @@
-# Comm-SCI-Wrapper v136
+# Comm-SCI-Wrapper v140
 
-**Deterministischer Single-File-Python-Wrapper für die auditierbare Nutzung von LLMs unter der normativen Governance-Spezifikation von Comm-SCI-Control (v19.6.8).**
+**Deterministischer Single-File-Python-Wrapper für die auditierbare Nutzung von LLMs unter der normativen Governance-Spezifikation von Comm-SCI-Control (v19.6.9).**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](#)
 [![Comm-SCI-Control](https://img.shields.io/badge/Comm--SCI--Control-v19.6.8-orange.svg)](https://github.com/vfi64/Comm-SCI-Control)
 [![DOI](https://zenodo.org/badge/1137466025.svg)](https://doi.org/10.5281/zenodo.18445673)
 [![Zenodo (ruleset)](https://zenodo.org/badge/DOI/10.5281/zenodo.18108395.svg)](https://doi.org/10.5281/zenodo.18108395)
-[![tests](https://github.com/vfi64/wrapper/actions/workflows/tests.yml/badge.svg)](https://github.com/vfi64/wrapper/actions/workflows/tests.yml)
+[![tests](https://github.com/vfi64/wrapper-private/actions/workflows/tests.yml/badge.svg)](https://github.com/vfi64/wrapper/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 > Kernidee:  
 > **Comm-SCI-Control** = Governance-Regelwerk (JSON, *keine Runtime, keine Code-Ausführung*).  
-> **Wrapper-136.py** = technische Durchsetzung und Session-Schicht (Zustandsautomat, UI, Export, Audit, Provider-Wechsel).
+> **Wrapper-140.py** = technische Durchsetzung und Session-Schicht (Zustandsautomat, UI, Export, Audit, Provider-Wechsel).
 
 Referenz-Regelwerk: https://github.com/vfi64/Comm-SCI-Control
 Wrapper DOI: https://doi.org/10.5281/zenodo.18445673
@@ -31,11 +31,11 @@ Empfohlene Zitierung (Regelwerk): https://doi.org/10.5281/zenodo.18108395
    ```
 2. Wrapper starten:
    ```bash
-   python3 Wrapper-136.py
+   python3 Wrapper-140.py
    ```
 3. Testsuite ausführen:
    ```bash
-   python3 -m pytest -vv -s --tb=long Test-136.py
+   python3 -m pytest -vv -s --tb=long Test-140.py
    ```
 4. Im Chat-Fenster testen:
    - `Comm Help`
@@ -52,7 +52,7 @@ Dieser Wrapper ist die *Exekutive*: Er hält einen externen Zustandsautomaten vo
 
 ---
 
-## Kernfunktionen (v136)
+## Kernfunktionen (v140)
 
 Testsuite: **67 Tests** (offline, deterministisch; keine GUI, keine echten Provider-Calls).
 
@@ -63,15 +63,15 @@ Testsuite: **67 Tests** (offline, deterministisch; keine GUI, keine echten Provi
 - **Guardrails** (z. B. „keine Netzwerk-Calls bei UI-only Actions“) + Rate Limiting
 - **HTML-Sanitization** via `bleach` (verhindert unsichere HTML-Ausgabe im Rendering)
 - **Optionale verschlüsselte Key-Ablage** (Fernet / `cryptography`)
-- **Offline-Regression-Suite** in `Test-136.py` (keine GUI, keine echten Provider-Calls)
+- **Offline-Regression-Suite** in `Test-140.py` (keine GUI, keine echten Provider-Calls)
 
 ---
 
 ## Was dieses Repository enthält
 
-- [`Wrapper-136.py`](https://github.com/vfi64/wrapper/blob/main/Wrapper-136.py) — die Runtime (UI, Session-State, Guardrails, Exporte, Audit)
-- [`Test-136.py`](https://github.com/vfi64/wrapper/blob/main/Test-136.py) — das Offline-Regression-Gate (**keine GUI, keine echten Provider-Calls**)
-- `JSON/Comm-SCI-v19.6.8.json` — das Regelwerk (**Source of Truth**)
+- [`Wrapper-140.py`](https://github.com/vfi64/wrapper-private/blob/main/Wrapper-140.py) — die Runtime (UI, Session-State, Guardrails, Exporte, Audit)
+- [`Test-140.py`](https://github.com/vfi64/wrapper-private/blob/main/Test-140.py) — das Offline-Regression-Gate (**keine GUI, keine echten Provider-Calls**)
+- `JSON/Comm-SCI-v19.6.9.json` — das Regelwerk (**Source of Truth**)
 
 ---
 
@@ -81,10 +81,10 @@ Erwartetes Layout:
 
 ```text
 .
-├── Wrapper-136.py
-├── Test-136.py
+├── Wrapper-140.py
+├── Test-140.py
 ├── JSON/
-│   ├── Comm-SCI-v19.6.8.json
+│   ├── Comm-SCI-v19.6.9.json
 │   └── Comm-SCI-API-Keys.json        # nur lokal, NICHT committen
 ├── Config/
 │   └── Comm-SCI-Config.json

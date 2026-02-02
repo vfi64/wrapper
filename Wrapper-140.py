@@ -334,11 +334,11 @@ def _safe_sha256(s: str) -> str:
     except Exception:
         return ""
 
-# Default ruleset location: ./JSON/Comm-SCI-v19.6.8.json
-DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v19.6.8.json')
+# Default ruleset location: ./JSON/Comm-SCI-v19.6.9.json
+DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v19.6.9.json')
 
 # Fallback: if the ruleset is placed next to the script (legacy layout), use it.
-_alt_ruleset = os.path.join(SCRIPT_DIR, 'Comm-SCI-v19.6.8.json')
+_alt_ruleset = os.path.join(SCRIPT_DIR, 'Comm-SCI-v19.6.9.json')
 if (not os.path.exists(DEFAULT_JSON)) and os.path.exists(_alt_ruleset):
     DEFAULT_JSON = _alt_ruleset
 
@@ -409,7 +409,7 @@ STATS_PATH = STATS_FILENAME
 # ----------------------------
 # UI (English-only)
 # ----------------------------
-UI_LANG = "de"  # hard-fixed; language switching removed
+UI_LANG = "en"  # hard-fixed; UI/system language (menus/help) independent of answer_language
 
 QC_LABELS = {
     "clarity": "Clarity",
@@ -2971,6 +2971,8 @@ async function run(c) {
     if(r && r.ok === false) {
       _setStatus('cmd failed: ' + (r.error || 'unknown error'), 'err');
     }
+    // Refresh panel UI after commands that change state-dependent labels (e.g., Comm Anchor on/off)
+    try { await buildUI(); } catch(e) {}
   } catch(e) {
     _setStatus('cmd failed: ' + (e && e.message ? e.message : String(e)), 'err');
   }
@@ -3292,9 +3294,9 @@ HTML_QC_OVERRIDE = """
             const st = await callApi('qc_get_state', {});
             if(st && st.ok){
               const prof = st.profile || 'Standard';
-              document.title = 'QC-Vorgaben temporär anpassen – Profil: ' + prof;
+              document.title = 'Temporary QC override – Profile: ' + prof;
               const h = qs('#title');
-              if(h) h.textContent = 'QC-Vorgaben temporär anpassen – Profil: ' + prof;
+              if(h) h.textContent = 'Temporary QC override – Profile: ' + prof;
 
               const defaults = st.defaults || {};
               const ovs = st.overrides || {};
@@ -3391,8 +3393,8 @@ HTML_QC_OVERRIDE = """
 </script>
 </head>
 <body onload="QCUI.boot()">
-  <h2 id="title">QC-Vorgaben temporär anpassen – Profil: ?</h2>
-  <p class="sub">Temporäre QC-Anpassung (gilt bis Profilwechsel / Clear)</p>
+  <h2 id="title">Temporary QC override – Profile: ?</h2>
+  <p class="sub">Temporary QC adjustment (active until profile switch / Clear)</p>
 
   <div class="row"><div class="lbl">Clarity</div><input id="sl-clarity" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-clarity">2</div></div>
   <div class="row"><div class="lbl">Brevity</div><input id="sl-brevity" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-brevity">2</div></div>
@@ -3402,16 +3404,16 @@ HTML_QC_OVERRIDE = """
   <div class="row"><div class="lbl">Neutrality</div><input id="sl-neutrality" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-neutrality">2</div></div>
 
   <div class="presets">
-    <button onclick="QCUI.preset('verbose')">Ausführlicher</button>
-    <button onclick="QCUI.preset('short')">Kürzer</button>
-    <button onclick="QCUI.preset('evidence')">Evidenzlastig</button>
-    <button onclick="QCUI.preset('neutral')">Neutral</button>
+    <button onclick="QCUI.preset('verbose')">More verbose</button>
+    <button onclick="QCUI.preset('short')">Shorter</button>
+    <button onclick="QCUI.preset('evidence')">More evidence</button>
+    <button onclick="QCUI.preset('neutral')">More neutral</button>
   </div>
 
   <div class="actions">
     <button onclick="QCUI.onApply()">Apply</button>
     <button onclick="QCUI.onClear()">Clear Overrides</button>
-    <button onclick="QCUI.onCancel()">Abbrechen</button>
+    <button onclick="QCUI.onCancel()">Cancel</button>
   </div>
 
   <div id="status" class="status"></div>
@@ -3908,7 +3910,7 @@ class CSCMetadata:
 class CSCRefiner:
     """Deterministic CSC trigger evaluation + strict injection.
 
-    Key principle (v19.6.8 intent): refinement_only.
+    Key principle (v19.6.9 intent): refinement_only.
     The wrapper enforces the decision (when/where to apply) deterministically.
 
     NOTE: We do NOT let CSC mutate protocol/meta blocks (SCI menu/trace, QC, Control Layer).
@@ -3978,7 +3980,7 @@ class CSCRefiner:
         if not comm_active:
             return CSCDecision(False, False, "", tok, fs, "none")
 
-        # Profile constraints (strict per v19.6.8 intent)
+        # Profile constraints (strict per v19.6.9 intent)
         disallowed = {"Briefing", "Sandbox"}
         if (active_profile or "Standard") in disallowed:
             return CSCDecision(False, False, "", tok, fs, "none")
@@ -5161,7 +5163,7 @@ class CSCRefiner:
             if base.lower() == "comm-sci-config.json" or base.lower().endswith("-config.json") or base.lower().endswith("config.json"):
                 try:
                     self.main_win.evaluate_js(
-                        "addMsg('sys', 'JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v19.6.8.json).')"
+                        "addMsg('sys', 'JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v19.6.9.json).')"
                     )
                 except Exception:
                     pass
@@ -5576,7 +5578,7 @@ class CSCRefiner:
                             "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
                             "<summary>⛔ STRICT BLOCK (hard violations)</summary>"
                             "<div class='csc-details'>"
-                            "<p>Die Modellantwort wurde vom Wrapper blockiert, weil nach Repair/Enforcement weiterhin harte Regelverstöße vorliegen.</p>"
+                            "<p>The model response was blocked by the wrapper because hard rule violations remained after repair/enforcement.</p>"
                             "<ul>"
                             + "".join(f"<li>{html.escape(str(x))}</li>" for x in hv2)
                             + "</ul>"
@@ -5593,7 +5595,7 @@ class CSCRefiner:
                             "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
                             "<summary>⚠️ RULE VIOLATION DETECTED (strict_warn)</summary>"
                             "<div class='csc-details'>"
-                            "<p>Die folgende Antwort hat nach Repair/Enforcement weiterhin harte Regelverstöße:</p>"
+                            "<p>The following response still contains hard rule violations after repair/enforcement:</p>"
                             "<ul>"
                             + "".join(f"<li>{html.escape(str(x))}</li>" for x in hv2)
                             + "</ul>"
@@ -5780,7 +5782,7 @@ class CSCRefiner:
         """Deterministic CSC enforcement on the prompt side.
 
         Returns (text_to_send, pre_csc_meta or None).
-        We only use strings/configs from Comm-SCI-v19.6.8.json.
+        We only use strings/configs from Comm-SCI-v19.6.9.json.
         """
         try:
             # Guard rails
@@ -6005,6 +6007,27 @@ class CSCRefiner:
                         self.gov_state.sci_variant = ''
             except Exception:
                 pass
+        elif cmd in ("Comm Anchor off", "Anchor auto off"):
+            # Disable periodic Anchor Snapshot automation for this session
+            try:
+                self.gov_state.anchor_auto = False
+                self.gov_state.anchor_force_next = False
+            except Exception:
+                pass
+
+        elif cmd in ("Comm Anchor on", "Anchor auto on"):
+            # Enable periodic Anchor Snapshot automation for this session
+            try:
+                self.gov_state.anchor_auto = True
+            except Exception:
+                pass
+            # Do not force an immediate anchor unless explicitly requested; keep previous behavior conservative.
+            try:
+                self.gov_state.anchor_force_next = False
+            except Exception:
+                pass
+
+
         
         # 6. Dynamic
         elif cmd == "Dynamic one-shot on":
@@ -7788,7 +7811,48 @@ class CSCRefiner:
         except Exception:
             pass
 
-        # Local chat log listing (for loader UI)
+        
+        # Panel UX: replace "Comm Anchor off/on" pair with a single state-dependent toggle button.
+        # (The actual commands still exist and remain accepted via input / programmatic calls.)
+        try:
+            comm = data.get('comm')
+            if isinstance(comm, list) and comm:
+                # Detect canonical anchor toggle commands from the loaded ruleset
+                tok_off = "Comm Anchor off"
+                tok_on = "Comm Anchor on"
+                if (tok_off in comm) and (tok_on in comm):
+                    try:
+                        anchor_auto = bool(getattr(self.gov_state, "anchor_auto", True))
+                    except Exception:
+                        anchor_auto = True
+
+                    # Keep position deterministic: insert at the first occurrence of either token
+                    try:
+                        i_off = comm.index(tok_off)
+                    except Exception:
+                        i_off = 10**9
+                    try:
+                        i_on = comm.index(tok_on)
+                    except Exception:
+                        i_on = 10**9
+                    ins = min(i_off, i_on) if min(i_off, i_on) != 10**9 else len(comm)
+
+                    # Remove both tokens (all occurrences), then insert a single object button
+                    comm2 = [c for c in comm if c not in (tok_off, tok_on)]
+                    btn = {
+                        "name": (tok_off if anchor_auto else tok_on),
+                        "cmd": (tok_off if anchor_auto else tok_on),
+                        "desc": ("Disable Anchor auto snapshots" if anchor_auto else "Enable Anchor auto snapshots")
+                    }
+                    # clamp insert index after removals
+                    if ins < 0: ins = 0
+                    if ins > len(comm2): ins = len(comm2)
+                    comm2.insert(ins, btn)
+                    data['comm'] = comm2
+        except Exception:
+            pass
+
+# Local chat log listing (for loader UI)
         try:
             res = self.list_chat_logs(limit=200)
             if isinstance(res, dict) and res.get('ok') is True:
@@ -8367,7 +8431,7 @@ class CSCRefiner:
             self.qc_bridge = None
         try:
             self.qc_win = webview.create_window(
-                "QC-Vorgaben temporär anpassen – Profil: ?",
+                "Temporary QC override – Profile: ?",
                 html=HTML_QC_OVERRIDE,
                 width=450,
                 height=550,
@@ -9261,7 +9325,7 @@ def _control_layer_alert_html(message: str, *, title: str = "CONTROL LAYER ALERT
             "<a href=\"#\" class=\"ctl-action action-next-free\" "
             "style=\"display:inline-block;padding:2px 8px;border:1px solid #888;"
             "border-radius:10px;background:#eee;font-family:monospace;text-decoration:none;color:inherit;\">"
-            "Tipp: Anderes :free‑Modell wählen</a>"
+            "Tip: choose another :free model</a>"
         )
 
     try:
@@ -9791,21 +9855,21 @@ def _openrouter_friendly_http_error(status_code: int, raw_body: str, *, lang: st
             return ("OpenRouter: insufficient credits for this request. Add credits or choose a free/eligible model. "
                     f"[HTTP {status_code}]")
         return ("OpenRouter: Nicht genügend Guthaben für diese Anfrage. Guthaben hinzufügen oder ein passendes "
-                "(ggf. freies) Modell wählen. "
+                "choose a (possibly free) model. "
                 f"[HTTP {status_code}]")
 
     if int(ecode) in (401, 403):
         if lang == "en":
             return ("OpenRouter authentication/permission error. Check your API key and account settings. "
                     f"[HTTP {status_code}]")
-        return ("OpenRouter: Auth/Permission-Fehler. Prüfe API-Key und Account-/Privacy-Einstellungen. "
+        return ("OpenRouter: auth/permission error. Check API key and account/privacy settings. "
                 f"[HTTP {status_code}]")
 
     # Fallback
     if msg:
         if lang == "en":
             return f"OpenRouter error: {msg} [HTTP {status_code}]"
-        return f"OpenRouter-Fehler: {msg} [HTTP {status_code}]"
+        return f"OpenRouter error: {msg} [HTTP {status_code}]"
     if lang == "en":
         return f"OpenRouter request failed. [HTTP {status_code}]"
     return f"OpenRouter-Anfrage fehlgeschlagen. [HTTP {status_code}]"
@@ -10714,6 +10778,7 @@ class Api(CSCRefiner):
             # --- B5 MVP: Session tracking (best-effort, no secrets) ---
             import uuid
             self.session_id = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
+            self.trace_id = self.session_id
             self.session_start_dt = datetime.now()
             self.session_requests = 0
             self.session_rate_limit_hits = 0

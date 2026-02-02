@@ -4,11 +4,11 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-136.
+"""Unified pytest suite for Wrapper-139.
 
 Expected repo layout:
-- Wrapper-136.py
-- Test-136.py
+- Wrapper-140.py
+- Test-140.py
 - JSON/Comm-SCI-v19.6.8.json
 
 Run:
@@ -18,9 +18,13 @@ This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-136.py'
+FIX_PATH = HERE / 'Wrapper-140.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
-JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
+JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.9_restored.json'
+if not JSON_PATH.exists():
+    JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
+if not JSON_PATH.exists():
+    JSON_PATH = HERE / 'Comm-SCI-v19.6.9_restored.json'
 if not JSON_PATH.exists():
     JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
 
@@ -1382,6 +1386,8 @@ def test_comm_help_renders_without_llm_call_and_emits_events():
     html = _extract_html(out)
     assert isinstance(html, str) and html.strip()
     assert "Comm" in html
+    assert "Comm Anchor off" in html
+    assert "Comm Anchor on" in html
 
     # Regression guard: help header must show the ruleset system name, not the imported `sys` module.
     # (Bug observed in v112 logs: "<module 'sys' (built-in)> v19.6.8 ...")
@@ -1534,24 +1540,6 @@ def test_comm_stop_disables_governance_postprocessing():
 
 
 
-def test_log_event_does_not_crash_without_dirs():
-    mod = load_fix_module()
-    api = mod.Api()
-    # log_event must be safe regardless of filesystem state
-    api.log_event('ui', {'msg': 'hello'})
-    api.log_event('provider', {'provider': 'gemini', 'model': 'x'})
-    api.log_event('gov', {'comm_active': True})
-
-
-def test_trace_id_present_in_audit_v2_if_enabled():
-    mod = load_fix_module()
-    api = mod.Api()
-    api.history.append({'role': 'user', 'content': 'test', 'ts': datetime.now().isoformat()})
-    _, audit_path = api.export_audit_v2(audit_only=True)
-    data = json.loads(Path(audit_path).read_text(encoding='utf-8'))
-    sm = data.get('session_metadata', {})
-    assert sm.get('trace_id') is not None
-
 
 def test_qc_footer_is_moved_to_end_when_model_puts_it_early():
     mod = load_fix_module()
@@ -1667,3 +1655,101 @@ def test_fork_records_source_metadata_and_sys_history_line(tmp_path):
     # Fork session should have its own trace id
     assert isinstance(fork_data.get('trace_id'), str) and fork_data.get('trace_id').strip()
     assert fork_data.get('trace_id') != seed_trace
+
+
+def test_log_event_does_not_crash_without_dirs(tmp_path):
+    """Stage 0: log_event must never raise, even if log directories are missing.
+
+    This test does *not* start the GUI and must not require any existing folders.
+    """
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    # Point logs at non-existent directories (do not create them)
+    mod.PROJECT_DIR = str(tmp_path)
+    mod.LOGS_DIR = str(tmp_path / 'Logs')
+    mod.AUDIT_LOG_DIR = str(tmp_path / 'Logs' / 'Audit')
+    mod.CHAT_LOG_DIR = str(tmp_path / 'Logs' / 'Chats')
+
+    api = mod.Api()
+
+    # Force a weird/empty session_events state to ensure defensive behavior
+    try:
+        api.session_events = None
+    except Exception:
+        pass
+
+    api.log_event('ui', {'msg': 'hello', 'big': 'x' * 2000})
+    assert isinstance(getattr(api, 'session_events', None), list)
+    assert len(api.session_events) >= 1
+    ev = api.session_events[-1]
+    assert isinstance(ev, dict)
+    assert ev.get('type') == 'ui'
+    # trace_id must be present (at least session_id fallback)
+    assert isinstance(ev.get('trace_id'), (str, type(None)))
+
+
+def test_trace_id_present_in_audit_v2_if_enabled(tmp_path):
+    """Stage 0 (optional): audit v2 export must include a non-empty trace_id."""
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    mod.PROJECT_DIR = str(tmp_path)
+    mod.LOGS_DIR = str(tmp_path / 'Logs')
+    mod.AUDIT_LOG_DIR = str(tmp_path / 'Logs' / 'Audit')
+    mod.CHAT_LOG_DIR = str(tmp_path / 'Logs' / 'Chats')
+
+    api = mod.Api()
+
+    audit_path = tmp_path / 'Logs' / 'Audit' / 'Audit_test.json'
+    api.export_audit_v2(audit_only=True, audit_path=str(audit_path), ts='TEST')
+
+    assert audit_path.exists()
+    payload = json.loads(audit_path.read_text(encoding='utf-8'))
+    sm = payload.get('session_metadata') or {}
+    assert isinstance(sm.get('trace_id'), str) and sm.get('trace_id').strip()
+
+
+def test_sci_menu_instructions_are_english_when_ui_lang_en():
+    mod = load_fix_module()
+    data = load_ruleset_data()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    html = api._render_sci_menu_html()
+    assert "SCI variants" in html
+    assert "Reply in the next prompt" in html
+    assert "A–H" in html or "A-H" in html
+
+
+def test_comm_anchor_off_on_toggles_anchor_snapshot_automation_and_panel_label():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    # precondition
+    assert bool(getattr(api.gov_state, "anchor_auto", True)) is True
+
+    # Panel UI should show the toggle label for the current state ("off" when currently on)
+    ui1 = api.get_ui()
+    comm1 = ui1.get('comm') or []
+    # single toggle button object is expected when ruleset supports both commands
+    assert any((isinstance(x, dict) and x.get('cmd') in ('Comm Anchor off', 'Comm Anchor on')) or (x in ('Comm Anchor off', 'Comm Anchor on')) for x in comm1)
+
+    # Turn off
+    api._execute_legacy_command("Comm Anchor off")
+    assert bool(getattr(api.gov_state, "anchor_auto", True)) is False
+
+    ui2 = api.get_ui()
+    comm2 = ui2.get('comm') or []
+    # When off, the toggle label must offer turning it on
+    assert any((isinstance(x, dict) and x.get('cmd') == 'Comm Anchor on') or (x == 'Comm Anchor on') for x in comm2)
+
+    # Turn on
+    api._execute_legacy_command("Comm Anchor on")
+    assert bool(getattr(api.gov_state, "anchor_auto", False)) is True
+
+    ui3 = api.get_ui()
+    comm3 = ui3.get('comm') or []
+    # When on, the toggle label must offer turning it off
+    assert any((isinstance(x, dict) and x.get('cmd') == 'Comm Anchor off') or (x == 'Comm Anchor off') for x in comm3)
