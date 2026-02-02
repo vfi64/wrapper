@@ -4,15 +4,15 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-139.
+"""Unified pytest suite for Wrapper-140.
 
 Expected repo layout:
 - Wrapper-140.py
 - Test-140.py
-- JSON/Comm-SCI-v19.6.8.json
+- JSON/Comm-SCI-v19.6.9.json
 
 Run:
-  python3 -m pytest -vv -s --tb=long Test-133.py
+  python3 -m pytest -vv -s --tb=long Test-140.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
@@ -22,11 +22,11 @@ FIX_PATH = HERE / 'Wrapper-140.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.9_restored.json'
 if not JSON_PATH.exists():
-    JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.8.json'
+    JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.9.json'
 if not JSON_PATH.exists():
     JSON_PATH = HERE / 'Comm-SCI-v19.6.9_restored.json'
 if not JSON_PATH.exists():
-    JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
+    JSON_PATH = HERE / 'Comm-SCI-v19.6.9.json'
 
 
 def load_fix_module():
