@@ -1,0 +1,12 @@
+# Core runtime dependencies (required)
+pywebview>=5.0
+requests>=2.31
+markdown>=3.5
+bleach>=6.1
+
+# Optional provider/client dependencies (install only if you use them)
+# google-genai>=0.6   # Gemini client
+# cryptography>=42.0  # optional encrypted key storage (Fernet)
+
+# Development / tests (optional)
+# pytest>=8.0

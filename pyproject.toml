@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comm-sci-wrapper"
+version = "0.0.0"
+description = "Deterministic Python wrapper (UI + state machine + logs) for auditable LLM usage under Comm-SCI-Control."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{name = "Volker Fickert"}]
+
+dependencies = [
+  "pywebview>=5.0",
+  "requests>=2.31",
+  "markdown>=3.5",
+  "bleach>=6.1",
+]
+
+[project.optional-dependencies]
+# Provider / features
+gemini = ["google-genai>=0.6"]
+crypto = ["cryptography>=42.0"]
+
+# Dev / quality
+dev = ["pytest>=8.0"]
+
+# Convenience bundles
+all = [
+  "google-genai>=0.6",
+  "cryptography>=42.0",
+  "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+python_files = ["Test-*.py", "test_*.py"]
