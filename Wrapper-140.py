@@ -1,6 +1,12 @@
 import os
 import json
 import re
+'''
+Reminder: The wrapper is not an epistemic agent.
+No wrapper-side U-label inference and no QC value manipulation.
+Only parsing/state/render/audit are allowed.
+'''
+
 import html
 import sys
 import traceback

@@ -50,6 +50,29 @@ Empfohlene Zitierung (Regelwerk): https://doi.org/10.5281/zenodo.18108395
 
 Dieser Wrapper ist die *Exekutive*: Er hält einen externen Zustandsautomaten vor und erzeugt strukturierte Logs, sodass Governance **sichtbar, testbar und auditierbar** wird (statt „Prompt-Magie“).
 
+## Architekturprinzip: Governance (JSON) vs. Ausführung (Wrapper)
+
+**Comm-SCI-Control** trennt *normative Governance* strikt von der *Ausführungslogik*:
+
+- **Governance (JSON-Regelwerk)** definiert, was das *Modell* tun muss: Command-Tokens, Profile, QC-Policy, SCI-Workflows, Uncertainty-Labels (U1–U6), Verifikationsrouten und Output-Contracts.
+- **Wrapper (Python/pywebview)** ist ausschließlich Ausführungs- und Beobachtungsschicht: Er parst *Standalone*-Command-Tokens, verwaltet den Sitzungszustand, rendert die UI und erzeugt Logs/Audits.  
+  Er darf **keine** semantischen Heuristiken implementieren, die Bedeutung verändern.
+
+### Was der Wrapper NICHT tun darf
+Um Auditierbarkeit und Cross-Model-Vergleichbarkeit zu erhalten, darf der Wrapper NICHT:
+- Uncertainty-Labels (U1–U6) inferieren oder auslösen,
+- QC-Werte nachträglich verändern (z. B. „Evidence Caps“),
+- Modell-Content umschreiben, um „Compliance zu reparieren“,
+- versteckte adaptive Verhaltensänderungen anwenden („silent adaptation“).
+
+### Warum
+Wenn der Wrapper U-Labels generiert oder QC manipuliert, wird er zu einem zweiten epistemischen Akteur.
+Das zerstört:
+- **Source of Truth** (JSON-Governance),
+- **Audit-Transparenz** (Output ist nicht mehr das genuine Compliance-Ergebnis des Modells),
+- **Cross-Model-Vergleichbarkeit** (Wrapper-Heuristiken verzerren Ergebnisse).
+
+
 ---
 
 ## Kernfunktionen (v140)

@@ -50,6 +50,29 @@ Recommended citation (ruleset): https://doi.org/10.5281/zenodo.18108395
 
 This wrapper is the *executor*: it maintains an external state machine and produces structured logs so that governance becomes **visible, testable, and auditable** (rather than “prompt vibes”).
 
+## Architecture principle: Governance (JSON) vs. Execution (Wrapper)
+
+**Comm-SCI-Control** separates *normative governance* from *execution logic*:
+
+- **Governance (JSON ruleset)** defines what the *model* must do: command tokens, profiles, QC policy, SCI workflows, uncertainty labels (U1–U6), verification routes, and output contracts.
+- **Wrapper (Python/pywebview)** is an execution and observation layer only: it parses *standalone* command tokens, manages session state, renders UI, and logs/audits outputs.  
+  It must **not** implement semantic heuristics that alter meaning.
+
+### What the wrapper MUST NOT do
+To preserve auditability and cross-model comparability, the wrapper MUST NOT:
+- infer or trigger uncertainty labels (U1–U6),
+- modify QC values (e.g., “evidence caps”) after the model response,
+- rewrite the model’s content to “fix” compliance,
+- apply hidden adaptive behavior (“silent adaptation”).
+
+### Why
+If the wrapper starts generating U-labels or manipulating QC, it becomes a second epistemic actor.
+That breaks:
+- **Source of Truth** (JSON governance),
+- **audit transparency** (the output is no longer the model’s genuine compliance result),
+- **cross-model comparability** (wrapper heuristics bias results).
+
+
 ---
 
 ## Key Features (v140)
