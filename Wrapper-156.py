@@ -1,12 +1,6 @@
 import os
 import json
 import re
-'''
-Reminder: The wrapper is not an epistemic agent.
-No wrapper-side U-label inference and no QC value manipulation.
-Only parsing/state/render/audit are allowed.
-'''
-
 import html
 import sys
 import traceback
@@ -43,7 +37,7 @@ def sanitize_html(html_text: str) -> str:
         return html_text
 
     allowed_tags = [
-        'p','br','b','strong','i','em','u','code','pre','blockquote',
+        'p','br','b','strong','i','em','u','code','pre','blockquote','details','summary',
         'ul','ol','li','table','thead','tbody','tr','th','td','hr',
         'div','span','img','a',
         'h1','h2','h3','h4','h5','h6'
@@ -54,6 +48,8 @@ def sanitize_html(html_text: str) -> str:
         'img': ['src','alt','title','style','loading','class'],
         'code': ['class'],
         'pre': ['class'],
+        'details': ['open','class','style'],
+        'summary': ['class','style'],
         'th': ['colspan','rowspan','class','style'],
         'td': ['colspan','rowspan','class','style'],
     }
@@ -68,6 +64,26 @@ def sanitize_html(html_text: str) -> str:
         return cleaned
     except Exception:
         return html_text
+
+# ============================================
+# STUFE 1 — IN-FILE BOUNDARY REFACTOR (v141)
+# ============================================
+# Goal: Introduce explicit boundary markers + minimal schema contracts
+# WITHOUT changing runtime behavior, UI rendering, provider handling,
+# or governance semantics. This is a "seams + contracts" step only.
+#
+# Boundaries (conceptual; still single-file by plan):
+#   A) Identity / Versioning
+#   B) Safety utilities (sanitization, hashing, previews)
+#   C) Routing / Parsing (standalone commands, SCI pending A–H, numeric code guard)
+#   D) Governance loading & token registry
+#   E) Rendering (HTML/CSS, QC/SCI blocks)
+#   F) Providers (Gemini/OpenRouter/HF) — untouched in this stage
+#   G) UI glue (pywebview API) + Panel wiring
+#   H) Main bootstrap
+#
+# Note: Contracts are fail-soft: they never raise, they only return bool
+# and optionally emit an internal log_event() on violation.
 
 # ----------------------------
 # WRAPPER IDENTITY (dynamic, derived from filename)
@@ -528,8 +544,29 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
     except Exception:
         pass
 
-    # SCI selection is treated as a chat input that triggers deterministic logic.
-    if sci_pending and re.match(r'^[A-Ha-h]$', txt):
+    # CGI feedback triplets (optional user feedback; should not trigger an LLM call).
+    # Canonical JSON (v19.6.9+): global_defaults.user_feedback_triplet and global_defaults.process_cgi_feedback
+    try:
+        gd = (getattr(gov_obj, 'data', {}) or {}).get('global_defaults', {}) or {}
+        # user_feedback_triplet: e.g., "3,3,3"
+        uft = (gd.get('user_feedback_triplet') or {}) if isinstance(gd, dict) else {}
+        if isinstance(uft, dict) and bool(uft.get('enabled', False)):
+            uft_pat = str(uft.get('regex') or uft.get('pattern') or '').strip() or r'^\s*([0-3])\s*,\s*([0-3])\s*,\s*([0-3])\s*$'
+            if re.fullmatch(uft_pat, txt):
+                return {"kind": "chat", "query_text": txt, "is_user_feedback_triplet": True}
+
+        # process_cgi_feedback: e.g., "SCI: 3,2,1"
+        pcf = (gd.get('process_cgi_feedback') or {}) if isinstance(gd, dict) else {}
+        if isinstance(pcf, dict) and bool(pcf.get('enabled', False)):
+            pcf_pat = str(pcf.get('regex') or pcf.get('pattern') or '').strip()
+            if pcf_pat and re.fullmatch(pcf_pat, txt):
+                return {"kind": "chat", "query_text": txt, "is_process_cgi_feedback": True}
+    except Exception:
+        pass
+
+    # SCI pending: single-letter variant selection (A–H).
+    # This must be detected deterministically so a standalone letter does NOT call the model.
+    if sci_pending and re.fullmatch(r'[A-Ha-h]', txt):
         return {"kind": "chat", "query_text": txt, "is_sci_selection": True}
 
 
@@ -603,6 +640,51 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
     return {"kind": "chat", "query_text": txt}
 
 
+
+# ----------------------------
+# STUFE 1: SCHEMA CONTRACTS (fail-soft; never raises)
+# ----------------------------
+_ALLOWED_ROUTE_KINDS = {"noop", "command", "chat", "error"}
+
+def contract_route_shape(route: dict) -> bool:
+    """Best-effort contract for route_input() outputs.
+
+    This is intentionally conservative to avoid false positives:
+    - only checks presence/type of the *core* fields for each route kind
+    - does NOT enforce optional keys
+    - never raises (returns False on exceptions)
+    """
+    try:
+        if not isinstance(route, dict):
+            return False
+        kind = route.get("kind")
+        if kind not in _ALLOWED_ROUTE_KINDS:
+            return False
+        if kind == "command":
+            return isinstance(route.get("canonical_cmd"), str) and bool(route.get("canonical_cmd"))
+        if kind == "chat":
+            return isinstance(route.get("query_text"), str) and bool(route.get("query_text"))
+        if kind == "error":
+            return isinstance(route.get("html"), str) and bool(route.get("html"))
+        return True
+    except Exception:
+        return False
+
+
+def contract_ask_output_shape(out) -> bool:
+    """Best-effort contract for Api.ask() outputs (permissive; never raises)."""
+    try:
+        if isinstance(out, str):
+            return True
+        if isinstance(out, dict):
+            if "html" in out:
+                return isinstance(out.get("html"), str) or out.get("html") is None
+            if "text" in out:
+                return isinstance(out.get("text"), str) or out.get("text") is None
+            return True
+        return False
+    except Exception:
+        return False
 
 def get_api_key():
     """Return Gemini API key.
@@ -1878,9 +1960,49 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
             p_end = point_iter[i + 1].start() if i + 1 < len(point_iter) else len(block)
             points.append(block[p_start:p_end].rstrip())
 
-        # If there are no numbered points at all, treat as missing.
+        # If there are no numbered points at all, attempt to convert common unnumbered formats
+        # (e.g., repeated 'Weakness:' blocks) into a numbered list without inventing new facts.
         if not points:
-            injected = inject_minimal_self_debunking(before.rstrip() + "\n\n" + after.lstrip(), title=title)
+            # Try to extract unnumbered points from repeated label blocks inside this Self-Debunking section.
+            extracted = []
+            try:
+                label_iter = list(re.finditer(r"(?im)^\s*(Weakness|Schwäche)\b\s*:\s*", block))
+                if label_iter:
+                    for i, lm in enumerate(label_iter):
+                        p_start = lm.start()
+                        p_end = label_iter[i + 1].start() if i + 1 < len(label_iter) else len(block)
+                        chunk = block[p_start:p_end].strip()
+                        if chunk:
+                            extracted.append(chunk)
+            except Exception:
+                extracted = []
+
+            if extracted:
+                # Trim to contract max and normalize to 1..k numbering.
+                extracted = extracted[:max_p]
+                normalized = []
+                for i, chunk in enumerate(extracted, 1):
+                    lines = chunk.splitlines()
+                    if not lines:
+                        continue
+                    # Ensure the first line contains the label (Weakness/Schwäche) as in the model output.
+                    first = lines[0].strip()
+                    rest = [ln.rstrip() for ln in lines[1:]]
+                    body = first
+                    if rest:
+                        body += "\n" + "\n".join("   " + ln.lstrip() for ln in rest if ln.strip() != "")
+                    normalized.append(f"{i}. {body.strip()}")
+                if normalized:
+                    new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
+                    out = before.rstrip() + new_block + after.lstrip()
+                    return normalize_self_debunking_language(out, lang)
+
+            # Fallback: remove the broken/empty block and inject a minimal compliant numbered block.
+            try:
+                base = text[:m.start()].rstrip() + "\n\n" + text[end:].lstrip()
+            except Exception:
+                base = before.rstrip() + "\n\n" + after.lstrip()
+            injected = inject_minimal_self_debunking(base, title=title, lang=lang)
             return normalize_self_debunking_language(injected, lang)
         # Normalize number of points to the contract window.
         if len(points) > max_p:
@@ -1947,6 +2069,10 @@ class GovernanceRuntimeState:
     sci_active: bool = False
 
     qc_overrides: dict = field(default_factory=dict)
+    # CGI feedback (optional): last captured feedback strings (not a code change)
+    last_user_feedback_triplet: str = ""
+    last_process_cgi_feedback: str = ""
+    cgi_feedback_pending_for_model: bool = False
 def try_enter_sci_recursion(state, *, max_depth: int = 2) -> bool:
     """Deterministically enter SCI recursion if depth allows."""
     try:
@@ -2005,6 +2131,87 @@ def try_enter_sci_recursion(state, *, max_depth: int = 2) -> bool:
 # The model sometimes turns the SCI Trace into a line-by-line ordered list (1..N), which is not desired.
 # This normalizer rewrites the SCI Trace section so that ONLY the required SCI steps are numbered
 # (1..len(required_steps)), while step contents remain unnumbered paragraphs.
+
+
+def _strip_basic_html_for_enforcement(t: str) -> str:
+    """Convert simple HTML-ish outputs into plain text so regex-based contracts can be enforced."""
+    if not t:
+        return t
+    if '<' not in t or '>' not in t:
+        return t
+    # Replace common block/line breaks with newlines
+    t2 = re.sub(r'(?i)<\s*br\s*/?\s*>', '\n', t)
+    t2 = re.sub(r'(?i)</\s*p\s*>', '\n', t2)
+    t2 = re.sub(r'(?i)<\s*p[^>]*>', '', t2)
+    t2 = re.sub(r'(?i)</\s*div\s*>', '\n', t2)
+    t2 = re.sub(r'(?i)<\s*div[^>]*>', '', t2)
+    t2 = re.sub(r'(?i)</\s*li\s*>', '\n', t2)
+    t2 = re.sub(r'(?i)<\s*li[^>]*>', '', t2)
+    t2 = re.sub(r'(?i)</\s*h[1-6]\s*>', '\n', t2)
+    t2 = re.sub(r'(?i)<\s*h[1-6][^>]*>', '', t2)
+    # Strip any remaining tags
+    t2 = re.sub(r'<[^>]+>', '', t2)
+    # Unescape a few common entities
+    t2 = (t2.replace('&nbsp;', ' ')
+              .replace('&amp;', '&')
+              .replace('&lt;', '<')
+              .replace('&gt;', '>')
+              .replace('&#39;', "'")
+              .replace('&quot;', '"'))
+    return t2
+
+def ensure_qc_footer_present(text: str, gov_mgr, profile_name: str, overrides: dict | None = None) -> str:
+    """If QC is enabled and no QC-Matrix footer exists, append a canonical QC-Matrix line.
+    Uses effective QC values (upper bounds) and Δ computed against effective corridor (thus usually Δ0).
+    """
+    try:
+        if not text or not gov_mgr or not getattr(gov_mgr, 'loaded', False):
+            return text
+        gd = (gov_mgr.data.get('global_defaults', {}) or {})
+        oc = (gd.get('output_contract', {}) or {})
+        if not (oc.get('require_qc_footer', False) or (gd.get('qc', {}) or {}).get('enabled', False)):
+            return text
+        if re.search(r'(?im)^\s*QC(?:-Matrix)?\s*:\s*', text):
+            return text
+
+        vals = {}
+        try:
+            vals = gov_mgr.get_effective_qc_values(profile_name, overrides or {})
+        except Exception:
+            vals = {}
+        # Need the full canonical set; otherwise do not invent.
+        canon_order = [
+            ('clarity', 'Klarheit'),
+            ('brevity', 'Kürze'),
+            ('evidence', 'Evidenz'),
+            ('empathy', 'Empathie'),
+            ('consistency', 'Konsistenz'),
+            ('neutrality', 'Neutralität'),
+        ]
+        if not all(k in vals for k, _ in canon_order):
+            return text
+
+        parts = []
+        for k, disp in canon_order:
+            iv = int(vals.get(k))
+            # expected delta relative to corridor
+            d = 0
+            try:
+                corr = gov_mgr.get_effective_qc_corridor(profile_name, overrides or {})
+                if corr and k in corr:
+                    lo, hi = corr[k]
+                    if iv < lo: d = iv - lo
+                    elif iv > hi: d = iv - hi
+                    else: d = 0
+            except Exception:
+                d = 0
+            sign = '+' if d > 0 else ''
+            parts.append(f"{disp} {iv} (Δ{sign}{d})")
+        qc_line = "QC-Matrix: " + " · ".join(parts)
+
+        return (text.rstrip() + "\n\n" + qc_line + "\n")
+    except Exception:
+        return text
 
 def normalize_sci_trace_numbering(text: str, gov) -> str:
     try:
@@ -2372,7 +2579,7 @@ HTML_CHAT_TEMPLATE = """
   .comm-help .state-table { border-collapse: collapse; width: 100%; font-size: 12px; }
   .comm-help .state-table th, .comm-help .state-table td { border: 1px solid #e0e0e0; padding: 6px 8px; vertical-align: top; }
   .comm-help .state-table th { text-align: left; background: #fafafa; width: 220px; }
-  .comm-help pre.raw-json { white-space: pre; overflow-x: auto; background: #f6f8fa; padding: 10px; border-radius: 10px; font-size: 11px; border: 1px solid #e0e0e0; }
+  .comm-help pre.raw-json { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; box-sizing: border-box; overflow-x: auto; background: #f6f8fa; padding: 10px; border-radius: 10px; font-size: 11px; border: 1px solid #e0e0e0; }
   .comm-help details.config-details > summary { cursor: pointer; font-weight: 600; margin: 8px 0; }
   .comm-help .minor { color:#666; font-size: 12px; }
 
@@ -3535,19 +3742,31 @@ class OutputComplianceValidator:
         variants = self._get_path(self.gov.data, "sci.variant_menu.variants", {}) or {}
         vk = (variant_key or "").upper()
         vdef = variants.get(vk, {}) if isinstance(variants, dict) else {}
-        maps = (vdef.get("maps_to") or {})
-        mtype = maps.get("type")
-        mval = maps.get("value")
 
-        if mtype == "sci_mode" and isinstance(mval, str):
+        # Primary: variant-defined trace_steps (deterministic list)
+        try:
+            ts = vdef.get("trace_steps") if isinstance(vdef, dict) else None
+            if isinstance(ts, list) and ts:
+                return [str(s) for s in ts]
+        except Exception:
+            pass
+
+        # Secondary: maps_to sci_mode
+        maps = (vdef.get("maps_to") or {}) if isinstance(vdef, dict) else {}
+        mtype = maps.get("type") if isinstance(maps, dict) else None
+        mval = maps.get("value") if isinstance(maps, dict) else None
+
+        if mtype == "sci_mode" and isinstance(mval, str) and mval.strip():
             steps = self._get_path(self.gov.data, f"sci.modes.{mval}.steps", []) or []
             if isinstance(steps, list):
                 return [str(s) for s in steps]
 
+        # Fallback (method_tag or unknown): minimal SCI steps (Plan/Solution/Check)
         steps = self._get_path(self.gov.data, "sci.modes.SCI.steps", []) or []
         if isinstance(steps, list):
             return [str(s) for s in steps]
         return []
+
 
     def _label_regex(self, label: str):
         parts = re.split(r"[_\s]+", label.strip())
@@ -3582,6 +3801,42 @@ class OutputComplianceValidator:
                 positions.append(None)
             else:
                 positions.append(m.start())
+
+        # Content check: steps must not be empty (at least one substantive line)
+        try:
+            # Determine the SCI Trace section span (best-effort)
+            m_title = re.search(rf"(?im)^\s*{re.escape(block_title)}\s*:?\s*$", text)
+            section_text = text[m_title.start():] if m_title else text
+            for s in steps:
+                m = self._label_regex(s).search(section_text)
+                if not m:
+                    continue
+                start = m.end()
+                line_end = section_text.find("\n", m.start())
+                if line_end == -1:
+                    line_end = len(section_text)
+                header_line = section_text[m.start():line_end]
+                inline = re.sub(rf"(?im)^\s*(?:[-*]|\d+\.)?\s*\*{{0,2}}{re.escape(s)}\*{{0,2}}\s*[:\-–—]\s*", "", header_line).strip()
+                if inline:
+                    continue
+                nxt = len(section_text)
+                boundary = re.search(r"(?im)^\s*(Self-?Debunking\b|QC-?Matrix\b)", section_text[start:])
+                if boundary:
+                    nxt = start + boundary.start()
+                for s2 in steps:
+                    if s2 == s:
+                        continue
+                    m2 = self._label_regex(s2).search(section_text[start:nxt])
+                    if m2:
+                        nxt = start + m2.start()
+                        break
+                body = section_text[start:nxt]
+                body_clean = re.sub(r"(?im)^\s*(?:[*+-]|•|\d+\.)\s*", "", body)
+                body_clean = re.sub(r"\s+", " ", body_clean).strip()
+                if not re.search(r"[A-Za-z0-9ÄÖÜäöüß]", body_clean):
+                    vios.append(f"SCI Trace step '{s}' has no content.")
+        except Exception:
+            pass
 
         if all(p is not None for p in positions):
             if any(positions[i] >= positions[i+1] for i in range(len(positions)-1)):
@@ -3851,7 +4106,9 @@ class OutputComplianceValidator:
         parts.append("- Do NOT rewrite the whole answer. Only add the missing protocol elements.")
         parts.append("- If you add blocks, place them at the required position (typically after the final answer and before QC).")
         parts.append("")
-        if any("Verification Route Gate" in v for v in hard_violations):
+
+        need_vrg = any("Verification Route Gate" in v for v in hard_violations)
+        if need_vrg:
             parts.append("Verification Route Gate repair guidance:")
             parts.append("- Add at least ONE verification route marker line.")
             parts.append("- Prefer safe/transparent markers (do NOT fabricate web checks):")
@@ -3862,13 +4119,23 @@ class OutputComplianceValidator:
             parts.append("- If you cannot support the strong claim, downgrade it and include an uncertainty label U1–U6.")
             parts.append("")
 
+        # SCI Trace guidance: required whenever SCI is active and the ruleset defines steps for the chosen variant.
+        try:
+            sci_active = bool(getattr(state, "sci_active", False))
+        except Exception:
+            sci_active = False
+
+        sci_vios = any(("SCI Trace" in v) or ("Missing SCI Trace" in v) or ("SCI Trace step" in v) for v in hard_violations)
+        if sci_active and steps:
             parts.append("SCI Trace requirements:")
             parts.append("- Include a visible block titled 'SCI Trace'.")
             parts.append("- Include ALL step labels exactly (underscores/spaces/hyphens allowed), in this order:")
             for s in steps:
                 parts.append(f"  - {s}")
+            parts.append("- Each step must contain at least one substantive sentence; do NOT output empty step headers.")
+            parts.append("- If content must be withheld, keep the step label and write: 'Redacted: <reason>'.")
+            parts.append("")
 
-        parts.append("")
 
         parts.append("Original user prompt:")
         parts.append(user_prompt.strip())
@@ -4058,22 +4325,76 @@ class CSCRefiner:
     # SCI prompt helpers (deterministic, zero-LLM)
     # ----------------------------
     def _sci_variant_def(self, letter: str):
-        """Return (variant_def, steps, mapped_mode). Safe on malformed JSON."""
-        L = (letter or "").strip().upper()
-        sci = self.gov.data.get("sci", {}) if getattr(self, "gov", None) else {}
-        variant_menu = sci.get("variant_menu", {}) if isinstance(sci, dict) else {}
-        variants = variant_menu.get("variants", {}) if isinstance(variant_menu, dict) else {}
+        '''Return (variant_def, required_steps, mapped_mode).
+
+        Canonical v19.6.9 semantics:
+        - If the active variant defines trace_steps: use them exactly.
+        - Else, if maps_to.type == 'sci_mode': use sci.modes.<value>.steps.
+        - Else (method_tag or unknown): fall back to sci.modes.SCI.steps (Plan/Solution/Check).
+
+        Returns fail-soft defaults on malformed rules.
+        '''
+        L = (letter or '').strip().upper()
+        sci = self.gov.data.get('sci', {}) if getattr(self, 'gov', None) else {}
+        variant_menu = sci.get('variant_menu', {}) if isinstance(sci, dict) else {}
+        variants = variant_menu.get('variants', {}) if isinstance(variant_menu, dict) else {}
         vdef = variants.get(L, {}) if isinstance(variants, dict) else {}
-        maps_to = "SCI"
-        if isinstance(vdef, dict):
-            maps_to = vdef.get("maps_to", "SCI") or "SCI"
-        modes = sci.get("modes", {}) if isinstance(sci, dict) else {}
-        mode_obj = modes.get(maps_to, {}) if isinstance(modes, dict) else {}
-        steps = mode_obj.get("steps", []) if isinstance(mode_obj, dict) else []
-        if not isinstance(steps, list):
+
+        # 1) Variant-provided trace_steps (takes precedence)
+        steps = []
+        try:
+            ts = vdef.get('trace_steps') if isinstance(vdef, dict) else None
+            if isinstance(ts, list) and ts:
+                steps = [str(s) for s in ts if s is not None]
+        except Exception:
             steps = []
-        steps = [str(s) for s in steps if s is not None]
+
+        # 2) maps_to (usually an object {type,value})
+        maps_to = 'SCI'
+        maps_type = None
+        maps_val = None
+        try:
+            maps = vdef.get('maps_to') if isinstance(vdef, dict) else None
+            if isinstance(maps, dict):
+                maps_type = maps.get('type')
+                maps_val = maps.get('value')
+            elif isinstance(maps, str):
+                # legacy/older rulesets
+                maps_val = maps
+                maps_type = 'sci_mode'
+        except Exception:
+            maps_type = None
+            maps_val = None
+
+        if maps_type == 'sci_mode' and isinstance(maps_val, str) and maps_val.strip():
+            maps_to = maps_val.strip()
+        else:
+            maps_to = 'SCI'
+
+        # 3) If no explicit trace_steps, resolve steps via mode
+        if not steps:
+            try:
+                modes = sci.get('modes', {}) if isinstance(sci, dict) else {}
+                mode_obj = modes.get(maps_to, {}) if isinstance(modes, dict) else {}
+                mode_steps = mode_obj.get('steps', []) if isinstance(mode_obj, dict) else []
+                if isinstance(mode_steps, list) and mode_steps:
+                    steps = [str(s) for s in mode_steps if s is not None]
+            except Exception:
+                steps = []
+
+        # 4) Ultimate fallback
+        if not steps:
+            try:
+                modes = sci.get('modes', {}) if isinstance(sci, dict) else {}
+                mode_obj = modes.get('SCI', {}) if isinstance(modes, dict) else {}
+                mode_steps = mode_obj.get('steps', []) if isinstance(mode_obj, dict) else []
+                if isinstance(mode_steps, list):
+                    steps = [str(s) for s in mode_steps if s is not None]
+            except Exception:
+                steps = []
+
         return vdef if isinstance(vdef, dict) else {}, steps, maps_to
+
 
     def _wrap_user_with_sci(self, user_text: str, *, variant: str) -> str:
         """Prefix the user message with SCI instructions so the model actually follows the selected variant."""
@@ -4097,10 +4418,12 @@ class CSCRefiner:
             "\nYou MUST follow the Comm-SCI SCI Trace protocol for this answer.\n"
             "Output requirements:\n"
             "1) Include a visible section titled exactly: 'SCI Trace'\n"
-            "2) In that section, list the required steps below in the same order, each as a short line/bullet.\n"
+            "2) For EACH required step, write ONE line in this exact format: '<Step>: <content>'\n"
+            "   - <content> must be at least one substantive sentence (no empty placeholders).\n"
+            "   - Keep steps in the same order as listed.\n"
             "3) After the SCI Trace section, provide the final answer.\n"
-            "4) Do not rename steps, do not invent extra steps.\n\n"
-            "Required SCI Trace steps:\n" + step_lines +
+            "4) Do not rename steps, do not invent extra steps, do not output empty step headers.\n\n"
+            "Required SCI Trace steps (use exactly these labels):\n" + step_lines +
             "\n\nUser request:\n" + (user_text or "")
         )
         return instr
@@ -5215,62 +5538,91 @@ class CSCRefiner:
             return
 
 
-    def _render_sci_trace_as_html_runtime(self, text_in: str) -> str:
-        """Hard-render the SCI Trace section as HTML using the *active* SCI variant step list.
 
-        This is a renderer-only fix to avoid Markdown list runaway numbering and to ensure
-        SCI A/B produces a visibly structured block even when the ruleset doesn't expose
-        required_steps under global_defaults.
+    def _render_sci_trace_as_html_runtime(self, text_in: str) -> str:
+        """Repair + render SCI Trace deterministically for display.
+
+        Goals:
+        - If the model emits an empty 'SCI Trace' (only step names), rebuild it from step-labeled content
+          elsewhere in the response.
+        - Ensure all required steps for the active SCI variant are shown, and never as empty bullets.
+        - Avoid duplicate content: extracted step sections are removed from the final-answer body.
         """
         try:
             if not text_in or 'SCI Trace' not in text_in:
                 return text_in
 
-            # Determine required steps from selected SCI variant (A/B/...) -> mapped mode -> steps
             variant = (getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '').strip().upper()
             sci_active = bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False))
             if not sci_active or not variant:
                 return text_in
 
+            # Determine required steps from ruleset mapping
             try:
                 _vdef, steps, _maps_to = self._sci_variant_def(variant)
             except Exception:
                 steps = []
-
             required_steps = [str(s) for s in (steps or []) if str(s).strip()]
             if not required_steps:
                 return text_in
 
             lines = text_in.splitlines()
+
+            # Find SCI Trace marker line (plain text, tolerate minimal HTML tags)
             sci_idx = None
             for i, ln in enumerate(lines):
-                if re.match(r"^\s*SCI\s+Trace\s*:?\s*$", ln) or re.match(r"^\s*SCI\s+Trace\s*:.*$", ln):
+                ln_plain = re.sub(r"<[^>]+>", "", ln).strip()
+                ln_plain = ln_plain.strip().strip("*").strip()
+                if re.match(r"^(?:#+\s*)?SCI\s+Trace\s*:?$", ln_plain, flags=re.IGNORECASE):
                     sci_idx = i
                     break
             if sci_idx is None:
                 return text_in
 
-            end_idx = len(lines)
-            end_pat = re.compile(r"^\s*(Final\s+Answer\s*:|Self-?Debunking\s*:|QC-?Matrix\s*:)")
-            for j in range(sci_idx + 1, len(lines)):
-                if end_pat.match(lines[j]):
-                    end_idx = j
-                    break
+            # Identify the end of the immediate list after 'SCI Trace' (bullets/numbering only)
+            list_pat = re.compile(r"^\s*(?:[*+-]|•|\d+\.)\s+")
+            k = sci_idx + 1
+            while k < len(lines) and (not lines[k].strip() or list_pat.match(re.sub(r"<[^>]+>", "", lines[k]))):
+                k += 1
+            trace_list_end = k  # exclusive
 
+            # Build a working copy without the original (often empty) trace list block
             pre = lines[:sci_idx]
-            body = lines[sci_idx + 1:end_idx]
-            post = lines[end_idx:]
+            rest = lines[trace_list_end:]
 
+            # Split off trailing governance blocks we must keep in place (Self-Debunking, QC-Matrix)
+            boundary_pat = re.compile(r"^\s*(Self-?Debunking\s*:|QC-?Matrix\s*:)", re.IGNORECASE)
+            tail_start = None
+            for i, ln in enumerate(rest):
+                if boundary_pat.match(re.sub(r"<[^>]+>", "", ln)):
+                    tail_start = i
+                    break
+            if tail_start is None:
+                main = rest
+                tail = []
+            else:
+                main = rest[:tail_start]
+                tail = rest[tail_start:]
+
+            # Normalize basic HTML bold headers that may leak into raw text
+            def _strip_basic_tags(s: str) -> str:
+                s = re.sub(r"</?(strong|b)>", "", s, flags=re.IGNORECASE)
+                s = re.sub(r"</?p>", "", s, flags=re.IGNORECASE)
+                return s
+
+            # Step header detection (accepts: Plan: , **Plan:** , 1. Plan: ...)
             step_set = {s for s in required_steps}
-            hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$")
+            step_lookup = {s.lower(): s for s in required_steps}
+            hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*(?:\*\*|__)?(?P<name>[A-Za-z][A-Za-z0-9_]*)?(?:\*\*|__)?\s*:\s*(?P<rest>.*)$")
 
             blocks = {}
-            cur = None
+            out_main = []
+            cur_step = None
             buf = []
 
             def flush():
-                nonlocal cur, buf
-                if cur is None:
+                nonlocal cur_step, buf
+                if cur_step is None:
                     return
                 cleaned = []
                 for x in buf:
@@ -5279,43 +5631,72 @@ class CSCRefiner:
                     cleaned.pop(0)
                 while cleaned and not cleaned[-1].strip():
                     cleaned.pop()
-                blocks[cur] = cleaned
-                cur = None
+                blocks[cur_step] = cleaned
+                cur_step = None
                 buf = []
 
-            recognized = 0
-            for ln in body:
-                m = hdr_re.match(ln)
-                if m:
-                    name = m.group(1)
+            recognized_steps = 0
+            for ln in main:
+                ln2 = _strip_basic_tags(re.sub(r"<[^>]+>", "", ln))
+                m = hdr_re.match(ln2)
+                if m and m.group("name"):
+                    name = m.group("name")
+                    canon = None
                     if name in step_set:
+                        canon = name
+                    else:
+                        canon = step_lookup.get(name.lower())
+                    if canon:
                         flush()
-                        cur = name
-                        recognized += 1
-                        inline = (m.group(2) or '').strip()
+                        cur_step = canon
+                        recognized_steps += 1
+                        inline = (m.group("rest") or "").strip()
                         if inline:
                             buf.append(inline)
                         continue
-                if cur is not None:
-                    buf.append(ln)
-            flush()
+                if cur_step is not None:
+                    buf.append(ln2)
+                else:
+                    out_main.append(ln)
 
-            if recognized < 2:
+            flush()            # If we didn't recognize any step content, do not fabricate trace items.
+            if recognized_steps == 0:
                 return text_in
 
+            # Render only steps that have real content; never emit empty steps.
+            missing = []
+            for s in required_steps:
+                if s in missing:
+                    continue
+                if not blocks.get(s):
+                    missing.append(s)
+
+
+            # Optional deterministic alert if step content is missing
+            alert_html = ""
+            if missing:
+                safe = ", ".join([html.escape(x) for x in missing])
+                alert_html = (
+                    "<div style='border:1px solid #fca5a5; background:#fef2f2; padding:10px; "
+                    "border-radius:10px; margin:8px 0; color:#991b1b;'>"
+                    "<b>CONTROL LAYER ALERT (SCI)</b><br>"
+                    "Missing SCI Trace step content for: " + safe +
+                    "</div>"
+                )
+
+            # Render deterministic HTML trace block
             html_parts = [
                 "<div class='sci-trace' style='margin:10px 0; padding:10px; border:1px solid #ddd; border-radius:12px;'>",
                 "<div style='font-weight:700; margin-bottom:6px;'>SCI Trace</div>",
                 "<ol style='margin:0 0 0 22px; padding:0;'>",
             ]
-
-            for step in required_steps:
-                if step not in blocks:
+            for s in required_steps:
+                if s in missing:
                     continue
                 html_parts.append("<li style='margin:4px 0 10px 0;'>")
-                html_parts.append(f"<div style='font-weight:700; margin:0 0 4px 0;'>{html.escape(step)}:</div>")
-                for ln in (blocks.get(step) or []):
-                    t = (ln or '').rstrip('\n')
+                html_parts.append(f"<div style='font-weight:700; margin:0 0 4px 0;'>{html.escape(s)}:</div>")
+                for ln in (blocks.get(s) or []):
+                    t = (ln or "").rstrip("\n")
                     if not t.strip():
                         html_parts.append("<div style='height:6px'></div>")
                         continue
@@ -5325,23 +5706,26 @@ class CSCRefiner:
                     else:
                         html_parts.append(f"<div>{html.escape(t.strip())}</div>")
                 html_parts.append("</li>")
-
             html_parts.extend(["</ol>", "</div>"])
 
             out_lines = []
             out_lines.extend(pre)
-            out_lines.append('SCI Trace:')
+            out_lines.append("SCI Trace:")
+            if alert_html:
+                out_lines.append(alert_html)
             out_lines.append("\n".join(html_parts))
-            out_lines.extend(post)
+            out_lines.extend(out_main)
+            out_lines.extend(tail)
             return "\n".join(out_lines)
         except Exception:
             return text_in
+
 
     def _apply_csc_strict(self, raw_response: str, *, user_raw: str, is_command: bool):
         """Wrapper-enforced CSC (strict) with Full Rendering (Ported from Fix7c5-Plus)."""
         
         # --- Nested Helper: Color Spans (Logic from Fix7c5-Plus) ---
-        def apply_color_spans(text):
+        def _apply_color_spans_local(text):
             if not text: return text
             # Fallback falls global _EVIDENCE_COLOR fehlt
             ev_colors = globals().get('_EVIDENCE_COLOR', {
@@ -5379,11 +5763,19 @@ class CSCRefiner:
         try:
             # 1. Command? -> Nur Markdown Rendering
             if is_command:
+                # Ensure Evidence-Linker color spans are applied consistently
+                if getattr(self.gov_state, 'color', 'off') == 'on':
+                    raw_response = apply_color_spans(raw_response, enabled=True)
+
                 _h = markdown.markdown(raw_response, extensions=['extra', 'codehilite'])
                 return sanitize_html(_h), None
 
             # 2. Comm Inactive? -> Nur Markdown
             if not getattr(self.gov_state, 'comm_active', False):
+                # Ensure Evidence-Linker color spans are applied consistently
+                if getattr(self.gov_state, 'color', 'off') == 'on':
+                    raw_response = apply_color_spans(raw_response, enabled=True)
+                
                 _h = markdown.markdown(raw_response, extensions=['extra', 'codehilite'])
                 return sanitize_html(_h), None
             
@@ -5447,6 +5839,9 @@ class CSCRefiner:
                 _ovr_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
                 _ovr = gov.normalize_qc_overrides(_ovr_raw)
                 _corr = gov.get_effective_qc_corridor(_prof, _ovr)
+                
+                raw_response = _strip_basic_html_for_enforcement(raw_response)
+                raw_response = ensure_qc_footer_present(raw_response, gov, _prof, _ovr)
                 enforced_txt = enforce_qc_footer_deltas(raw_response, _corr, _prof)
                 enforced_txt = ensure_qc_footer_is_last(enforced_txt)
                 cur_qc, rep_delta = gov.parse_qc_footer(enforced_txt)
@@ -5511,6 +5906,9 @@ class CSCRefiner:
                 _ovr_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
                 _ovr = gov.normalize_qc_overrides(_ovr_raw)
                 corr = gov.get_effective_qc_corridor(prof, _ovr)
+                
+                raw_response = _strip_basic_html_for_enforcement(raw_response)
+                raw_response = ensure_qc_footer_present(raw_response, gov, prof, _ovr)
                 raw_for_render = enforce_qc_footer_deltas(raw_response, corr, prof)
                 raw_for_render = ensure_qc_footer_is_last(raw_for_render)
             except Exception:
@@ -5617,7 +6015,7 @@ class CSCRefiner:
             
             # C: Farben anwenden
             if getattr(self.gov_state, 'color', 'off') == 'on':
-                raw_for_render = apply_color_spans(raw_for_render)
+                raw_for_render = apply_color_spans(raw_for_render, enabled=True)
             
             # D: Markdown Cleanup (Abstände)
             raw_for_render = re.sub(r'(?<!\n)\n([*-]|\d+\.) ', r'\n\n\1 ', raw_for_render)
@@ -6806,6 +7204,16 @@ class CSCRefiner:
 
             # 1. Routing
             route = route_input(raw_txt, self.gov_state, self)
+            # STUFE 1 contract: route shape (fail-soft; no behavior change)
+            try:
+                if not contract_route_shape(route):
+                    try:
+                        self.log_event('contract_violation', {'where': 'route_input', 'kind': str(route.get('kind'))})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
 
             try:
                 self.log_event(
@@ -6923,6 +7331,35 @@ class CSCRefiner:
 
             # 3. Chat (Normal Question)
             self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
+
+            # CGI user feedback triplets are optional and must not be forwarded as a standalone LLM request.
+            try:
+                if bool(route.get('is_user_feedback_triplet')) or bool(route.get('is_process_cgi_feedback')):
+                    fb = (raw_txt or '').strip()
+                    try:
+                        if bool(route.get('is_user_feedback_triplet')):
+                            self.gov_state.last_user_feedback_triplet = fb
+                        if bool(route.get('is_process_cgi_feedback')):
+                            self.gov_state.last_process_cgi_feedback = fb
+                        self.gov_state.cgi_feedback_pending_for_model = True
+                    except Exception:
+                        pass
+                    # Log event (best-effort)
+                    try:
+                        self.log_event('cgi_feedback', {'value': _safe_preview_text(fb, 32), 'kind': 'user_feedback_triplet' if bool(route.get('is_user_feedback_triplet')) else 'process_cgi_feedback'})
+                    except Exception:
+                        pass
+                    ts = datetime.now().isoformat()
+                    note = (
+                        "<div style='border:1px solid #bbf7d0; background:#f0fdf4; padding:10px; "
+                        "border-radius:10px; margin:8px 0; color:#166534;'>"
+                        "<b>CGI feedback recorded.</b><br>"
+                        + html.escape(fb) +
+                        "</div>"
+                    )
+                    return {"html": note + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None}
+            except Exception:
+                pass
 
             # Turn counter (used for anchor auto snapshots, and as a general monotonic user-turn index)
             try:
@@ -7073,6 +7510,23 @@ class CSCRefiner:
 
             user_for_model = self._apply_output_prefs_to_user_message(raw_txt_for_model)
 
+            # If CGI feedback was provided earlier, forward it ONCE as a neutral note (no rule/code changes).
+            try:
+                if bool(getattr(self.gov_state, 'cgi_feedback_pending_for_model', False)):
+                    fb_parts = []
+                    lu = (getattr(self.gov_state, 'last_user_feedback_triplet', '') or '').strip()
+                    lp = (getattr(self.gov_state, 'last_process_cgi_feedback', '') or '').strip()
+                    if lu:
+                        fb_parts.append(f"User feedback triplet (CGI): {lu}")
+                    if lp:
+                        fb_parts.append(f"Process CGI feedback: {lp}")
+                    if fb_parts:
+                        user_for_model = (user_for_model.rstrip() + "\n\n[CGI Feedback]\n" + "\n".join(fb_parts)).strip()
+                    # Mark as sent (single-use)
+                    self.gov_state.cgi_feedback_pending_for_model = False
+            except Exception:
+                pass
+
             # SCI Recursion: capture scope for next answer (canonical JSON: sci.recursive_sci)
             try:
                 if bool(getattr(self.gov_state, 'sci_recursion_one_shot', False)):
@@ -7183,7 +7637,11 @@ class CSCRefiner:
                             steps = validator._required_trace_steps_for_variant(vk) or []
                     except Exception:
                         steps = []
-                    expect_trace = bool(steps)
+                    # Expect SCI trace whenever SCI is active and a variant is selected.
+                    try:
+                        expect_trace = bool(getattr(self.gov_state, "sci_active", False)) and bool(vk)
+                    except Exception:
+                        expect_trace = bool(steps)
 
                     hard_vios, soft_vios = validator.validate(
                         text=repaired_raw,
@@ -9745,10 +10203,63 @@ def _openrouter_friendly_http_error(status_code: int, raw_body: str, *, lang: st
                     role = 'user'
 
                 if role == 'bot':
+
+                    # If the loaded history contains a legacy plaintext 'Comm Config' dump (very large JSON),
+                    # re-render it deterministically as collapsible HTML to keep the UI readable and within margins.
                     try:
-                        import markdown as _markdown
-                        _h = _markdown.markdown(str(content), extensions=['extra', 'codehilite'])
-                        _h = sanitize_html(_h)
+                        _c = str(content)
+                        if 'Loaded rules file:' in _c and ('QC-Matrix:' in _c or 'QC Matrix:' in _c):
+                            # Heuristic: first line looks like "<sys> v<ver> · Loaded rules file: <file>"
+                            _lines = _c.splitlines()
+                            if _lines and 'Loaded rules file:' in _lines[0]:
+                                # Find JSON start (first line that starts with '{' or '[' after header)
+                                _json_i = None
+                                for _i in range(1, len(_lines)):
+                                    _ls = _lines[_i].lstrip()
+                                    if _ls.startswith('{') or _ls.startswith('['):
+                                        _json_i = _i
+                                        break
+                                # Find QC footer line near the end
+                                _qc_i = None
+                                for _i in range(len(_lines)-1, -1, -1):
+                                    _s = _lines[_i].strip()
+                                    if _s.startswith('QC-Matrix:') or _s.startswith('QC Matrix:'):
+                                        _qc_i = _i
+                                        break
+                                if _json_i is not None:
+                                    _status = _lines[0].strip()
+                                    _qc = _lines[_qc_i].strip() if _qc_i is not None else ''
+                                    _json_end = _qc_i if (_qc_i is not None and _qc_i > _json_i) else len(_lines)
+                                    _raw_json = "\n".join(_lines[_json_i:_json_end]).strip()
+                                    # Render (language-aware summary)
+                                    _ui_lang = self._lang()
+                                    _summary = 'Raw JSON anzeigen' if _ui_lang == 'de' else 'Show raw JSON'
+                                    _minor = (
+                                        'Read-only view of the full governance configuration (deterministic from JSON, no LLM).'
+                                        if _ui_lang != 'de'
+                                        else 'Nur-Lese-Ansicht der vollständigen Governance-Konfiguration (deterministisch aus JSON, ohne LLM).'
+                                    )
+                                    content = (
+                                        '<div class="comm-help comm-config">'
+                                        f'<div class="help-status">{html.escape(_status)}</div>'
+                                        f'<div class="minor">{html.escape(_minor)}</div>'
+                                        '<details class="config-details">'
+                                        f'<summary>{html.escape(_summary)}</summary>'
+                                        f'<pre class="raw-json">{html.escape(_raw_json)}</pre>'
+                                        '</details>'
+                                        + (f"<div style='margin-top:10px'>{html.escape(_qc)}</div>" if _qc else '')
+                                        + '</div>'
+                                    )
+                    except Exception:
+                        pass
+                    try:
+                        _c = str(content)
+                        if _c.lstrip().startswith('<'):
+                            _h = sanitize_html(_c)
+                        else:
+                            import markdown as _markdown
+                            _h = _markdown.markdown(_c, extensions=['extra', 'codehilite'])
+                            _h = sanitize_html(_h)
                     except Exception:
                         _h = sanitize_html(html.escape(str(content)))
                     ui_hist.append({'role': 'bot', 'html': _h})
@@ -11088,10 +11599,59 @@ def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
                 role = 'user'
 
             if role == 'bot':
+
+                # If the loaded history contains a legacy plaintext 'Comm Config' dump (very large JSON),
+                # re-render it deterministically as collapsible HTML to keep the UI readable and within margins.
                 try:
-                    import markdown as _markdown
-                    _h = _markdown.markdown(str(content), extensions=['extra', 'codehilite'])
-                    _h = sanitize_html(_h)
+                    _c = str(content)
+                    if 'Loaded rules file:' in _c and ('QC-Matrix:' in _c or 'QC Matrix:' in _c):
+                        _lines = _c.splitlines()
+                        if _lines and 'Loaded rules file:' in _lines[0]:
+                            _json_i = None
+                            for _i in range(1, len(_lines)):
+                                _ls = _lines[_i].lstrip()
+                                if _ls.startswith('{') or _ls.startswith('['):
+                                    _json_i = _i
+                                    break
+                            _qc_i = None
+                            for _i in range(len(_lines)-1, -1, -1):
+                                _s = _lines[_i].strip()
+                                if _s.startswith('QC-Matrix:') or _s.startswith('QC Matrix:'):
+                                    _qc_i = _i
+                                    break
+                            if _json_i is not None:
+                                _status = _lines[0].strip()
+                                _qc = _lines[_qc_i].strip() if _qc_i is not None else ''
+                                _json_end = _qc_i if (_qc_i is not None and _qc_i > _json_i) else len(_lines)
+                                _raw_json = "\n".join(_lines[_json_i:_json_end]).strip()
+                                _ui_lang = self._lang()
+                                _summary = 'Raw JSON anzeigen' if _ui_lang == 'de' else 'Show raw JSON'
+                                _minor = (
+                                    'Read-only view of the full governance configuration (deterministic from JSON, no LLM).'
+                                    if _ui_lang != 'de'
+                                    else 'Nur-Lese-Ansicht der vollständigen Governance-Konfiguration (deterministisch aus JSON, ohne LLM).'
+                                )
+                                content = (
+                                    '<div class="comm-help comm-config">'
+                                    f'<div class="help-status">{html.escape(_status)}</div>'
+                                    f'<div class="minor">{html.escape(_minor)}</div>'
+                                    '<details class="config-details">'
+                                    f'<summary>{html.escape(_summary)}</summary>'
+                                    f'<pre class="raw-json">{html.escape(_raw_json)}</pre>'
+                                    '</details>'
+                                    + (f"<div style='margin-top:10px'>{html.escape(_qc)}</div>" if _qc else '')
+                                    + '</div>'
+                                )
+                except Exception:
+                    pass
+                try:
+                    _c = str(content)
+                    if _c.lstrip().startswith('<'):
+                        _h = sanitize_html(_c)
+                    else:
+                        import markdown as _markdown
+                        _h = _markdown.markdown(_c, extensions=['extra', 'codehilite'])
+                        _h = sanitize_html(_h)
                 except Exception:
                     _h = sanitize_html(html.escape(str(content)))
                 ui_hist.append({'role': 'bot', 'html': _h})

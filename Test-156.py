@@ -4,21 +4,21 @@ import types
 import importlib.util
 from pathlib import Path
 
-"""Unified pytest suite for Wrapper-140.
+"""Unified pytest suite for Wrapper-141 (Stage 1 boundary refactor).
 
 Expected repo layout:
-- Wrapper-140.py
-- Test-140.py
-- JSON/Comm-SCI-v19.6.9.json
+- Wrapper-156.py
+- Test-156.py
+- JSON/Comm-SCI-v19.6.8.json
 
 Run:
-  python3 -m pytest -vv -s --tb=long Test-140.py
+  python3 -m pytest -vv -s --tb=long Test-156.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-140.py'
+FIX_PATH = HERE / 'Wrapper-156.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.9_restored.json'
 if not JSON_PATH.exists():
@@ -27,6 +27,8 @@ if not JSON_PATH.exists():
     JSON_PATH = HERE / 'Comm-SCI-v19.6.9_restored.json'
 if not JSON_PATH.exists():
     JSON_PATH = HERE / 'Comm-SCI-v19.6.9.json'
+if not JSON_PATH.exists():
+    JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
 
 
 def load_fix_module():
@@ -1753,3 +1755,303 @@ def test_comm_anchor_off_on_toggles_anchor_snapshot_automation_and_panel_label()
     comm3 = ui3.get('comm') or []
     # When on, the toggle label must offer turning it off
     assert any((isinstance(x, dict) and x.get('cmd') == 'Comm Anchor off') or (x == 'Comm Anchor off') for x in comm3)
+
+
+# ----------------------------
+# STUFE 1: schema contract tests (fail-soft)
+# ----------------------------
+
+def test_stage1_contract_route_shapes_smoke():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    # noop
+    r = mod.route_input("", types.SimpleNamespace(sci_pending=False), types.SimpleNamespace(gov=mod.gov))
+    assert mod.contract_route_shape(r) is True
+
+    # command: pick any canonical command token
+    data = load_ruleset_data()
+    any_cmd = None
+    commands = (data.get("commands") or {})
+    for cat in commands.values():
+        if isinstance(cat, dict):
+            for k in cat.keys():
+                if isinstance(k, str) and k.strip():
+                    any_cmd = k
+                    break
+        if any_cmd:
+            break
+    assert any_cmd is not None
+    r2 = mod.route_input(any_cmd, types.SimpleNamespace(sci_pending=False), types.SimpleNamespace(gov=mod.gov))
+    assert r2.get("kind") == "command"
+    assert mod.contract_route_shape(r2) is True
+
+    # chat
+    r3 = mod.route_input("hello world", types.SimpleNamespace(sci_pending=False), types.SimpleNamespace(gov=mod.gov))
+    assert r3.get("kind") == "chat"
+    assert mod.contract_route_shape(r3) is True
+
+
+def test_stage1_contract_ask_output_shape_smoke():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    # Avoid real provider calls
+    api.chat_session = DummySession(["OK\n\nQC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)"])
+    out = api.ask("hello")
+    assert mod.contract_ask_output_shape(out) is True
+
+
+def test_ui_replay_loaded_history_renders_comm_config_dump_as_collapsible_html():
+    """When loading/replaying a chat log, a legacy plaintext 'Comm Config' dump should be turned into a collapsible HTML block."""
+    mod = load_fix_module()
+
+    class DummyWin:
+        def __init__(self):
+            self.calls = []
+        def evaluate_js(self, js):
+            self.calls.append(js)
+            # Force incremental replay path
+            if 'resetChatFromHistory' in js:
+                return 'NOFUNC'
+            return 'OK'
+
+    api = mod.Api()
+    api.main_win = DummyWin()
+
+    # Minimal-but-recognizable Comm Config plaintext dump (simulate legacy log content)
+    big_json = "{\n" + "\n".join([f'  "k{i}": "{("x"*40)}",' for i in range(40)]) + "\n  \"end\": 1\n}"
+    comm_dump = (
+        "Comm-SCI-Control v19.6.9 · Loaded rules file: Comm-SCI-v19.6.9.json\n\n"
+        + big_json
+        + "\n\nQC-Matrix: Clarity 2 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ0)"
+    )
+
+    api.history = [
+        {'role': 'assistant', 'content': comm_dump},
+    ]
+
+    api._ui_replay_loaded_history(status_msg='Loaded X')
+
+    joined = "\n".join(api.main_win.calls)
+    assert "<details" in joined
+    assert "raw-json" in joined
+
+
+# --- Regression tests: Color-on consistency + SCI trace repair (v150) ---
+
+def test_color_spans_applied_in_command_and_inactive_render_paths():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    # Force Color on, but keep comm inactive so we hit the comm-inactive Markdown render path.
+    api.gov_state.color = 'on'
+    api.gov_state.comm_active = False
+
+    raw = "Hello\n[GREEN] 🟢 claim\n[YELLOW] 🟡 maybe\n[RED] 🔴 unknown"
+    html_out, _ = api._apply_csc_strict(raw_response=raw, user_raw="x", is_command=False)
+    assert "span" in html_out.lower()
+    assert "#137333" in html_out or "#2e7d32" in html_out  # green (either palette is acceptable)
+
+    # Command path
+    html_out2, _ = api._apply_csc_strict(raw_response=raw, user_raw="x", is_command=True)
+    assert "span" in html_out2.lower()
+
+
+def test_sci_trace_repair_variant_a_extracts_plan_solution_check_and_removes_empty_list():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = 'A'
+
+    raw = (
+        "SCI Trace\n"
+        "• Plan\n"
+        "• Solution\n"
+        "• Check\n\n"
+        "**Plan:** This is the plan.\n"
+        "**Solution:** This is the solution.\n"
+        "**Check:** This is the check.\n\n"
+        "Final answer text.\n"
+        "QC-Matrix: Klarheit 3 (Δ0)\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "• Plan" not in out
+    assert "**Plan:**" not in out
+    assert "This is the plan." in out
+    assert "This is the solution." in out
+    assert "This is the check." in out
+
+
+def test_sci_trace_repair_variant_b_rebuilds_steps_and_never_shows_empty_step_list():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = 'B'
+
+    raw = (
+        "SCI Trace\n"
+        "- Plan\n"
+        "- Solution\n"
+        "- Critic\n"
+        "- Linguist\n"
+        "- Logician\n"
+        "- Adversary\n"
+        "- Dialectic_1_Thesis\n"
+        "- Dialectic_2_Antithesis\n"
+        "- Dialectic_3_Synthesis\n"
+        "- Dialectic_4_Metathesis\n"
+        "- Dialectic_5_Hyperantithesis\n"
+        "- Dialectic_6_Synthesis2\n"
+        "- Learn\n\n"
+        "**Plan:** P.\n"
+        "**Solution:** S.\n"
+        "**Critic:** C.\n"
+        "**Linguist:** L.\n"
+        "**Logician:** Lo.\n"
+        "**Adversary:** A.\n"
+        "**Dialectic_1_Thesis:** T1.\n"
+        "**Dialectic_2_Antithesis:** T2.\n"
+        "**Dialectic_3_Synthesis:** T3.\n"
+        "**Dialectic_4_Metathesis:** T4.\n"
+        "**Dialectic_5_Hyperantithesis:** T5.\n"
+        "**Dialectic_6_Synthesis2:** T6.\n"
+        "**Learn:** Learn.\n\n"
+        "Some final answer.\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "- Plan" not in out  # old empty list removed
+    assert "**Plan:**" not in out  # extracted
+    assert "P." in out and "Learn." in out
+
+# -----------------------------
+# SCI variant mapping (v19.6.9)
+# -----------------------------
+
+def test_sci_variant_def_resolves_maps_to_object_and_steps_for_B_and_A():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+
+    # Variant B must resolve to SCIplus with 13 steps (Dialectics++).
+    vdef_b, steps_b, maps_b = api._sci_variant_def('B')
+    assert isinstance(vdef_b, dict)
+    assert maps_b == 'SCIplus'
+    assert isinstance(steps_b, list) and len(steps_b) >= 13
+    # load-bearing steps
+    for s in [
+        'Plan','Solution','Critic','Linguist','Logician','Adversary',
+        'Dialectic_1_Thesis','Dialectic_2_Antithesis','Dialectic_3_Synthesis',
+        'Dialectic_4_Metathesis','Dialectic_5_Hyperantithesis','Dialectic_6_Synthesis2','Learn'
+    ]:
+        assert s in steps_b
+
+    # Variant A must resolve to minimal SCI steps.
+    vdef_a, steps_a, maps_a = api._sci_variant_def('A')
+    assert maps_a in ('SCI', 'SCI')
+    assert steps_a[:3] == ['Plan','Solution','Check']
+
+
+def test_wrap_user_with_sci_includes_all_required_steps_for_variant_B():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    wrapped = api._wrap_user_with_sci('Hello', variant='B')
+
+    assert 'SCI Trace' in wrapped
+    # ensure a late dialectic step is explicitly listed
+    assert '- Dialectic_6_Synthesis2' in wrapped
+    assert '- Learn' in wrapped
+
+
+
+def test_repair_prompt_includes_sci_trace_requirements_when_sci_is_active_and_steps_exist():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    validator = mod.OutputComplianceValidator(mod.gov, mod.cfg)
+
+    class S:
+        sci_active = True
+        sci_variant = 'B'
+
+    prompt = validator.build_repair_prompt(
+        user_prompt='Q',
+        raw_response='A',
+        state=S,
+        hard_violations=['Missing SCI Trace step: Critic'],
+        soft_violations=[]
+    )
+
+    assert 'SCI Trace requirements:' in prompt
+    assert '  - Critic' in prompt
+    assert 'Redacted:' in prompt
+
+
+def test_self_debunking_unnumbered_blocks_are_numbered():
+    mod = load_fix_module()
+
+    class GM:
+        loaded = True
+        data = {
+            "global_defaults": {
+                "output_contract": {
+                    "self_debunking_contract": {
+                        "enabled": True,
+                        "required_block_title": "Self-Debunking",
+                        "required_min_points": 2,
+                        "required_max_points": 3,
+                    }
+                },
+                "self_debunking": {
+                    "enabled": True,
+                    "exceptions": [],
+                    "block": {"title": "Self-Debunking"},
+                },
+            }
+        }
+
+    txt = (
+        "Answer text.\n\n"
+        "Self-Debunking:\n\n"
+        "Weakness: First weakness line.\n"
+        "Why it matters: First why.\n"
+        "What would verify/falsify (next check): First check.\n"
+        "Weakness: Second weakness line.\n"
+        "Why it matters: Second why.\n"
+        "What would verify/falsify (next check): Second check.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+    )
+
+    out = mod.enforce_self_debunking_contract(txt, GM(), "Expert", is_command=False, lang="en")
+    assert "1. Weakness:" in out
+    assert "2. Weakness:" in out
+    assert "Self-Debunking:" in out
+    # Ensure we did not keep an empty Self-Debunking section.
+    assert "Self-Debunking:\n\nQC-Matrix" not in out
+
+
+def test_cgi_user_feedback_triplet_is_intercepted_without_llm_call(tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    # Start governance
+    api.ask("Comm Start")
+
+    # Monkeypatch LLM call to fail if invoked
+    def boom(*a, **k):
+        raise AssertionError("LLM should not be called for CGI feedback triplets")
+
+    api._llm_call = boom  # type: ignore[assignment]
+
+    res = api.ask("3,3,3")
+    assert "CGI feedback recorded" in (res.get("html") or "")
