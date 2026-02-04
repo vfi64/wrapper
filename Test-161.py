@@ -7,18 +7,18 @@ from pathlib import Path
 """Unified pytest suite for Wrapper-141 (Stage 1 boundary refactor).
 
 Expected repo layout:
-- Wrapper-156.py
-- Test-156.py
-- JSON/Comm-SCI-v19.6.8.json
+- Wrapper-159.py
+- Test-159.py
+- JSON/Comm-SCI-v19.6.9.json
 
 Run:
-  python3 -m pytest -vv -s --tb=long Test-156.py
+  python3 -m pytest -vv -s --tb=long Test-159.py
 
 This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-156.py'
+FIX_PATH = HERE / 'Wrapper-161.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.9_restored.json'
 if not JSON_PATH.exists():
@@ -28,7 +28,7 @@ if not JSON_PATH.exists():
 if not JSON_PATH.exists():
     JSON_PATH = HERE / 'Comm-SCI-v19.6.9.json'
 if not JSON_PATH.exists():
-    JSON_PATH = HERE / 'Comm-SCI-v19.6.8.json'
+    JSON_PATH = HERE / 'Comm-SCI-v19.6.9.json'
 
 
 def load_fix_module():
@@ -681,6 +681,41 @@ def test_comm_audit_reports_missing_qc_without_llm_call():
     assert "Missing QC footer" in html
     assert len(dummy.calls) == 0
 
+def test_comm_audit_does_not_flag_missing_sd_or_qc_for_command_responses():
+    """Regression test for Wrapper-160 (fix a):
+    Compliance scan must classify command responses via the preceding user command,
+    not via the bot message's first line, and must skip SD/QC checks for commands.
+    """
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+
+    # Ensure no model call occurs.
+    dummy = DummySession(["SHOULD NOT BE USED"])
+    api.chat_session = dummy
+
+    # Seed history with command exchanges whose bot outputs do NOT contain Self-Debunking,
+    # and one includes NO QC footer at all (as seen in Comm Audit export-only outputs).
+    api.history = [
+        {"role": "user", "content": "Comm State"},
+        {"role": "bot", "content": "Zeit: 2026-02-04 16:59\nProfil: Expert\nQC-Matrix: Klarheit 3 (Δ0) · Kürze 3 (Δ0) · Evidenz 3 (Δ0) · Empathie 3 (Δ0) · Konsistenz 3 (Δ0) · Neutralität 3 (Δ0)"},
+        {"role": "user", "content": "Comm Audit"},
+        {"role": "bot", "content": "Comm Audit\nAudit exported.\nLogs/Audit/Audit_20260204_165930_267057.json"},
+    ]
+
+    out = api.ask("Comm Audit")
+    html = _extract_html(out)
+
+    # The scan must NOT complain about SD/QC for command responses.
+    assert "Missing required 'Self-Debunking'" not in html
+    assert "Missing QC footer" not in html
+
+    # No LLM call.
+    assert len(dummy.calls) == 0
+
+
+
 
 def test_comm_anchor_snapshot_contains_status_and_qc_without_llm_call():
     mod = load_fix_module()
@@ -704,6 +739,48 @@ def test_comm_anchor_snapshot_contains_status_and_qc_without_llm_call():
 
 # -----------------
 # Cross-version guard (basic)
+
+
+def test_html_number_self_debunking_does_not_double_number_inside_ol():
+    """Regression: html_number_self_debunking must NOT inject '1.' prefixes when Self-Debunking
+    is already an ordered list (<ol>), otherwise the browser numbering + injected numbering
+    causes double numbering.
+    """
+    mod = load_fix_module()
+
+    html_in = (
+        "<p><strong>Self-Debunking</strong></p>\n"
+        "<ol>\n"
+        "  <li><div>Weakness: Missing caveats.</div></li>\n"
+        "  <li><div>Weakness: No verification route.</div></li>\n"
+        "</ol>\n"
+        "<p>QC-Matrix: Clarity 3 (Δ0)</p>\n"
+    )
+    html_out = mod.html_number_self_debunking(html_in, lang="en")
+
+    # Still an ordered list
+    assert "<ol" in html_out and "</ol>" in html_out
+    # Must NOT inject textual numbering into the <div> lines.
+    assert "1. Weakness" not in html_out
+    assert "2. Weakness" not in html_out
+
+
+def test_apply_color_spans_handles_white_circle_and_multi_suffix():
+    """Regression: Color spans must be applied for Evidence-Linker tokens even with
+    ⚪/⚪️ emoji variants and multi-part suffixes like -WEB-CHECK.
+    """
+    mod = load_fix_module()
+
+    s = "[GREEN-WEB-CHECK] 🟢 claim\n[GRAY] ⚪ neutral\n[RED-DOC] 🔴 risk"
+    out = mod.apply_color_spans(s, enabled=True)
+
+    # Each tag should become a styled span.
+    assert out.count("<span style=") >= 3
+    assert "[GREEN-WEB-CHECK]" in out
+    assert "[GRAY]" in out
+    assert "[RED-DOC]" in out
+
+
 # -----------------
 
 def test_cross_version_guard_emits_control_layer_warning_and_keeps_active_version():

@@ -28,6 +28,23 @@ try:
 except Exception:
     bleach = None  # type: ignore
 
+_css_sanitizer_cached = None
+
+def _get_css_sanitizer():
+    """Return a Bleach CSSSanitizer allowing only the minimal inline styles we inject.
+
+    We keep this extremely narrow to avoid changing rendering semantics or expanding attack surface.
+    """
+    global _css_sanitizer_cached
+    if _css_sanitizer_cached is not None:
+        return _css_sanitizer_cached
+    try:
+        from bleach.css_sanitizer import CSSSanitizer  # type: ignore
+        _css_sanitizer_cached = CSSSanitizer(allowed_css_properties=['color','font-weight'])
+    except Exception:
+        _css_sanitizer_cached = None
+    return _css_sanitizer_cached
+
 def sanitize_html(html_text: str) -> str:
     # Defensive HTML sanitization for model outputs before injecting into pywebview.
     # Keeps a conservative allow-list while preserving our own injected spans/images.
@@ -54,12 +71,14 @@ def sanitize_html(html_text: str) -> str:
         'td': ['colspan','rowspan','class','style'],
     }
     try:
+        cleaned = css_sanitizer = _get_css_sanitizer()
         cleaned = bleach.clean(
             html_text,
             tags=allowed_tags,
             attributes=allowed_attrs,
             protocols=['http','https','mailto'],
             strip=True,
+            css_sanitizer=css_sanitizer,
         )
         return cleaned
     except Exception:
@@ -1893,10 +1912,67 @@ def normalize_self_debunking_language(text: str, lang: str) -> str:
     except Exception:
         return text
 
+
+def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
+    """Best-effort: add 1./2./3. numbering to Self-Debunking in already-rendered HTML.
+
+    This is a safety net for cases where earlier plain-text enforcement could not operate
+    (e.g., the Self-Debunking block was embedded in an HTML-rendered SCI Trace segment).
+    """
+    try:
+        if not html_text:
+            return html_text
+        # Only proceed if the header exists.
+        if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", html_text) is None:
+            return html_text
+
+        # Work line-wise to keep it simple.
+        lines = html_text.splitlines()
+        out = []
+        in_sd = False
+        in_ol = False
+        n = 0
+        for ln in lines:
+            if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", ln):
+                in_sd = True
+                in_ol = False
+                n = 0
+                out.append(ln)
+                continue
+            if in_sd:
+                # Stop when QC footer starts.
+                if re.search(r"(?i)>\s*QC(?:-Matrix)?\s*:", ln) or re.search(r"(?im)^\s*QC(?:-Matrix)?\s*:", re.sub(r"<[^>]+>","",ln)):
+                    in_sd = False
+                    out.append(ln)
+                    continue
+                # Track whether the Self-Debunking section is already an ordered list (<ol>).
+                # If yes, DO NOT inject "1." prefixes into <div>/<li> lines (would cause double numbering).
+                if "<ol" in ln.lower():
+                    in_ol = True
+                if "</ol" in ln.lower():
+                    in_ol = False
+
+                # Number the first line of each point when it starts with Weakness/Schwäche.
+                plain = re.sub(r"<[^>]+>", "", ln).strip()
+                if (not in_ol) and re.match(r"(?i)^(Weakness|Schwäche)\b\s*:", plain):
+                    n += 1
+                    if n <= 6 and (f"{n}." not in plain):
+                        # Insert "n. " after the opening <div> or at line start.
+                        if "<div" in ln:
+                            ln = re.sub(r"(<div[^>]*>\s*)", r"\1" + str(n) + ". ", ln, count=1)
+                        else:
+                            ln = f"{n}. " + ln
+                out.append(ln)
+            else:
+                out.append(ln)
+        return "\n".join(out)
+    except Exception:
+        return html_text
+
 def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is_command: bool = False, lang: str = "en") -> str:
     """Deterministically enforce the Self-Debunking contract (2–3 numbered points) when required.
 
-    Note: is_command is accepted for API compatibility and does not change behavior here.
+    Note: is_command disables enforcement for command-only responses.
 
     - If missing: inject a minimal compliant block (no new factual claims).
     - If too many points: keep the first 3.
@@ -1904,6 +1980,9 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
     - Ensure placement BEFORE the QC footer.
     """
     try:
+        # Commands must NEVER trigger Self-Debunking enforcement/injection.
+        if is_command:
+            return text
         if not text or not gov_mgr or not getattr(gov_mgr, 'loaded', False):
             return text
 
@@ -1997,6 +2076,26 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
                     out = before.rstrip() + new_block + after.lstrip()
                     return normalize_self_debunking_language(out, lang)
 
+            # If the model used bullet points, convert the first 2–3 bullets into numbered points
+            # without inventing content.
+            try:
+                bullet_lines = [ln.rstrip() for ln in block.splitlines()]
+                bullets = []
+                for ln in bullet_lines:
+                    m_b = re.match(r"^\s*(?:[-*+]|•)\s+(.+?)\s*$", ln)
+                    if m_b:
+                        b = m_b.group(1).strip()
+                        if b:
+                            bullets.append(b)
+                if bullets:
+                    bullets = bullets[:max_p]
+                    normalized = [f"{i}. {b}" for i, b in enumerate(bullets, 1)]
+                    new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
+                    out = before.rstrip() + new_block + after.lstrip()
+                    return normalize_self_debunking_language(out, lang)
+            except Exception:
+                pass
+
             # Fallback: remove the broken/empty block and inject a minimal compliant numbered block.
             try:
                 base = text[:m.start()].rstrip() + "\n\n" + text[end:].lstrip()
@@ -2031,7 +2130,7 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
 
         # Reassemble
         out = before.rstrip() + new_block + after.lstrip()
-        return out
+        return normalize_self_debunking_language(out, lang)
 
     except Exception:
         return text
@@ -2052,7 +2151,7 @@ def apply_color_spans(text: str, enabled: bool = True) -> str:
         return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
 
     # Patterns like: [GREEN] 🟢  or [GREEN-WEB] 🟢
-    pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z]+)?)\]\s*(?P<emoji>[🟢🟡🔴⚪️])?")
+    pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?")
     return pat.sub(repl, text)
 
 
@@ -2210,6 +2309,66 @@ def ensure_qc_footer_present(text: str, gov_mgr, profile_name: str, overrides: d
         qc_line = "QC-Matrix: " + " · ".join(parts)
 
         return (text.rstrip() + "\n\n" + qc_line + "\n")
+    except Exception:
+        return text
+
+
+def strip_sci_menu_from_answer(text: str) -> str:
+    """Remove an erroneously echoed SCI variant menu from a normal answer.
+
+    The SCI menu must only appear on: 'Profile Expert', 'Profile Sparring', 'SCI menu', 'SCI on' command outputs.
+    Some models echo the menu at the beginning of a content answer; we strip it deterministically.
+    """
+    try:
+        if not text:
+            return text
+        # Work on plain text (not HTML); if HTML is already present, strip tags first for detection only.
+        probe = re.sub(r"<[^>]+>", "", text)
+        if ("SCI variants" not in probe) and ("SCI-Varianten" not in probe):
+            return text
+
+        # Identify the menu region heuristically: from the first menu title to the first of:
+        # - 'SCI Trace' line
+        # - 'Final Answer' line
+        # - 'Self-Debunking' line
+        # - QC footer line
+        # We remove only if it looks like the standard A–H listing.
+        start_m = re.search(r"(?im)^\s*(?:Profile\s*:\s*\w+\s*)?(SCI variants \(selection\)|SCI-Varianten \(Auswahl\))\s*$", probe)
+        if not start_m:
+            # Sometimes the title is on the same line as 'Profile: ...'
+            start_m = re.search(r"(?im)\b(SCI variants \(selection\)|SCI-Varianten \(Auswahl\))\b", probe)
+        if not start_m:
+            return text
+        start = start_m.start()
+
+        end_m = re.search(r"(?im)^\s*(SCI Trace|Final Answer|Self-Debunking|QC(?:-Matrix)?)\b", probe[start:])
+        if end_m:
+            end = start + end_m.start()
+        else:
+            # Fallback: cut at first blank line after H: entry
+            h_m = re.search(r"(?im)^\s*H\s*:\s+.*$", probe[start:])
+            if h_m:
+                tail = probe[start + h_m.end():]
+                blank = re.search(r"\n\s*\n", tail)
+                end = start + h_m.end() + (blank.start() if blank else 0)
+            else:
+                return text
+
+        # If the region doesn't contain at least A..H option markers, don't touch.
+        # Accept both "A: ..." style and "a) ..." style menus.
+        region = probe[start:end]
+        has_AH_colon = bool(re.search(r"(?im)^\s*A\s*:\s+", region) and re.search(r"(?im)^\s*H\s*:\s+", region))
+        has_ah_paren = bool(re.search(r"(?im)^\s*a\s*[\)\.]\s+", region) and re.search(r"(?im)^\s*h\s*[\)\.]\s+", region))
+        if not (has_AH_colon or has_ah_paren):
+            return text
+
+        # Now remove corresponding slice from original text by mapping via length in probe.
+        # Best-effort: remove by finding the same region in the original (possibly with HTML tags).
+        # We try two strategies: exact probe substring, then a regex-based removal.
+        if probe[start:end] in re.sub(r"<[^>]+>", "", text):
+            # Remove on probe basis: use regex over original to delete menu block.
+            text = re.sub(r"(?is)(?:^|\n)\s*(?:Profile\s*:\s*[^\n]*\n)?\s*(SCI variants \(selection\)|SCI-Varianten \(Auswahl\)).*?(?=\n\s*(SCI Trace|Final Answer|Self-Debunking|QC(?:-Matrix)?)\b)", "\n", text, count=1)
+        return text
     except Exception:
         return text
 
@@ -5572,7 +5731,7 @@ class CSCRefiner:
             sci_idx = None
             for i, ln in enumerate(lines):
                 ln_plain = re.sub(r"<[^>]+>", "", ln).strip()
-                ln_plain = ln_plain.strip().strip("*").strip()
+                ln_plain = ln_plain.strip().strip("*").strip();
                 if re.match(r"^(?:#+\s*)?SCI\s+Trace\s*:?$", ln_plain, flags=re.IGNORECASE):
                     sci_idx = i
                     break
@@ -5741,7 +5900,7 @@ class CSCRefiner:
                 return f'<span style="color:{color}; font-weight:600;">{token}</span>'
             
             # Regex wie in der alten Version
-            pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z]+)?)\]\s*(?P<emoji>[🟢🟡🔴⚪️])?")
+            pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?")
             return pat.sub(repl, text)
 
         # --- Nested Helper: Image Embedding ---
@@ -5930,6 +6089,13 @@ class CSCRefiner:
             except Exception:
                 pass
 
+                        # Strip erroneous SCI menu echoes from normal answers (menu is command-only).
+            try:
+                if not is_command:
+                    raw_for_render = strip_sci_menu_from_answer(raw_for_render)
+            except Exception:
+                pass
+
             # Enforce Self-Debunking contract deterministically (when required by JSON).
             try:
                 raw_for_render = enforce_self_debunking_contract(raw_for_render, gov, prof, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
@@ -6026,9 +6192,17 @@ class CSCRefiner:
                 # Versuch 'extra' (Tabellen etc.), Fallback auf Standard
                 final_html_body = markdown.markdown(raw_for_render, extensions=['extra', 'codehilite'])
                 final_html_body = sanitize_html(final_html_body)
+                try:
+                    final_html_body = html_number_self_debunking(final_html_body, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
+                except Exception:
+                    pass
             except:
                 final_html_body = markdown.markdown(raw_for_render, extensions=['fenced_code', 'tables'])
                 final_html_body = sanitize_html(final_html_body)
+                try:
+                    final_html_body = html_number_self_debunking(final_html_body, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
+                except Exception:
+                    pass
             
             # F: Alerts + Body + Timestamp zusammenbauen
             timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
@@ -9907,22 +10081,65 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
             bot_msgs = []
 
         sample = bot_msgs[-n:] if n > 0 else []
+        # Build a best-effort mapping from each bot message to the immediately preceding user input.
+        # This allows the scan to reliably classify command responses without depending on model output text.
+        prev_user_by_bot_id = {}
+        try:
+            _hist = (getattr(self, 'history', []) or [])
+            for _ix, _m in enumerate(_hist):
+                if (_m or {}).get('role') != 'bot':
+                    continue
+                _prev_user = ''
+                for _jx in range(_ix - 1, -1, -1):
+                    _pm = _hist[_jx] or {}
+                    if (_pm.get('role') or '') in ('user', 'human'):
+                        _prev_user = str(_pm.get('content', '') or '')
+                        break
+                prev_user_by_bot_id[id(_m)] = _prev_user
+        except Exception:
+            prev_user_by_bot_id = {}
+
 
         rows = []
         for i, msg_obj in enumerate(sample, 1):
             txt = (msg_obj or {}).get('content', '') or ''
             vios = []
 
-            # QC footer present?
-            if 'QC-Matrix:' not in txt and 'QC:' not in txt:
+            # Command responses are deterministic UI/control outputs; they must not be
+            # evaluated against Self-Debunking / QC footer / SCI Trace contracts.
+            # Classification is based primarily on the preceding user message (Comm ...),
+            # and only secondarily on the assistant's first line.
+            try:
+                prev_user = (prev_user_by_bot_id.get(id(msg_obj), '') or '').lstrip()
+                prev_user_first = ''
+                for _ln in str(prev_user).splitlines():
+                    if _ln.strip():
+                        prev_user_first = _ln.strip()
+                        break
+                first_line = ''
+                for _ln in str(txt).splitlines():
+                    if _ln.strip():
+                        first_line = _ln.strip()
+                        break
+                is_cmd_msg = False
+                if prev_user_first.startswith('Comm '):
+                    is_cmd_msg = True
+                else:
+                    is_cmd_msg = bool(re.match(r"^(?:Command executed:\s+)?(?:Comm\s+\w+|Profile\s+\w+|SCI\s+(?:on|off|menu)|QC\s+Override)\b", first_line))
+            except Exception:
+                is_cmd_msg = False
+
+            # QC footer present? (skip for command responses)
+            if (not is_cmd_msg) and ('QC-Matrix:' not in txt and 'QC:' not in txt):
                 vios.append('Missing QC footer')
 
-            # Self-Debunking required?
+            # Self-Debunking required? (skip for command responses)
             try:
                 prof_now = getattr(getattr(self, 'gov_state', None), 'active_profile', '') or 'Standard'
-                sd_msg = gov.check_self_debunking(txt, prof_now)
-                if sd_msg:
-                    vios.append(sd_msg)
+                if not is_cmd_msg:
+                    sd_msg = gov.check_self_debunking(txt, prof_now)
+                    if sd_msg:
+                        vios.append(sd_msg)
             except Exception:
                 pass
 
@@ -9937,7 +10154,7 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
             # SCI Trace contract (if a variant is active)
             try:
                 vk = getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''
-                if vk:
+                if vk and not is_cmd_msg:
                     if 'SCI Trace' not in txt:
                         vios.append('Missing SCI Trace block')
             except Exception:
@@ -10056,6 +10273,53 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
 
         return {"html": html_content, "csc": None}
 
+
+    # Profile switches (deterministic). Expert/Sparring must auto-open SCI variant menu.
+    if cmd.startswith("Profile "):
+        try:
+            prof_name = cmd.split(" ", 1)[1].strip()
+        except Exception:
+            prof_name = ""
+        if prof_name:
+            # Apply profile deterministically.
+            try:
+                self._set_profile(prof_name)  # existing helper; fail-soft if missing
+            except Exception:
+                try:
+                    setattr(self.gov_state, "active_profile", prof_name)
+                except Exception:
+                    pass
+
+            # Auto-open SCI menu only for profiles that require it (Expert/Sparring) per JSON.
+            need_menu = prof_name in ("Expert", "Sparring")
+            if need_menu:
+                try:
+                    self.gov_state.sci_variant = ""
+                    self.gov_state.sci_pending = True
+                    self.gov_state.sci_active = False
+                    self.gov_state.sci_pending_turns = 0
+                except Exception:
+                    pass
+
+                html_content = _safe_html(self, f"Profile {prof_name}", getattr(self, "_render_sci_menu_html", lambda: ""))
+                html_content += f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>'
+                try:
+                    self.history.append({"role": "bot", "content": _safe_preview_text(re.sub(r"<[^>]+>", "", html_content), 2000) or f"Profile {prof_name}", "ts": datetime.now().isoformat(), "csc": None})
+                except Exception:
+                    pass
+                return {"html": html_content, "csc": None}
+
+            # Non-menu profiles: just show state/status (no LLM call)
+            try:
+                html_state = self._render_comm_state_html(timestamp=str(timestamp))
+            except Exception:
+                html_state = f"<div class='sys'>Command executed: {html.escape(cmd)}</div>"
+            try:
+                self.history.append({"role": "bot", "content": f"Command executed: {cmd}", "ts": datetime.now().isoformat(), "csc": None})
+            except Exception:
+                pass
+            return {"html": html_state, "csc": None}
+
     # SCI menu trigger (explicit only)
     if cmd in ("SCI on", "SCI menu"):
         try:
@@ -10074,7 +10338,7 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
         html_content += f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>'
 
         try:
-            self.history.append({"role": "bot", "content": "SCI menu", "ts": datetime.now().isoformat(), "csc": None})
+            self.history.append({"role": "bot", "content": _safe_preview_text(re.sub(r"<[^>]+>", "", html_content), 2000) or "SCI menu", "ts": datetime.now().isoformat(), "csc": None})
         except Exception:
             pass
 
