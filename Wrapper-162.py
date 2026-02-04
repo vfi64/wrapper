@@ -80,6 +80,8 @@ def sanitize_html(html_text: str) -> str:
             strip=True,
             css_sanitizer=css_sanitizer,
         )
+        if css_sanitizer is None:
+            cleaned = _reapply_color_styles_if_stripped(cleaned)
         return cleaned
     except Exception:
         return html_text
@@ -2154,6 +2156,33 @@ def apply_color_spans(text: str, enabled: bool = True) -> str:
     pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?")
     return pat.sub(repl, text)
 
+
+def _reapply_color_styles_if_stripped(html_text: str) -> str:
+    """If Bleach stripped inline CSS (style=""), re-apply our own safe color styles.
+
+    This is a defensive fallback for environments where Bleach cannot load CSSSanitizer (e.g., missing tinycss2).
+    We only touch spans that contain our Evidence-Linker tokens, and we only inject the fixed palette colors.
+    """
+    if not html_text:
+        return html_text
+
+    # Replace empty style="" on our evidence spans.
+    def repl(m: re.Match) -> str:
+        tag = m.group("tag")
+        suffix = m.group("suffix") or ""
+        emoji = m.group("emoji") or ""
+        color = _EVIDENCE_COLOR.get(tag, "#616161")
+        token = f"[{tag}{suffix}]"
+        if emoji:
+            token = f"{token} {emoji}"
+        return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
+
+    # Match: <span style="">[GREEN-WEB-CHECK] 🟢</span>  (or without emoji)
+    pat = re.compile(
+        r"<span\s+style=\"\"\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
+        flags=re.IGNORECASE,
+    )
+    return pat.sub(repl, html_text)
 
 @dataclass
 class GovernanceRuntimeState:

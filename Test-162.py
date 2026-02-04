@@ -18,7 +18,7 @@ This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-161.py'
+FIX_PATH = HERE / 'Wrapper-162.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.9_restored.json'
 if not JSON_PATH.exists():
