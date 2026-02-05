@@ -2300,6 +2300,13 @@ class GovernanceRuntimeState:
     sci_variant: str = ""
     sci_active: bool = False
 
+    # Anchor snapshot automation (session-level)
+    user_turns: int = 0
+    anchor_auto: bool = True
+    anchor_force_next: bool = False
+    last_anchor: str = \"\"
+    anchor_auto_user_override: bool = False
+
     qc_overrides: dict = field(default_factory=dict)
     # CGI feedback (optional): last captured feedback strings (not a code change)
     last_user_feedback_triplet: str = ""
@@ -6750,6 +6757,7 @@ class CSCRefiner:
             try:
                 self.gov_state.anchor_auto = False
                 self.gov_state.anchor_force_next = False
+                self.gov_state.anchor_auto_user_override = True
             except Exception:
                 pass
 
@@ -6757,6 +6765,7 @@ class CSCRefiner:
             # Enable periodic Anchor Snapshot automation for this session
             try:
                 self.gov_state.anchor_auto = True
+                self.gov_state.anchor_auto_user_override = True
             except Exception:
                 pass
             # Do not force an immediate anchor unless explicitly requested; keep previous behavior conservative.
