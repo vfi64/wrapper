@@ -149,16 +149,27 @@ def sanitize_html(html_text: str) -> str:
 def _detect_wrapper_identity() -> tuple[str, str]:
     """Return (WRAPPER_NAME, WRAPPER_VERSION) based on this file's name.
 
-    Expected filename: Wrapper-<NNN>.py. Falls back safely if pattern is missing.
+    Supported filename patterns:
+      - Wrapper-<NNN>.py (legacy)
+      - comm_sci_app-<NNN>.py (archived versions)
+      - comm_sci_app.py (repo / working copy without suffix)
     """
     try:
-        stem = Path(__file__).stem  # e.g. 'Wrapper-115'
+        stem = Path(__file__).stem  # e.g. 'Wrapper-176' or 'comm_sci_app-176' or 'comm_sci_app'
         m = re.match(r'^(Wrapper)-(\d+)$', stem)
         if m:
             return f"Wrapper-{m.group(2)}", m.group(2)
+
+        m = re.match(r'^(comm_sci_app)-(\d+)$', stem)
+        if m:
+            return f"comm_sci_app-{m.group(2)}", m.group(2)
+
+        if stem in ("comm_sci_app", "Wrapper"):
+            return stem, "000"
     except Exception:
         pass
-    return "Wrapper", "000"
+    return "comm_sci_app", "000"
+
 
 WRAPPER_NAME, WRAPPER_VERSION = _detect_wrapper_identity()
 MAIN_WINDOW_TITLE = f"{WRAPPER_NAME} Comm-SCI-Control"
@@ -1983,7 +1994,8 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
         if not html_text:
             return html_text
         # Normalize tag boundaries so splitlines() can work even when HTML arrives as a single line.
-        html_text = html_text.replace('><', '><')
+        html_text = html_text.replace('><', '>
+        <')
         # Only proceed if the header exists.
         if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", html_text) is None:
             return html_text
