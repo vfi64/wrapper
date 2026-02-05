@@ -46,13 +46,7 @@ def apply_color_spans(text: str, enabled: bool = True) -> str:
     return pat.sub(repl, text)
 
 def _reapply_color_styles_if_stripped(html_text: str) -> str:
-    """Re-apply safe color styles when sanitization stripped them.
-
-    CI environments can differ in Bleach/CSS sanitization behavior:
-    - some versions keep the attribute but empty it: style=""
-    - others drop the attribute entirely.
-    We handle both cases for our Evidence-Linker spans.
-    """
+    """If Bleach stripped inline CSS (style=""), re-apply our own safe color styles."""
     if not html_text:
         return html_text
 
@@ -66,22 +60,11 @@ def _reapply_color_styles_if_stripped(html_text: str) -> str:
             token = f"{token} {emoji}"
         return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
 
-    # Case 1: Bleach kept style attribute but emptied it.
-    pat_empty_style = re.compile(
-        r"<span\s+style=\"\"\"\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
+    pat = re.compile(
+        r"<span\s+style=\"\"\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
         flags=re.IGNORECASE,
     )
-
-    # Case 2: Bleach removed style attribute entirely.
-    pat_no_style = re.compile(
-        r"<span>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
-        flags=re.IGNORECASE,
-    )
-
-    html_text = pat_empty_style.sub(repl, html_text)
-    html_text = pat_no_style.sub(repl, html_text)
-    return html_text
-
+    return pat.sub(repl, html_text)
 
 def sanitize_html(html_text: str) -> str:
     """Sanitize HTML (best-effort) while preserving our injected spans/images."""

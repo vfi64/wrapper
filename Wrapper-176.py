@@ -116,7 +116,8 @@ def sanitize_html(html_text: str) -> str:
             strip=True,
             **_kwargs,
         )
-        cleaned = _reapply_color_styles_if_stripped(cleaned)
+        if css_sanitizer is None:
+            cleaned = _reapply_color_styles_if_stripped(cleaned)
         return cleaned
     except Exception:
         return html_text
@@ -148,25 +149,16 @@ def sanitize_html(html_text: str) -> str:
 def _detect_wrapper_identity() -> tuple[str, str]:
     """Return (WRAPPER_NAME, WRAPPER_VERSION) based on this file's name.
 
-    Supported filenames:
-      - comm_sci_app.py
-      - comm_sci_app-<NNN>.py
-      - Wrapper-<NNN>.py   (legacy)
-
-    The display name is the file stem without the trailing numeric version suffix.
+    Expected filename: Wrapper-<NNN>.py. Falls back safely if pattern is missing.
     """
     try:
-        stem = Path(__file__).stem  # e.g. 'comm_sci_app-176' or 'comm_sci_app'
-        m = re.match(r'^(comm_sci_app|Wrapper)-(\d+)$', stem)
+        stem = Path(__file__).stem  # e.g. 'Wrapper-115'
+        m = re.match(r'^(Wrapper)-(\d+)$', stem)
         if m:
-            base, ver = m.group(1), m.group(2)
-            return f"{base}-{ver}", ver
-        # no version suffix
-        if stem in ("comm_sci_app", "Wrapper"):
-            return stem, "000"
+            return f"Wrapper-{m.group(2)}", m.group(2)
     except Exception:
         pass
-    return "comm_sci_app", "000"
+    return "Wrapper", "000"
 
 WRAPPER_NAME, WRAPPER_VERSION = _detect_wrapper_identity()
 MAIN_WINDOW_TITLE = f"{WRAPPER_NAME} Comm-SCI-Control"
@@ -1991,7 +1983,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
         if not html_text:
             return html_text
         # Normalize tag boundaries so splitlines() can work even when HTML arrives as a single line.
-        html_text = html_text.replace('><', '>\n<')
+        html_text = html_text.replace('><', '><')
         # Only proceed if the header exists.
         if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", html_text) is None:
             return html_text
@@ -9266,22 +9258,16 @@ class CSCRefiner:
                 pass
 
     def _create_qc_override(self):
-        """Pre-create the QC Override dialog window (hidden).
-
-        We keep it hidden initially to avoid backend-specific bridge init issues.
-        Also binds window lifecycle events so closing hides (if supported).
-        """
+        """Pre-create the QC Override dialog window (hidden) to avoid macOS/Cocoa bridge init issues."""
         try:
             if getattr(self, 'qc_win', None) is not None:
                 return
         except Exception:
             pass
-
         try:
             self.qc_bridge = QCBridge(self)
         except Exception:
             self.qc_bridge = None
-
         try:
             self.qc_win = webview.create_window(
                 "Temporary QC override – Profile: ?",
@@ -9293,10 +9279,6 @@ class CSCRefiner:
                 on_top=True,
                 js_api=getattr(self, 'qc_bridge', None) or self
             )
-            try:
-                self._bind_qc_window_events(self.qc_win)
-            except Exception:
-                pass
         except Exception:
             try:
                 self.qc_win = None
@@ -9304,13 +9286,7 @@ class CSCRefiner:
                 pass
 
     def show_qc_override(self):
-        """Show QC Override dialog window.
-
-        Some webview backends destroy secondary windows when the user closes them.
-        We therefore:
-        - intercept 'closing' to hide instead of destroying when supported
-        - recreate the window if show() fails
-        """
+        """Show QC Override dialog window."""
         try:
             win = getattr(self, 'qc_win', None)
             if win is None:
@@ -9318,24 +9294,10 @@ class CSCRefiner:
                 win = getattr(self, 'qc_win', None)
             if win is None:
                 return {'ok': False, 'error': 'qc_win unavailable'}
-
             try:
                 win.show()
             except Exception:
-                # Window might have been destroyed by backend -> recreate once.
-                try:
-                    self.qc_win = None
-                except Exception:
-                    pass
-                self._create_qc_override()
-                win = getattr(self, 'qc_win', None)
-                if win is None:
-                    return {'ok': False, 'error': 'qc_win recreate failed'}
-                try:
-                    win.show()
-                except Exception:
-                    pass
-
+                pass
             try:
                 win.bring_to_front()
             except Exception:
@@ -9344,8 +9306,7 @@ class CSCRefiner:
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
-    def qc_get_state(self,
- _payload=None):
+    def qc_get_state(self, _payload=None):
         """Return current QC defaults (corridors) and current overrides for UI."""
         try:
             prof = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
