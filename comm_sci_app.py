@@ -1994,8 +1994,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
         if not html_text:
             return html_text
         # Normalize tag boundaries so splitlines() can work even when HTML arrives as a single line.
-        html_text = html_text.replace('><', '>
-        <')
+        html_text = html_text.replace('><', '><')
         # Only proceed if the header exists.
         if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", html_text) is None:
             return html_text
