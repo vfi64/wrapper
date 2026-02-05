@@ -46,7 +46,12 @@ def apply_color_spans(text: str, enabled: bool = True) -> str:
     return pat.sub(repl, text)
 
 def _reapply_color_styles_if_stripped(html_text: str) -> str:
-    """If Bleach stripped inline CSS (style=""), re-apply our own safe color styles."""
+    """If Bleach removed/emptied inline CSS, re-apply our own safe color styles.
+
+    We handle both cases:
+    - <span style="">...</span>  (style attribute allowed but stripped)
+    - <span>...</span>            (style attribute not allowed)
+    """
     if not html_text:
         return html_text
 
@@ -58,16 +63,25 @@ def _reapply_color_styles_if_stripped(html_text: str) -> str:
         token = f"[{tag}{suffix}]"
         if emoji:
             token = f"{token} {emoji}"
-        return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
+        return f'<span style="color:{color}; font-weight:600;">{token}</span>'
 
+    # Match spans that contain our evidence tokens but have no style (or empty style).
     pat = re.compile(
-        r"<span\s+style=\"\"\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
+        r'<span(?:\s+style=\"\"\s*)?>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>',
         flags=re.IGNORECASE,
     )
     return pat.sub(repl, html_text)
 
 def sanitize_html(html_text: str) -> str:
-    """Sanitize HTML (best-effort) while preserving our injected spans/images."""
+    """Sanitize HTML (best-effort) while preserving our injected spans/images.
+
+    In CI (and some Bleach versions), allowing the `style` attribute without a configured
+    css_sanitizer triggers NoCssSanitizerWarning. To keep CI clean *and* keep our evidence
+    colors, we:
+    - use CSSSanitizer when available
+    - otherwise, disallow `style` during cleaning (no warning) and then re-apply ONLY our
+      safe, known inline styles for evidence spans.
+    """
     if not html_text:
         return ""
     if bleach is None:
@@ -79,19 +93,37 @@ def sanitize_html(html_text: str) -> str:
         "div","span","img","a",
         "h1","h2","h3","h4","h5","h6"
     ]
+
+    # Base attribute allowlist.
     allowed_attrs = {
-        "*": ["class","style"],
-        "a": ["href","title","target","rel","class","style"],
-        "img": ["src","alt","title","style","loading","class"],
+        "*": ["class"],
+        "a": ["href","title","target","rel","class"],
+        "img": ["src","alt","title","loading","class"],
         "code": ["class"],
         "pre": ["class"],
-        "details": ["open","class","style"],
-        "summary": ["class","style"],
-        "th": ["colspan","rowspan","class","style"],
-        "td": ["colspan","rowspan","class","style"],
+        "details": ["open","class"],
+        "summary": ["class"],
+        "th": ["colspan","rowspan","class"],
+        "td": ["colspan","rowspan","class"],
     }
+
     try:
         css_sanitizer = _get_css_sanitizer()
+
+        # If we have a CSSSanitizer, we can safely allow inline style.
+        if css_sanitizer is not None:
+            allowed_attrs = {
+                "*": ["class","style"],
+                "a": ["href","title","target","rel","class","style"],
+                "img": ["src","alt","title","style","loading","class"],
+                "code": ["class"],
+                "pre": ["class"],
+                "details": ["open","class","style"],
+                "summary": ["class","style"],
+                "th": ["colspan","rowspan","class","style"],
+                "td": ["colspan","rowspan","class","style"],
+            }
+
         cleaned = bleach.clean(
             html_text,
             tags=allowed_tags,
@@ -100,8 +132,11 @@ def sanitize_html(html_text: str) -> str:
             strip=True,
             css_sanitizer=css_sanitizer,
         )
+
+        # When we could not configure CSS sanitization, evidence span styles were removed.
         if css_sanitizer is None:
             cleaned = _reapply_color_styles_if_stripped(cleaned)
+
         return cleaned
     except Exception:
         return html_text

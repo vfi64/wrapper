@@ -21,7 +21,7 @@ This suite avoids starting the GUI or doing real model calls.
 """
 
 HERE = Path(__file__).resolve().parent
-FIX_PATH = HERE / 'Wrapper-173.py'
+FIX_PATH = HERE / 'Wrapper-175.py'
 # Canonical ruleset lives in JSON/. Fall back to repo root for older layouts.
 JSON_PATH = HERE / 'JSON' / 'Comm-SCI-v19.6.9_restored.json'
 if not JSON_PATH.exists():
@@ -2412,7 +2412,7 @@ def test_stage3d_missing_optional_module_is_visible_in_state_and_audit(tmp_path)
 def test_stage3e_strict_modules_mode_fails_when_module_missing(tmp_path):
     # Import Wrapper in isolated temp dir with no Module/; strict mode must fail.
     wrapper_src = FIX_PATH
-    wrapper_dst = tmp_path / "Wrapper-173.py"
+    wrapper_dst = tmp_path / "Wrapper-175.py"
     wrapper_dst.write_text(Path(wrapper_src).read_text(encoding="utf-8"), encoding="utf-8")
 
     env = os.environ.copy()
@@ -2420,7 +2420,7 @@ def test_stage3e_strict_modules_mode_fails_when_module_missing(tmp_path):
 
     code = (
         "import importlib.util; "
-        "p='Wrapper-173.py'; "
+        "p='Wrapper-175.py'; "
         "spec=importlib.util.spec_from_file_location('w', p); "
         "m=importlib.util.module_from_spec(spec); "
         "spec.loader.exec_module(m)"
@@ -2432,7 +2432,7 @@ def test_stage3e_strict_modules_mode_fails_when_module_missing(tmp_path):
 def test_stage3e_strict_modules_mode_passes_when_modules_present(tmp_path):
     # Copy Wrapper + Module dir; strict mode must allow import.
     wrapper_src = FIX_PATH
-    wrapper_dst = tmp_path / "Wrapper-173.py"
+    wrapper_dst = tmp_path / "Wrapper-175.py"
     wrapper_dst.write_text(Path(wrapper_src).read_text(encoding="utf-8"), encoding="utf-8")
 
     module_src = Path(wrapper_src).resolve().parent / "Module"
@@ -2462,7 +2462,7 @@ def test_stage3e_strict_modules_mode_passes_when_modules_present(tmp_path):
 
     code = (
         "import importlib.util; "
-        "p='Wrapper-173.py'; "
+        "p='Wrapper-175.py'; "
         "spec=importlib.util.spec_from_file_location('w', p); "
         "m=importlib.util.module_from_spec(spec); "
         "spec.loader.exec_module(m)"

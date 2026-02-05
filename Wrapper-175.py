@@ -2304,7 +2304,7 @@ class GovernanceRuntimeState:
     user_turns: int = 0
     anchor_auto: bool = True
     anchor_force_next: bool = False
-    last_anchor: str = \"\"
+    last_anchor: str = ""
     anchor_auto_user_override: bool = False
 
     qc_overrides: dict = field(default_factory=dict)
