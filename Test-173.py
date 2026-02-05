@@ -2348,28 +2348,47 @@ def test_stage2_session_events_ring_buffer_caps_ram_growth(tmp_path):
 
 
 def test_stage3d_missing_optional_module_is_visible_in_state_and_audit(tmp_path):
-    """If an optional module (e.g., auditstream) is missing, wrapper must not crash and must surface it."""
+    """If an optional module (Module.auditstream) is missing, wrapper must not crash and must surface it."""
     import sys as _sys
 
-    # Copy wrapper to isolated temp dir without auditstream.py
-    wrapper_src = FIX_PATH.read_text(encoding='utf-8')
-    wpath = tmp_path / 'WrapperTmp.py'
-    wpath.write_text(wrapper_src, encoding='utf-8')
+    # Copy wrapper to isolated temp dir
+    wrapper_src = FIX_PATH.read_text(encoding="utf-8")
+    wpath = tmp_path / "WrapperTmp.py"
+    wpath.write_text(wrapper_src, encoding="utf-8")
 
-    # Copy other optional modules so only auditstream is missing
-    for fname in ('compliance_scan.py', 'rendering_utils.py'):
-        src_path = HERE / fname
-        if src_path.exists():
-            (tmp_path / fname).write_text(src_path.read_text(encoding='utf-8'), encoding='utf-8')
+    # Create Module/ package in tmpdir but intentionally omit auditstream.py
+    src_mod_dir = HERE / "Module"
+    dst_mod_dir = tmp_path / "Module"
+    dst_mod_dir.mkdir(parents=True, exist_ok=True)
+    (dst_mod_dir / "__init__.py").write_text("", encoding="utf-8")
+
+    # Copy the other optional modules so only Module.auditstream is missing
+    for fname in ("rendering_utils.py", "compliance_scan.py"):
+        src = src_mod_dir / fname
+        if src.exists():
+            (dst_mod_dir / fname).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            # Minimal stub to allow import in this isolated test
+            (dst_mod_dir / fname).write_text("# stub\n", encoding="utf-8")
 
     old_path = list(_sys.path)
     try:
-        # Ensure optional modules are resolved only from tmp_path for this test
-        _sys.path = [str(tmp_path)] + [p for p in _sys.path if str(HERE) not in str(p)]
-        for _m in ('auditstream', 'rendering_utils', 'compliance_scan'):
+        # Ensure optional modules are resolved from tmp_path first and repo root is not preferred
+        _sys.path = [str(tmp_path)] + [p for p in old_path if str(HERE) not in str(p)]
+
+        # Clear cached module imports (both root and Module.*)
+        for _m in (
+            "auditstream",
+            "rendering_utils",
+            "compliance_scan",
+            "Module",
+            "Module.auditstream",
+            "Module.rendering_utils",
+            "Module.compliance_scan",
+        ):
             _sys.modules.pop(_m, None)
 
-        spec = importlib.util.spec_from_file_location('WrapperTmp', wpath)
+        spec = importlib.util.spec_from_file_location("WrapperTmp", wpath)
         mod = importlib.util.module_from_spec(spec)
         assert spec is not None and spec.loader is not None
         spec.loader.exec_module(mod)  # type: ignore[attr-defined]
@@ -2380,16 +2399,15 @@ def test_stage3d_missing_optional_module_is_visible_in_state_and_audit(tmp_path)
 
         out = api.ask("Comm State")
         html_state = _extract_html(out)
-        assert 'Modules' in html_state
-        assert 'auditstream=missing' in html_state
+        assert "Modules" in html_state
+        assert "auditstream=missing" in html_state
 
         out2 = api.ask("Comm Audit")
         html_audit = _extract_html(out2)
-        assert 'Optional modules missing' in html_audit
-        assert 'auditstream' in html_audit
+        assert "Optional modules missing" in html_audit
+        assert "auditstream" in html_audit
     finally:
         _sys.path = old_path
-
 
 def test_stage3e_strict_modules_mode_fails_when_module_missing(tmp_path):
     # Import Wrapper in isolated temp dir with no Module/; strict mode must fail.
