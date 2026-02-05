@@ -1,4 +1,4 @@
-# Comm-SCI-Wrapper v140
+# Comm-SCI-Wrapper
 
 **Deterministic single-file Python wrapper for auditable usage of LLMs under the normative governance specification of Comm-SCI-Control (v19.6.9).**
 
