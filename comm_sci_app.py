@@ -116,8 +116,7 @@ def sanitize_html(html_text: str) -> str:
             strip=True,
             **_kwargs,
         )
-        if css_sanitizer is None:
-            cleaned = _reapply_color_styles_if_stripped(cleaned)
+        cleaned = _reapply_color_styles_if_stripped(cleaned)
         return cleaned
     except Exception:
         return html_text
@@ -149,27 +148,25 @@ def sanitize_html(html_text: str) -> str:
 def _detect_wrapper_identity() -> tuple[str, str]:
     """Return (WRAPPER_NAME, WRAPPER_VERSION) based on this file's name.
 
-    Supported filename patterns:
-      - Wrapper-<NNN>.py (legacy)
-      - comm_sci_app-<NNN>.py (archived versions)
-      - comm_sci_app.py (repo / working copy without suffix)
+    Supported filenames:
+      - comm_sci_app.py
+      - comm_sci_app-<NNN>.py
+      - Wrapper-<NNN>.py   (legacy)
+
+    The display name is the file stem without the trailing numeric version suffix.
     """
     try:
-        stem = Path(__file__).stem  # e.g. 'Wrapper-176' or 'comm_sci_app-176' or 'comm_sci_app'
-        m = re.match(r'^(Wrapper)-(\d+)$', stem)
+        stem = Path(__file__).stem  # e.g. 'comm_sci_app-176' or 'comm_sci_app'
+        m = re.match(r'^(comm_sci_app|Wrapper)-(\d+)$', stem)
         if m:
-            return f"Wrapper-{m.group(2)}", m.group(2)
-
-        m = re.match(r'^(comm_sci_app)-(\d+)$', stem)
-        if m:
-            return f"comm_sci_app-{m.group(2)}", m.group(2)
-
+            base, ver = m.group(1), m.group(2)
+            return f"{base}-{ver}", ver
+        # no version suffix
         if stem in ("comm_sci_app", "Wrapper"):
             return stem, "000"
     except Exception:
         pass
     return "comm_sci_app", "000"
-
 
 WRAPPER_NAME, WRAPPER_VERSION = _detect_wrapper_identity()
 MAIN_WINDOW_TITLE = f"{WRAPPER_NAME} Comm-SCI-Control"
@@ -1994,7 +1991,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
         if not html_text:
             return html_text
         # Normalize tag boundaries so splitlines() can work even when HTML arrives as a single line.
-        html_text = html_text.replace('><', '><')
+        html_text = html_text.replace('><', '>\n<')
         # Only proceed if the header exists.
         if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", html_text) is None:
             return html_text
