@@ -2011,7 +2011,19 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                     ln = ln.replace('Schwäche:', 'Weakness:')
                     ln = ln.replace('Warum das wichtig ist:', 'Why it matters:')
                     ln = ln.replace('Was würde verifizieren/falsifizieren (nächster Check):', 'What would verify/falsify (next check):')
-                # Stop when QC footer starts.
+                
+                # Bold the label tokens (before ':') inside the Self-Debunking block.
+                if lang.lower().startswith('de'):
+                    ln = re.sub(r'(?i)\bSchwäche\s*:', '<strong>Schwäche:</strong>', ln)
+                    ln = re.sub(r'(?i)\bWarum\s+das\s+wichtig\s+ist\s*:', '<strong>Warum das wichtig ist:</strong>', ln)
+                    ln = re.sub(r'(?i)\bWas\s+w[uü]rde\s+verifizieren/falsifizieren\s*\(n[aä]chster\s+Check\)\s*:',
+                                '<strong>Was würde verifizieren/falsifizieren (nächster Check):</strong>', ln)
+                else:
+                    ln = re.sub(r'(?i)\bWeakness\s*:', '<strong>Weakness:</strong>', ln)
+                    ln = re.sub(r'(?i)\bWhy\s+it\s+matters\s*:', '<strong>Why it matters:</strong>', ln)
+                    ln = re.sub(r'(?i)\bWhat\s+would\s+verify/falsify\s*\(next\s+check\)\s*:',
+                                '<strong>What would verify/falsify (next check):</strong>', ln)
+# Stop when QC footer starts.
                 if re.search(r"(?i)>\s*QC(?:-Matrix)?\s*:", ln) or re.search(r"(?im)^\s*QC(?:-Matrix)?\s*:", re.sub(r"<[^>]+>","",ln)):
                     in_sd = False
                     out.append(ln)
@@ -2280,17 +2292,17 @@ def apply_color_spans(text: str, enabled: bool = True) -> str:
 
 
 def _reapply_color_styles_if_stripped(html_text: str) -> str:
-    """If Bleach stripped inline CSS (style=""), re-apply our own safe color styles.
+    """If Bleach stripped inline CSS, re-apply our own safe color styles.
 
-    This is a defensive fallback for environments where Bleach cannot load CSSSanitizer (e.g., missing tinycss2).
-    We only touch spans that contain our Evidence-Linker tokens, and we only inject the fixed palette colors.
+    We support both cases:
+    - style attribute is present but emptied: <span style="">
+    - style attribute removed entirely: <span>
     """
     if not html_text:
         return html_text
 
-    # Replace empty style="" on our evidence spans.
     def repl(m: re.Match) -> str:
-        tag = m.group("tag")
+        tag = (m.group("tag") or "").upper()
         suffix = m.group("suffix") or ""
         emoji = m.group("emoji") or ""
         color = _EVIDENCE_COLOR.get(tag, "#616161")
@@ -2299,9 +2311,9 @@ def _reapply_color_styles_if_stripped(html_text: str) -> str:
             token = f"{token} {emoji}"
         return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
 
-    # Match: <span style="">[GREEN-WEB-CHECK] 🟢</span>  (or without emoji)
+    # Match spans that contain an evidence token but have no usable inline style.
     pat = re.compile(
-        r"<span\s+style=\"\"\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
+        r"<span(?:(?:\s+style=\"\")|(?:\b(?![^>]*\bstyle=)[^>]*))\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
         flags=re.IGNORECASE,
     )
     return pat.sub(repl, html_text)
