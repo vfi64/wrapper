@@ -9266,16 +9266,22 @@ class CSCRefiner:
                 pass
 
     def _create_qc_override(self):
-        """Pre-create the QC Override dialog window (hidden) to avoid macOS/Cocoa bridge init issues."""
+        """Pre-create the QC Override dialog window (hidden).
+
+        We keep it hidden initially to avoid backend-specific bridge init issues.
+        Also binds window lifecycle events so closing hides (if supported).
+        """
         try:
             if getattr(self, 'qc_win', None) is not None:
                 return
         except Exception:
             pass
+
         try:
             self.qc_bridge = QCBridge(self)
         except Exception:
             self.qc_bridge = None
+
         try:
             self.qc_win = webview.create_window(
                 "Temporary QC override – Profile: ?",
@@ -9287,6 +9293,10 @@ class CSCRefiner:
                 on_top=True,
                 js_api=getattr(self, 'qc_bridge', None) or self
             )
+            try:
+                self._bind_qc_window_events(self.qc_win)
+            except Exception:
+                pass
         except Exception:
             try:
                 self.qc_win = None
@@ -9294,7 +9304,13 @@ class CSCRefiner:
                 pass
 
     def show_qc_override(self):
-        """Show QC Override dialog window."""
+        """Show QC Override dialog window.
+
+        Some webview backends destroy secondary windows when the user closes them.
+        We therefore:
+        - intercept 'closing' to hide instead of destroying when supported
+        - recreate the window if show() fails
+        """
         try:
             win = getattr(self, 'qc_win', None)
             if win is None:
@@ -9302,10 +9318,24 @@ class CSCRefiner:
                 win = getattr(self, 'qc_win', None)
             if win is None:
                 return {'ok': False, 'error': 'qc_win unavailable'}
+
             try:
                 win.show()
             except Exception:
-                pass
+                # Window might have been destroyed by backend -> recreate once.
+                try:
+                    self.qc_win = None
+                except Exception:
+                    pass
+                self._create_qc_override()
+                win = getattr(self, 'qc_win', None)
+                if win is None:
+                    return {'ok': False, 'error': 'qc_win recreate failed'}
+                try:
+                    win.show()
+                except Exception:
+                    pass
+
             try:
                 win.bring_to_front()
             except Exception:
@@ -9314,7 +9344,8 @@ class CSCRefiner:
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
-    def qc_get_state(self, _payload=None):
+    def qc_get_state(self,
+ _payload=None):
         """Return current QC defaults (corridors) and current overrides for UI."""
         try:
             prof = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
