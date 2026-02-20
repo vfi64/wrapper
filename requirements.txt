@@ -1,27 +1,17 @@
-# Core runtime dependencies (required)
+# Comm-SCI-Control-App v20.0.3
+
+# Runtime
 pywebview>=5.0
 requests>=2.31
 markdown>=3.5
 bleach>=6.1
-beautifulsoup4>=4.12  # Required for v192+ rendering pipeline (DOM parsing)
+beautifulsoup4>=4.12
 
-# Optional provider/client dependencies (install only if you use them)
-# google-genai>=0.6   # Gemini client
-# cryptography>=42.0  # optional encrypted key storage (Fernet)
+# Provider
+google-genai>=0.6
 
-# Development / tests (optional)
-# pytest>=8.0
+# Optional security feature (encrypted local key storage)
+cryptography>=42.0
 
-# -----------------------------------------------------------------------------
-# Target Directory Structure (Architecture v192)
-#
-# /DeinProjekt/
-# ├── Wrapper-192.py
-# ├── Module/
-# │   ├── __init__.py                # Wichtig, damit 'import Module...' geht
-# │   ├── rendering_pipeline_v192.py # Die neue Datei (DOM-Pipeline)
-# │   ├── rendering_utils.py         # Die alte Datei (Legacy/Backup)
-# │   ├── auditstream.py
-# │   └── compliance_scan.py
-# └── requirements.txt               # Enthält beautifulsoup4
-# -----------------------------------------------------------------------------
+# Tests
+pytest>=8.0

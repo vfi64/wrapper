@@ -39,6 +39,38 @@ try:
 except Exception:
     _rendering_utils = None  # type: ignore
 
+try:
+    import Module.rendering_pipeline_v192 as _rendering_pipeline_v192  # type: ignore
+except Exception:
+    _rendering_pipeline_v192 = None  # type: ignore
+
+try:
+    from ui_panel_model import StateSnapshot as _PanelStateSnapshot, normalize_panel_ui as _panel_normalize_ui  # type: ignore
+except Exception:
+    _PanelStateSnapshot = None  # type: ignore
+    _panel_normalize_ui = None  # type: ignore
+
+try:
+    from intents import intent_from_command as _intent_from_command  # type: ignore
+    from state import state_from_runtime as _state_from_runtime, apply_state_to_runtime as _state_apply_to_runtime, init_state_from_ruleset as _state_init_from_ruleset  # type: ignore
+    from transitions import apply_intent as _apply_intent  # type: ignore
+except Exception:
+    _intent_from_command = None  # type: ignore
+    _state_from_runtime = None  # type: ignore
+    _state_apply_to_runtime = None  # type: ignore
+    _state_init_from_ruleset = None  # type: ignore
+    _apply_intent = None  # type: ignore
+
+try:
+    from controller import dispatch as _controller_dispatch  # type: ignore
+except Exception:
+    _controller_dispatch = None  # type: ignore
+
+try:
+    from controller import dispatch_intent as _controller_dispatch_intent  # type: ignore
+except Exception:
+    _controller_dispatch_intent = None  # type: ignore
+
 # Stage 3e (CI): strict module mode. If enabled, missing extracted modules is a hard error.
 _STRICT_MODULES = (os.environ.get('WRAPPER_STRICT_MODULES', '') or '').strip().lower() in ('1', 'true', 'yes', 'on')
 if _STRICT_MODULES:
@@ -147,18 +179,14 @@ def sanitize_html(html_text: str) -> str:
 # ----------------------------
 
 def _detect_wrapper_identity() -> tuple[str, str]:
-    """Return (WRAPPER_NAME, WRAPPER_VERSION) based on this file's name.
-
-    Expected filename: Wrapper-<NNN>.py. Falls back safely if pattern is missing.
-    """
+    """Return stable app identity independent of historical Wrapper-<NNN> filenames."""
     try:
-        stem = Path(__file__).stem  # e.g. 'Wrapper-115'
-        m = re.match(r'^(Wrapper)-(\d+)$', stem)
-        if m:
-            return f"Wrapper-{m.group(2)}", m.group(2)
+        stem = Path(__file__).stem
+        if stem:
+            return "Comm-SCI-Control-App", ""
     except Exception:
         pass
-    return "Wrapper", "000"
+    return "Comm-SCI-Control-App", ""
 
 WRAPPER_NAME, WRAPPER_VERSION = _detect_wrapper_identity()
 MAIN_WINDOW_TITLE = f"{WRAPPER_NAME} Comm-SCI-Control"
@@ -363,12 +391,12 @@ except Exception:
 # Project paths (relative to script directory)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PROJECT_DIR = SCRIPT_DIR  # backwards-compat alias
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
 
-JSON_DIR = os.path.join(SCRIPT_DIR, 'JSON')
-CONFIG_DIR = os.path.join(SCRIPT_DIR, 'Config')
+JSON_DIR = os.path.join(PROJECT_DIR, 'JSON')
+CONFIG_DIR = os.path.join(PROJECT_DIR, 'Config')
 
-LOGS_DIR = os.path.join(SCRIPT_DIR, 'Logs')
+LOGS_DIR = os.path.join(PROJECT_DIR, 'Logs')
 AUDIT_LOG_DIR = os.path.join(LOGS_DIR, 'Audit')
 CHAT_LOG_DIR = os.path.join(LOGS_DIR, 'Chats')
 SESSION_EVENTS_MAX = 2000  # cap in-memory session_events (JSONL is full history)
@@ -435,11 +463,11 @@ def _safe_sha256(s: str) -> str:
     except Exception:
         return ""
 
-# Default ruleset location: ./JSON/Comm-SCI-v19.6.9.json
-DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v19.6.9.json')
+# Default ruleset location: ./JSON/Comm-SCI-v20.0.3.json
+DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.0.3.json')
 
 # Fallback: if the ruleset is placed next to the script (legacy layout), use it.
-_alt_ruleset = os.path.join(SCRIPT_DIR, 'Comm-SCI-v19.6.9.json')
+_alt_ruleset = os.path.join(PROJECT_DIR, 'Comm-SCI-v20.0.3.json')
 if (not os.path.exists(DEFAULT_JSON)) and os.path.exists(_alt_ruleset):
     DEFAULT_JSON = _alt_ruleset
 
@@ -1822,22 +1850,22 @@ def inject_minimal_self_debunking(text: str, *, title: str = "Self-Debunking", l
     if lang_norm.startswith("de"):
         block = (
             f"\n\n{title}:\n\n"
-            "1. Schwäche: Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen.\n"
-            "   Warum relevant: Vereinfachungen können Randfälle oder alternative Deutungen verdecken.\n"
-            "   Prüfen/Widerlegen (nächster Schritt): Die zentralen Annahmen explizit machen und gegen Primärquellen/Definitionen prüfen.\n\n"
-            "2. Schwäche: Die Antwort kann wichtige Gegenpositionen oder Unsicherheitsgrenzen auslassen.\n"
-            "   Warum relevant: Fehlende Einschränkungen können die Gültigkeit überdehnen oder Sicherheit vortäuschen.\n"
-            "   Prüfen/Widerlegen (nächster Schritt): Mindestens ein starkes Gegenbeispiel ergänzen und prüfen, ob die Kernaussagen bestehen bleiben.\n"
+            "1. **Schwäche**: Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen.\n"
+            "   **Warum relevant**: Vereinfachungen können Randfälle oder alternative Deutungen verdecken.\n"
+            "   **Prüfen/Widerlegen (nächster Schritt)**: Die zentralen Annahmen explizit machen und gegen Primärquellen/Definitionen prüfen.\n\n"
+            "2. **Schwäche**: Die Antwort kann wichtige Gegenpositionen oder Unsicherheitsgrenzen auslassen.\n"
+            "   **Warum relevant**: Fehlende Einschränkungen können die Gültigkeit überdehnen oder Sicherheit vortäuschen.\n"
+            "   **Prüfen/Widerlegen (nächster Schritt)**: Mindestens ein starkes Gegenbeispiel ergänzen und prüfen, ob die Kernaussagen bestehen bleiben.\n"
         )
     else:
         block = (
             f"\n\n{title}:\n\n"
-            "1. Weakness: The answer may rely on simplified framing or implicit assumptions.\n"
-            "   Why it matters: Simplifications can hide edge-cases or alternative interpretations.\n"
-            "   What would verify/falsify (next check): Identify key assumptions and test them against primary sources or formal definitions.\n\n"
-            "2. Weakness: The answer may omit important counter-perspectives or uncertainty boundaries.\n"
-            "   Why it matters: Missing caveats can overstate confidence or applicability.\n"
-            "   What would verify/falsify (next check): Add at least one strong counter-example and check whether conclusions still hold.\n"
+            "1. **Weakness**: The answer may rely on simplified framing or implicit assumptions.\n"
+            "   **Why it matters**: Simplifications can hide edge-cases or alternative interpretations.\n"
+            "   **What would verify/falsify (next check)**: Identify key assumptions and test them against primary sources or formal definitions.\n\n"
+            "2. **Weakness**: The answer may omit important counter-perspectives or uncertainty boundaries.\n"
+            "   **Why it matters**: Missing caveats can overstate confidence or applicability.\n"
+            "   **What would verify/falsify (next check)**: Add at least one strong counter-example and check whether conclusions still hold.\n"
         )
     # Place block BEFORE QC-Matrix if present, else append.
     m = re.search(r"(?im)^\s*QC-Matrix:\s*.*$", text)
@@ -1973,6 +2001,51 @@ def normalize_self_debunking_language(text: str, lang: str) -> str:
         return text
 
 
+def bold_self_debunking_labels(text: str, lang: str) -> str:
+    """Bold the label token before the first colon inside Self-Debunking points.
+
+    Deterministic post-processing. Formatting only.
+    """
+    try:
+        if not text:
+            return text
+        m = re.search(r"(?is)(\bSelf-Debunking\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        if not m:
+            return text
+        block = m.group(1)
+
+        # 1) Numbered point heads: "1. Weakness:" -> "1. **Weakness**:"
+        def _bold_head(m2):
+            lead = m2.group(1)
+            label = (m2.group(2) or "").strip()
+            if not label:
+                return m2.group(0)
+            if label.startswith("**") and label.endswith("**"):
+                return m2.group(0)
+            return f"{lead}**{label}**:"
+        block = re.sub(r"(?m)^(\s*\d+\.\s*)([^\n:<]{1,80}?)(\s*):", lambda m2: _bold_head(m2), block)
+
+        # 2) Field labels (possibly indented): "Why it matters:" -> "**Why it matters**:"
+        labels = [
+            "Weakness", "Schwäche",
+            "Why it matters", "Warum relevant", "Warum das wichtig ist",
+            "What would verify/falsify (next check)", "What would verify or falsify (next check)",
+            "Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)",
+            "Next check", "Nächster Check",
+            "Prüfen/Widerlegen (nächster Schritt)",
+        ]
+        for lab in labels:
+            block = re.sub(
+                rf"(?m)^(\s*)(?!\*\*){re.escape(lab)}\s*:(?!\*)",
+                rf"\1**{lab}**:",
+                block
+            )
+
+        start, end = m.span(1)
+        return text[:start] + block + text[end:]
+    except Exception:
+        return text
+
 def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
     """Best-effort: add 1./2./3. numbering to Self-Debunking in already-rendered HTML.
 
@@ -2011,19 +2084,21 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                     ln = ln.replace('Schwäche:', 'Weakness:')
                     ln = ln.replace('Warum das wichtig ist:', 'Why it matters:')
                     ln = ln.replace('Was würde verifizieren/falsifizieren (nächster Check):', 'What would verify/falsify (next check):')
-                
-                # Bold the label tokens (before ':') inside the Self-Debunking block.
-                if lang.lower().startswith('de'):
-                    ln = re.sub(r'(?i)\bSchwäche\s*:', '<strong>Schwäche:</strong>', ln)
-                    ln = re.sub(r'(?i)\bWarum\s+das\s+wichtig\s+ist\s*:', '<strong>Warum das wichtig ist:</strong>', ln)
-                    ln = re.sub(r'(?i)\bWas\s+w[uü]rde\s+verifizieren/falsifizieren\s*\(n[aä]chster\s+Check\)\s*:',
-                                '<strong>Was würde verifizieren/falsifizieren (nächster Check):</strong>', ln)
-                else:
-                    ln = re.sub(r'(?i)\bWeakness\s*:', '<strong>Weakness:</strong>', ln)
-                    ln = re.sub(r'(?i)\bWhy\s+it\s+matters\s*:', '<strong>Why it matters:</strong>', ln)
-                    ln = re.sub(r'(?i)\bWhat\s+would\s+verify/falsify\s*\(next\s+check\)\s*:',
-                                '<strong>What would verify/falsify (next check):</strong>', ln)
-# Stop when QC footer starts.
+
+                # Bold the label token before the colon (formatting only).
+                try:
+                    for lab in (
+                        'Weakness', 'Schwäche',
+                        'Why it matters', 'Warum relevant', 'Warum das wichtig ist',
+                        'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
+                        'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
+                        'Next check', 'Nächster Check',
+                    ):
+                        ln = re.sub(rf"\b{re.escape(lab)}\s*:", rf"<strong>{lab}</strong>:", ln)
+                except Exception:
+                    pass
+
+                # Stop when QC footer starts.
                 if re.search(r"(?i)>\s*QC(?:-Matrix)?\s*:", ln) or re.search(r"(?im)^\s*QC(?:-Matrix)?\s*:", re.sub(r"<[^>]+>","",ln)):
                     in_sd = False
                     out.append(ln)
@@ -2090,6 +2165,11 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
         min_p = 2 if min_p < 2 else min_p
         max_p = 3 if max_p > 6 else max_p  # safety cap
 
+        def _finalize_sd(t: str) -> str:
+            # Apply language normalization first (for DE) then bold labels (formatting only).
+            t2 = normalize_self_debunking_language(t, lang)
+            return bold_self_debunking_labels(t2, lang)
+
         # Locate QC footer (insertion anchor)
         qc_m = re.search(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$", text)
         qc_pos = qc_m.start() if qc_m else None
@@ -2100,12 +2180,12 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
         if not m:
             # Missing entirely -> inject minimal
             out = inject_minimal_self_debunking(text, title=title, lang=lang)
-            return normalize_self_debunking_language(out, lang)
+            return _finalize_sd(out)
         # If title occurs after QC, remove that trailing block and inject at the correct place.
         if qc_pos is not None and m.start() > qc_pos:
             trimmed = text[:m.start()].rstrip()
             out = inject_minimal_self_debunking(trimmed, title=title, lang=lang)
-            return out
+            return _finalize_sd(out)
 
         # Extract the block region: from title line to QC footer (or end)
         end = qc_pos if qc_pos is not None else len(text)
@@ -2128,7 +2208,15 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
             # Try to extract unnumbered points from repeated label blocks inside this Self-Debunking section.
             extracted = []
             try:
-                label_iter = list(re.finditer(r"(?im)^\s*(Weakness|Schwäche)\b\s*:\s*", block))
+                # Accept both plain labels and already-bolded markdown/HTML labels.
+                # This avoids a failure mode where an earlier pass bolded labels (e.g. "**Schwäche**:")
+                # and this extractor would no longer recognize unnumbered point starts.
+                label_iter = list(
+                    re.finditer(
+                        r"(?im)^\s*(?:\*\*|<strong>)?\s*(Weakness|Schwäche)\b\s*(?:\*\*|</strong>)?\s*:\s*",
+                        block,
+                    )
+                )
                 if label_iter:
                     for i, lm in enumerate(label_iter):
                         p_start = lm.start()
@@ -2157,7 +2245,7 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
                 if normalized:
                     new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
                     out = before.rstrip() + new_block + after.lstrip()
-                    return normalize_self_debunking_language(out, lang)
+                    return _finalize_sd(out)
 
             # If the model used bullet points, convert the first 2–3 bullets into numbered points
             # without inventing content.
@@ -2175,7 +2263,7 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
                     normalized = [f"{i}. {b}" for i, b in enumerate(bullets, 1)]
                     new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
                     out = before.rstrip() + new_block + after.lstrip()
-                    return normalize_self_debunking_language(out, lang)
+                    return _finalize_sd(out)
             except Exception:
                 pass
 
@@ -2185,7 +2273,7 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
             except Exception:
                 base = before.rstrip() + "\n\n" + after.lstrip()
             injected = inject_minimal_self_debunking(base, title=title, lang=lang)
-            return normalize_self_debunking_language(injected, lang)
+            return _finalize_sd(injected)
         # Normalize number of points to the contract window.
         if len(points) > max_p:
             points = points[:max_p]
@@ -2200,20 +2288,31 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
             else:
                 points.append(
                     f"{n}. Weakness: The answer may omit important limitations or boundary conditions.\n"
-                    f"   Why it matters: Missing caveats can overstate confidence or applicability.\n"
-                    f"   What would verify/falsify (next check): Identify a concrete counterexample and test whether the conclusion still holds."
+                    f"   **Why it matters**: Missing caveats can overstate confidence or applicability.\n"
+                    f"   **What would verify/falsify (next check)**: Identify a concrete counterexample and test whether the conclusion still holds."
                 )
         # Re-number points sequentially (1..k)
         normalized = []
         for i, p in enumerate(points, 1):
-            p = re.sub(r"(?m)^\s*\d+\s*[\.)]\s+", f"{i}. ", p, count=1)
-            normalized.append(p.strip())
+            # Keep continuation lines inside the numbered item for stable Markdown rendering.
+            lines = [ln.rstrip() for ln in str(p).splitlines()]
+            if not lines:
+                continue
+            first = re.sub(r"^\s*\d+\s*[\.)]\s+", f"{i}. ", lines[0].strip(), count=1)
+            rest = []
+            for ln in lines[1:]:
+                if ln.strip():
+                    rest.append("   " + ln.lstrip())
+            item = first if not rest else (first + "\n" + "\n".join(rest))
+            normalized.append(item.strip())
 
         new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
 
         # Reassemble
         out = before.rstrip() + new_block + after.lstrip()
-        return normalize_self_debunking_language(out, lang)
+        out = normalize_self_debunking_language(out, lang)
+        out = bold_self_debunking_labels(out, lang)
+        return out
 
     except Exception:
         return text
@@ -2292,17 +2391,17 @@ def apply_color_spans(text: str, enabled: bool = True) -> str:
 
 
 def _reapply_color_styles_if_stripped(html_text: str) -> str:
-    """If Bleach stripped inline CSS, re-apply our own safe color styles.
+    """If Bleach stripped inline CSS (style=""), re-apply our own safe color styles.
 
-    We support both cases:
-    - style attribute is present but emptied: <span style="">
-    - style attribute removed entirely: <span>
+    This is a defensive fallback for environments where Bleach cannot load CSSSanitizer (e.g., missing tinycss2).
+    We only touch spans that contain our Evidence-Linker tokens, and we only inject the fixed palette colors.
     """
     if not html_text:
         return html_text
 
+    # Replace empty style="" on our evidence spans.
     def repl(m: re.Match) -> str:
-        tag = (m.group("tag") or "").upper()
+        tag = m.group("tag")
         suffix = m.group("suffix") or ""
         emoji = m.group("emoji") or ""
         color = _EVIDENCE_COLOR.get(tag, "#616161")
@@ -2311,9 +2410,9 @@ def _reapply_color_styles_if_stripped(html_text: str) -> str:
             token = f"{token} {emoji}"
         return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
 
-    # Match spans that contain an evidence token but have no usable inline style.
+    # Match: <span style="">[GREEN-WEB-CHECK] 🟢</span>  (or without emoji)
     pat = re.compile(
-        r"<span(?:(?:\s+style=\"\")|(?:\b(?![^>]*\bstyle=)[^>]*))\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
+        r"<span\s+style=\"\"\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
         flags=re.IGNORECASE,
     )
     return pat.sub(repl, html_text)
@@ -2503,10 +2602,10 @@ def strip_sci_menu_from_answer(text: str) -> str:
         # - 'Self-Debunking' line
         # - QC footer line
         # We remove only if it looks like the standard A–H listing.
-        start_m = re.search(r"(?im)^\s*(?:Profile\s*:\s*\w+\s*)?(SCI variants \(selection\)|SCI-Varianten \(Auswahl\))\s*$", probe)
+        start_m = re.search(r"(?im)^\s*(?:Profile\s*:\s*\w+\s*)?(SCI variants \(selection\)|SCI-Varianten(?:menü)? \(Auswahl\))\s*:?\s*$", probe)
         if not start_m:
             # Sometimes the title is on the same line as 'Profile: ...'
-            start_m = re.search(r"(?im)\b(SCI variants \(selection\)|SCI-Varianten \(Auswahl\))\b", probe)
+            start_m = re.search(r"(?im)\b(SCI variants \(selection\)|SCI-Varianten(?:menü)? \(Auswahl\))\b", probe)
         if not start_m:
             return text
         start = start_m.start()
@@ -2537,7 +2636,7 @@ def strip_sci_menu_from_answer(text: str) -> str:
         # We try two strategies: exact probe substring, then a regex-based removal.
         if probe[start:end] in re.sub(r"<[^>]+>", "", text):
             # Remove on probe basis: use regex over original to delete menu block.
-            text = re.sub(r"(?is)(?:^|\n)\s*(?:Profile\s*:\s*[^\n]*\n)?\s*(SCI variants \(selection\)|SCI-Varianten \(Auswahl\)).*?(?=\n\s*(SCI Trace|Final Answer|Self-Debunking|QC(?:-Matrix)?)\b)", "\n", text, count=1)
+            text = re.sub(r"(?is)(?:^|\n)\s*(?:Profile\s*:\s*[^\n]*\n)?\s*(SCI variants \(selection\)|SCI-Varianten(?:menü)? \(Auswahl\))\s*:?.*?(?=\n\s*(SCI Trace|Final Answer|Self-Debunking|QC(?:-Matrix)?)\b)", "\n", text, count=1)
         return text
     except Exception:
         return text
@@ -2742,6 +2841,7 @@ def render_sci_trace_as_html(text: str, gov) -> str:
         # Build deterministic HTML
         # Keep styling minimal and consistent with existing CSS; rely on browser defaults.
         html_parts = [
+            "<!-- SCI Trace: -->",
             "<div class='sci-trace' style='margin:10px 0; padding:10px; border:1px solid #ddd; border-radius:12px;'>",
             "<div style='font-weight:700; margin-bottom:6px;'>SCI Trace</div>",
             "<ol style='margin:0 0 0 22px; padding:0;'>"
@@ -2773,7 +2873,6 @@ def render_sci_trace_as_html(text: str, gov) -> str:
         # Replace SCI trace section with HTML block. Keep a plain 'SCI Trace:' marker line for logs if needed.
         out_lines = []
         out_lines.extend(pre)
-        out_lines.append("SCI Trace:")
         out_lines.append("\n".join(html_parts))
         out_lines.extend(post)
         return "\n".join(out_lines)
@@ -2784,6 +2883,26 @@ def render_sci_trace_as_html(text: str, gov) -> str:
 def _init_state_from_rules():
     if not gov.loaded:
         return GovernanceRuntimeState()
+    try:
+        if _state_init_from_ruleset is not None:
+            dom = _state_init_from_ruleset(
+                getattr(gov, "data", {}) or {},
+                answer_language=(getattr(cfg, "get_answer_language", lambda: "de")() or "de"),
+                conversation_language=(UI_LANG or "").lower() or "de",
+            )
+            return GovernanceRuntimeState(
+                comm_active=dom.comm_active,
+                active_profile=dom.active_profile,
+                overlay=dom.overlay,
+                color=dom.color,
+                conversation_language=dom.conversation_language,
+                answer_language=dom.answer_language,
+                sci_pending=dom.sci_pending,
+                sci_variant=dom.sci_variant,
+                sci_active=dom.sci_active,
+            )
+    except Exception:
+        pass
     ui = gov.get_ui_data()
     prof = ui.get("defaults", {}).get("profile", "Standard") or "Standard"
     ov = ui.get("defaults", {}).get("overlay", "") or ""
@@ -2836,6 +2955,10 @@ HTML_CHAT_TEMPLATE = """
   .msg:hover .copy-btn { opacity: 1.0; }
 
   .ts-footer { display: block; width: 100%; border-top: 1px solid #eee; margin-top: 8px; padding-top: 4px; font-size: 10px; color: #888; text-align: right; }
+
+  .raw-output-pre { background: #f8f9fa; padding: 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  details.raw-output { margin: 8px 0; }
+  .note-box { background: #fff7ed; border-left: 4px solid #fb923c; padding: 8px 10px; border-radius: 6px; margin: 8px 0; }
 
   ul, ol { margin: 5px 0 5px 20px; padding: 0; }
   li { margin-bottom: 5px; }
@@ -3178,7 +3301,7 @@ HTML_PANEL = """
     <select id="hfProviderFilter" class="setting-select" onchange="onHFProviderFilterChange()">
       <option value="all">HF Provider: all</option>
     </select>
-    <input id="hfTopN" class="setting-select" type="number" min="1" max="1000" value="200" />
+    <input id="hfTopN" class="setting-select" type="number" min="1" max="10000" value="200" />
     <button id="hfCatalogBtn" class="smallbtn" onclick="fetchHFCatalog()" title="Fetch Hugging Face Hub catalog (Top N) and cache it">HF Catalog (Top N)</button>
   </div>
 
@@ -3327,13 +3450,13 @@ function buildUIFromData(raw){
   if(p === 'huggingface'){
     const opts = (data.hf_provider_filter_options || ['all']);
     let savedPF = (data.hf_catalog_default_provider_filter || 'all');
-    let savedTopN = String(data.hf_catalog_default_top_n || 200);
+    let savedTopN = String((window.localStorage && localStorage.getItem('hfTopN')) || (data.hf_catalog_default_top_n || 200));
     try {
       savedPF = (localStorage.getItem('hf_provider_filter') || savedPF);
       savedTopN = (localStorage.getItem('hf_catalog_topn') || savedTopN);
     } catch(e) {}
     _setSelectOptions('hfProviderFilter', opts.map(x => ({value:x, label:`HF Provider: ${x}`})), savedPF);
-    const topInp = document.getElementById('hfTopN');
+        try { if(topInp && window.localStorage){ topInp.addEventListener('input', ()=>{ try { localStorage.setItem('hfTopN', String(topInp.value||'')); } catch(e){} }); } } catch(e){}
     if(topInp) topInp.value = savedTopN;
   }
 
@@ -3723,6 +3846,7 @@ async function fetchHFCatalog(){
   try {
     topN = parseInt((document.getElementById('hfTopN') || {}).value || '200', 10);
     if(!isFinite(topN) || topN < 1) topN = 200;
+        try { if(window.localStorage){ localStorage.setItem('hfTopN', String(topN)); } } catch(e){}
     pf = (document.getElementById('hfProviderFilter') || {}).value || 'all';
     localStorage.setItem('hf_catalog_topn', String(topN));
   } catch(e) {}
@@ -4807,7 +4931,7 @@ class CSCRefiner:
         # IMPORTANT: avoid accidental shadowing by the imported `sys` module.
         # The status line must use the system name from the ruleset (sysname).
         return (
-            f"{sysname} v{ver} · Active profile: {profile} · SCI: {sci_out} · Overlay: {overlay} · "
+            f"Active profile: {profile} · SCI: {sci_out} · Overlay: {overlay} · "
             f"Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
         )
     def _qc_footer_for_profile(self, profile_name: str) -> str:
@@ -5231,7 +5355,7 @@ class CSCRefiner:
         dyn = getattr(self.gov_state, "dynamic_nudge", "") or ""
 
         out = []
-        out.append(f"{sysname} v{ver} · Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}")
+        out.append(f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}")
         try:
             ds = getattr(self, 'deps_status', {}) or {}
             parts = []
@@ -5285,7 +5409,7 @@ class CSCRefiner:
         user_turns = int(getattr(self.gov_state, "user_turns", 0) or 0)
         dyn = getattr(self.gov_state, "dynamic_nudge", "") or ""
 
-        status = f"{sysname} v{ver} · Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
+        status = f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
 
         rows = [
             ("Comm active", comm),
@@ -5347,7 +5471,7 @@ class CSCRefiner:
         prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
 
         out = []
-        out.append(f"{sysname} v{ver} · Loaded rules file: {fname}")
+        out.append(f"Loaded rules file: {fname}")
         out.append("")
         # Prefer raw_json (exact), fallback to pretty dump
         raw = getattr(gov, "raw_json", "") or ""
@@ -5373,7 +5497,7 @@ class CSCRefiner:
         fname = getattr(gov, "current_filename", "") or ""
         prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
 
-        status = f"{sysname} v{ver} · Loaded rules file: {fname}"
+        status = f"Loaded rules file: {fname}"
 
         # Prefer raw_json (exact), fallback to pretty dump
         raw = getattr(gov, "raw_json", "") or ""
@@ -5545,6 +5669,11 @@ class CSCRefiner:
         gov.load_file() # Lädt Standard-Datei
         self.gov_state = _init_state_from_rules()
 
+        # Session counters for renderer stability (structural-only diagnostics)
+        self.session_render_ok_count = int(getattr(self, "session_render_ok_count", 0) or 0)
+        self.session_render_fallback_count = int(getattr(self, "session_render_fallback_count", 0) or 0)
+
+
         
         
         
@@ -5552,6 +5681,7 @@ class CSCRefiner:
         try:
             _g = globals().get('gov')
             if _g is not None:
+                gov.runtime_state = self.gov_state
                 setattr(_g, 'runtime_state', self.gov_state)
         except Exception:
             pass
@@ -5849,7 +5979,7 @@ class CSCRefiner:
             if base.lower() == "comm-sci-config.json" or base.lower().endswith("-config.json") or base.lower().endswith("config.json"):
                 try:
                     self.main_win.evaluate_js(
-                        "addMsg('sys', 'JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v19.6.9.json).')"
+                        "addMsg('sys', 'JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.0.3.json).')"
                     )
                 except Exception:
                     pass
@@ -6043,6 +6173,7 @@ class CSCRefiner:
 
             # Render deterministic HTML trace block
             html_parts = [
+                "<!-- SCI Trace: -->",
                 "<div class='sci-trace' style='margin:10px 0; padding:10px; border:1px solid #ddd; border-radius:12px;'>",
                 "<div style='font-weight:700; margin-bottom:6px;'>SCI Trace</div>",
                 "<ol style='margin:0 0 0 22px; padding:0;'>",
@@ -6067,7 +6198,6 @@ class CSCRefiner:
 
             out_lines = []
             out_lines.extend(pre)
-            out_lines.append("SCI Trace:")
             if alert_html:
                 out_lines.append(alert_html)
             out_lines.append("\n".join(html_parts))
@@ -6119,24 +6249,92 @@ class CSCRefiner:
             return '```'.join(parts)
 
         try:
-            # 1. Command? -> Nur Markdown Rendering
+            # 1. Command? -> Render via v192 pipeline if available (deterministic-ish), else legacy Markdown
             if is_command:
-                # Ensure Evidence-Linker color spans are applied consistently
+                if _rendering_pipeline_v192 is not None:
+                    try:
+                        rctx = _rendering_pipeline_v192.RenderContext(
+                            ui_lang=(self._lang() or 'en'),
+                            color=str(ctx.get('color', 'off') or 'off'),
+                            is_command=True,
+                            comm_active=bool(getattr(self.gov_state, 'comm_active', False)),
+                            strict=False,
+                        )
+                        return _rendering_pipeline_v192.render_llm_text_to_html(raw_response or "", rctx), None
+                    except Exception:
+                        pass
+
+                # Legacy fallback (kept for safety)
                 if ctx.get('color', 'off') == 'on':
                     raw_response = apply_color_spans(raw_response, enabled=True)
-
                 _h = markdown.markdown(raw_response, extensions=['extra', 'codehilite'])
                 return sanitize_html(_h), None
 
-            # 2. Comm Inactive? -> Nur Markdown
+            # 2. Comm Inactive? -> Render via v192 pipeline if available (comm-inactive Markdown render path), else legacy Markdown
             if not getattr(self.gov_state, 'comm_active', False):
-                # Ensure Evidence-Linker color spans are applied consistently
-                if ctx.get('color', 'off') == 'on':
-                    raw_response = apply_color_spans(raw_response, enabled=True)
-                
-                _h = markdown.markdown(raw_response, extensions=['extra', 'codehilite'])
-                return sanitize_html(_h), None
+                html_out = ""
+                try:
+                    if _rendering_pipeline_v192 is not None:
+                        try:
+                            rctx = _rendering_pipeline_v192.RenderContext(
+                                ui_lang=(self._lang() or 'en'),
+                                color=str(ctx.get('color', 'off') or 'off'),
+                                is_command=False,
+                                comm_active=False,
+                                strict=False,
+                            )
+                            html_out = _rendering_pipeline_v192.render_llm_text_to_html(raw_response or "", rctx)
+                        except Exception:
+                            html_out = ""
             
+                    if not html_out:
+                        # Legacy fallback (kept for safety)
+                        _raw = raw_response
+                        if ctx.get('color', 'off') == 'on':
+                            _raw = apply_color_spans(_raw, enabled=True)
+                        _h = markdown.markdown(_raw, extensions=['extra', 'codehilite'])
+                        html_out = sanitize_html(_h)
+                except Exception:
+                    # Ultimate fallback: show escaped raw in <pre> (never crash).
+                    try:
+                        html_out = "<pre>" + html.escape(str(raw_response or "")) + "</pre>"
+                    except Exception:
+                        html_out = "<pre></pre>"
+            
+                # Provide deterministic normalization meta even in comm-inactive path (tests rely on it).
+                try:
+                    _qc_pat = re.compile(r"(?im)^\s*QC(?:-Matrix)?\s*:")
+                    _raw_qc_count = len(_qc_pat.findall(str(raw_response or "")))
+                    _html_qc_count = len(_qc_pat.findall(re.sub(r"<[^>]+>", "", str(html_out or ""))))
+                    _sd_boxed = ("self-debunking" in str(html_out or "").lower()) or ("selbst-debunking" in str(html_out or "").lower())
+                    _sd_numbered = bool(re.search(r"<(?:b|strong)[^>]*>\s*1\s*\.", str(html_out or ""), re.IGNORECASE))
+            
+                    def _looks_like_rendered_html(h: str) -> bool:
+                        if not h:
+                            return False
+                        hl = h.lstrip().lower()
+                        if hl.startswith("<pre") and "&lt;" in hl:
+                            return False
+                        if h.count("&lt;") > 10 and ("<p" not in hl and "<div" not in hl and "<ol" not in hl):
+                            return False
+                        return any(t in hl for t in ("<p", "<div", "<ol", "<ul", "<table", "<pre", "<blockquote"))
+            
+                    render_ok = _looks_like_rendered_html(str(html_out or ""))
+                    meta = {
+                        "normalization": {
+                            "qc_footer_raw_count": _raw_qc_count,
+                            "qc_footer_html_count": _html_qc_count,
+                            "qc_footer_deduped": (_raw_qc_count > 1 and _html_qc_count == 1),
+                            "self_debunking_boxed": bool(_sd_boxed),
+                            "self_debunking_numbered": bool(_sd_numbered),
+                            "render_ok": bool(render_ok),
+                            "render_fallback": (not bool(render_ok)),
+                        }
+                    }
+                except Exception:
+                    meta = {"normalization": {"render_ok": True, "render_fallback": False}}
+            
+                return html_out, meta
             # 3. Refiner Logic (Erhalten für csc_meta)
             refiner = getattr(gov, 'csc_refiner', None)
             csc_meta = None
@@ -6245,7 +6443,7 @@ class CSCRefiner:
                 disp_color = "off" if prof in {"Sandbox", "Briefing"} else color
                 
                 header = (
-                    f"{sysname} v{ver} · Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
+                    f"Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
                     f"Control Layer: on · QC: on · CGI: on · Color: {disp_color}"
                 )
 
@@ -6386,17 +6584,28 @@ class CSCRefiner:
             raw_for_render = re.sub(r'(?<!\n)\n([*-]|\d+\.) ', r'\n\n\1 ', raw_for_render)
             raw_for_render = re.sub(r'(?<!\n)\nQC-Matrix:', r'\n\nQC-Matrix:', raw_for_render)
             
-            # E: Markdown Render
-            try:
-                # Versuch 'extra' (Tabellen etc.), Fallback auf Standard
-                final_html_body = markdown.markdown(raw_for_render, extensions=['extra', 'codehilite'])
-                final_html_body = sanitize_html(final_html_body)
+            # E: Render (prefer v192 pipeline if available, else legacy Markdown+Sanitize+SD numbering)
+            if _rendering_pipeline_v192 is not None:
                 try:
-                    final_html_body = html_number_self_debunking(final_html_body, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
+                    # For SD/labels we follow Answer Language (not UI language) because SD must be in Answer Language.
+                    ans_lang = getattr(getattr(self, 'gov_state', None), 'answer_language', None) or self._lang() or 'en'
+                    ans_lang = 'de' if str(ans_lang).lower().startswith('de') else 'en'
+                    rctx = _rendering_pipeline_v192.RenderContext(
+                        ui_lang=ans_lang,
+                        color=str(ctx.get('color', 'off') or 'off'),
+                        is_command=False,
+                        comm_active=True,
+                        strict=True,
+                    )
+                    final_html_body = _rendering_pipeline_v192.render_llm_text_to_html(raw_for_render or "", rctx)
                 except Exception:
-                    pass
-            except:
-                final_html_body = markdown.markdown(raw_for_render, extensions=['fenced_code', 'tables'])
+                    final_html_body = ""
+            else:
+                # Legacy path (kept as fallback)
+                try:
+                    final_html_body = markdown.markdown(raw_for_render, extensions=['extra', 'codehilite'])
+                except Exception:
+                    final_html_body = markdown.markdown(raw_for_render, extensions=['fenced_code', 'tables'])
                 final_html_body = sanitize_html(final_html_body)
                 try:
                     final_html_body = html_number_self_debunking(final_html_body, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
@@ -6404,10 +6613,86 @@ class CSCRefiner:
                     pass
             
             # F: Alerts + Body + Timestamp zusammenbauen
-            timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-            final_html = alert_html + final_html_body + f'<div class="ts-footer">Response at {timestamp}</div>'
+            # Render-failure behavior (Variant D = Auto):
+            # - If the rendered HTML looks valid, show it and include raw provider output in a collapsible <details>.
+            # - If rendering looks broken/escaped, show the raw output (escaped) instead (no double output).
+            def _looks_like_rendered_html(h: str) -> bool:
+                if not h:
+                    return False
+                hl = h.lstrip().lower()
+                # Common failure: escaped HTML inside <pre> or heavy entity-escaping.
+                if hl.startswith("<pre") and "&lt;" in hl:
+                    return False
+                if h.count("&lt;") > 10 and ("<p" not in hl and "<div" not in hl and "<ol" not in hl):
+                    return False
+                # Must contain at least one typical HTML block tag.
+                return any(t in hl for t in ("<p", "<div", "<ol", "<ul", "<table", "<pre", "<blockquote"))
 
-            return final_html, csc_meta
+            
+            # --- Normalization / rendering summary (structural-only; used for audits & debugging) ---
+            try:
+                _qc_pat = re.compile(r"(?im)^\s*QC(?:-Matrix)?\s*:")
+                _raw_qc_count = len(_qc_pat.findall(str(raw_for_render or "")))
+                _html_qc_count = len(_qc_pat.findall(re.sub(r"<[^>]+>", "", str(final_html_body or ""))))
+                _sd_boxed = ("self-debunking" in str(final_html_body or "").lower()) or ("selbst-debunking" in str(final_html_body or "").lower())
+                _sd_numbered = bool(re.search(r"<(?:b|strong)[^>]*>\s*1\s*\.", str(final_html_body or ""), re.IGNORECASE))
+                _norm_summary = {
+                    "qc_footer_raw_count": _raw_qc_count,
+                    "qc_footer_html_count": _html_qc_count,
+                    "qc_footer_deduped": (_raw_qc_count > 1 and _html_qc_count == 1),
+                    "self_debunking_boxed": bool(_sd_boxed),
+                    "self_debunking_numbered": bool(_sd_numbered),
+                }
+                if csc_meta is None:
+                    csc_meta = {}
+                if isinstance(csc_meta, dict):
+                    csc_meta["normalization"] = _norm_summary
+            except Exception:
+                pass
+
+            render_ok = _looks_like_rendered_html(final_html_body or "")
+
+            # Record render outcome in normalization summary (if present)
+            try:
+                if csc_meta is None:
+                    csc_meta = {}
+                if isinstance(csc_meta, dict):
+                    ns = csc_meta.get("normalization")
+                    if isinstance(ns, dict):
+                        ns["render_ok"] = bool(render_ok)
+                        ns["render_fallback"] = (not bool(render_ok))
+            except Exception:
+                pass
+
+            timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+
+            if render_ok:
+                raw_details = ""
+                try:
+                    _raw = (raw_original or raw_response or "")
+                    # Keep it readable but safe.
+                    _raw_esc = html.escape(str(_raw))
+                    raw_details = (
+                        '<details class="raw-output"><summary>Raw model output</summary>'
+                        '<pre class="raw-output-pre">' + _raw_esc + '</pre></details>'
+                    )
+                except Exception:
+                    raw_details = ""
+
+                final_html = alert_html + final_html_body + raw_details + f'<div class="ts-footer">Response at {timestamp}</div>'
+                return final_html, csc_meta
+
+            # Render looks broken: show raw (escaped) as a last-resort, but do not duplicate it.
+            try:
+                _raw = (raw_original or raw_response or "")
+                _raw_esc = html.escape(str(_raw))
+                fallback_note = '<div class="note-box"><b>Render fallback</b>: showing raw model output.</div>'
+                final_html = alert_html + fallback_note + '<pre class="raw-output-pre">' + _raw_esc + '</pre>' + f'<div class="ts-footer">Response at {timestamp}</div>'
+                return final_html, csc_meta
+            except Exception:
+                final_html = alert_html + f'<div class="ts-footer">Response at {timestamp}</div>'
+                return final_html, csc_meta
+
 
         except Exception as e:
             # Fallback bei schwerem Error
@@ -6559,7 +6844,7 @@ class CSCRefiner:
         """Deterministic CSC enforcement on the prompt side.
 
         Returns (text_to_send, pre_csc_meta or None).
-        We only use strings/configs from Comm-SCI-v19.6.9.json.
+        We only use strings/configs from the active Comm-SCI ruleset.
         """
         try:
             # Guard rails
@@ -6685,6 +6970,55 @@ class CSCRefiner:
         gov_obj = getattr(self, 'gov', None) or globals().get('gov')
         data = getattr(gov_obj, 'data', {}) if gov_obj is not None else {}
 
+        # Phase 3: controller dispatch path (application layer). Legacy path stays as fallback.
+        try:
+            if _controller_dispatch is not None:
+                def _mirror():
+                    gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
+                    if gov_obj2 is not None:
+                        if hasattr(self.gov_state, 'qc_overrides'):
+                            setattr(gov_obj2, 'qc_overrides', dict(getattr(self.gov_state, 'qc_overrides', {}) or {}))
+                        gov.runtime_state = self.gov_state
+                        setattr(gov_obj2, 'runtime_state', self.gov_state)
+                outcome = _controller_dispatch(
+                    cmd=cmd,
+                    runtime_state=self.gov_state,
+                    ruleset_data=data if isinstance(data, dict) else {},
+                    mirror_callback=_mirror,
+                )
+                if outcome.applied:
+                    return
+        except Exception:
+            pass
+
+        # Phase 2 fallback: central state transition path (intents + reducer).
+        try:
+            if (
+                _intent_from_command is not None
+                and _state_from_runtime is not None
+                and _state_apply_to_runtime is not None
+                and _apply_intent is not None
+            ):
+                intent = _intent_from_command(cmd)
+                if intent is not None:
+                    dom_state = _state_from_runtime(self.gov_state)
+                    result = _apply_intent(dom_state, intent, data if isinstance(data, dict) else {})
+                    _state_apply_to_runtime(result.state, self.gov_state)
+
+                    # Keep manager mirrors aligned for deterministic QC/state behavior.
+                    try:
+                        gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
+                        if gov_obj2 is not None:
+                            if hasattr(self.gov_state, 'qc_overrides'):
+                                setattr(gov_obj2, 'qc_overrides', dict(getattr(self.gov_state, 'qc_overrides', {}) or {}))
+                            gov.runtime_state = self.gov_state
+                            setattr(gov_obj2, 'runtime_state', self.gov_state)
+                    except Exception:
+                        pass
+                    return
+        except Exception:
+            pass
+
         # 1) Profile switching
         if cmd.startswith("Profile "):
             pname = cmd.split(" ", 1)[1].strip()
@@ -6700,6 +7034,7 @@ class CSCRefiner:
                     gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
                     if gov_obj2 is not None:
                         setattr(gov_obj2, 'qc_overrides', {})
+                        gov.runtime_state = self.gov_state
                         setattr(gov_obj2, 'runtime_state', self.gov_state)
                 except Exception:
                     pass
@@ -7522,7 +7857,7 @@ class CSCRefiner:
         disp_color = 'off' if prof in {'Sandbox', 'Briefing'} else color
 
         header = (
-            f"{sysname} v{ver} · Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
+            f"Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
             f"Control Layer: on · QC: on · CGI: on · Color: {disp_color}"
         )
 
@@ -7643,8 +7978,36 @@ class CSCRefiner:
                         pass
                     return handled_res
 
-                # State Change
-                self._execute_legacy_command(cmd)
+                # State Change (Phase 3): explicit intent dispatch at the router boundary.
+                _applied_via_intent = False
+                try:
+                    if _controller_dispatch_intent is not None and _intent_from_command is not None:
+                        _intent = _intent_from_command(cmd)
+                        if _intent is not None:
+                            _gov_obj = getattr(self, 'gov', None) or globals().get('gov')
+                            _data = getattr(_gov_obj, 'data', {}) if _gov_obj is not None else {}
+
+                            def _mirror():
+                                gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
+                                if gov_obj2 is not None:
+                                    if hasattr(self.gov_state, 'qc_overrides'):
+                                        setattr(gov_obj2, 'qc_overrides', dict(getattr(self.gov_state, 'qc_overrides', {}) or {}))
+                                    gov.runtime_state = self.gov_state
+                                    setattr(gov_obj2, 'runtime_state', self.gov_state)
+
+                            _outcome = _controller_dispatch_intent(
+                                intent=_intent,
+                                cmd=cmd,
+                                runtime_state=self.gov_state,
+                                ruleset_data=_data if isinstance(_data, dict) else {},
+                                mirror_callback=_mirror,
+                            )
+                            _applied_via_intent = bool(_outcome.applied)
+                except Exception:
+                    _applied_via_intent = False
+
+                if not _applied_via_intent:
+                    self._execute_legacy_command(cmd)
 
                 try:
                     self.log_event('command', {'cmd': cmd, 'phase': 'state_changed'})
@@ -8153,6 +8516,19 @@ class CSCRefiner:
                     self.session_csc_applied_count = int(getattr(self, 'session_csc_applied_count', 0) or 0) + 1
             except Exception:
                 pass
+
+            # Track renderer outcome per session (for diagnostics; does not change UI output)
+            try:
+                if isinstance(meta, dict):
+                    ns = meta.get("normalization")
+                    if isinstance(ns, dict):
+                        if bool(ns.get("render_ok")):
+                            self.session_render_ok_count = int(getattr(self, "session_render_ok_count", 0) or 0) + 1
+                        elif bool(ns.get("render_fallback")):
+                            self.session_render_fallback_count = int(getattr(self, "session_render_fallback_count", 0) or 0) + 1
+            except Exception:
+                pass
+
             # If CSC was applied on prompt-side, prefer that metadata when renderer didn't produce any.
             if (meta is None) and pre_meta is not None:
                 meta = pre_meta
@@ -8699,6 +9075,38 @@ class CSCRefiner:
                     if ins < 0: ins = 0
                     if ins > len(comm2): ins = len(comm2)
                     comm2.insert(ins, btn)
+                    data['comm'] = comm2
+        except Exception:
+            pass
+
+
+        # Panel UX (Phase 1): derive toggle UI from a pure state snapshot.
+        try:
+            gs = getattr(self, 'gov_state', None)
+            state_snapshot = _PanelStateSnapshot(
+                comm_active=bool(getattr(gs, 'comm_active', False)),
+                sci_on=bool(getattr(gs, 'sci_pending', False) or getattr(gs, 'sci_active', False)),
+                overlay=str(getattr(gs, 'overlay', '') or '').strip().lower(),
+                color_on=((getattr(gs, 'color', 'on') or 'on') == 'on'),
+            )
+        except Exception:
+            state_snapshot = None
+
+        def _toggle_btn(label_prefix: str, is_on: bool, cmd_on: str, cmd_off: str, desc_on: str, desc_off: str):
+            if is_on:
+                return {"name": f"{label_prefix}: OFF", "cmd": cmd_off, "desc": desc_off}
+            return {"name": f"{label_prefix}: ON", "cmd": cmd_on, "desc": desc_on}
+
+        try:
+            if _panel_normalize_ui is not None and state_snapshot is not None:
+                data = _panel_normalize_ui(data, state_snapshot)
+            else:
+                # Fail-soft fallback if the pure UI module is unavailable.
+                comm_active = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
+                comm = data.get('comm')
+                if isinstance(comm, list) and ("Comm Start" in comm) and ("Comm Stop" in comm):
+                    comm2 = [c for c in comm if c not in ("Comm Start", "Comm Stop")]
+                    comm2.insert(0, _toggle_btn("Comm ⏻", comm_active, "Comm Start", "Comm Stop", "Start Comm Control Layer", "Stop Comm Control Layer"))
                     data['comm'] = comm2
         except Exception:
             pass
@@ -9380,6 +9788,7 @@ class CSCRefiner:
                 gov_obj = getattr(self, 'gov', None) or globals().get('gov')
                 if gov_obj is not None:
                     setattr(gov_obj, 'qc_overrides', dict(clean))
+                    gov.runtime_state = self.gov_state
                     setattr(gov_obj, 'runtime_state', self.gov_state)
             except Exception:
                 pass
@@ -11607,7 +12016,7 @@ class ProviderRouter:
         """
         import urllib.request as _urlreq
         top_n = int(top_n or 200)
-        top_n = max(1, min(1000, top_n))
+        top_n = max(1, min(10000, top_n))
         pf = (provider_filter or "all").strip()
         try:
             from urllib.parse import urlencode
@@ -11668,7 +12077,7 @@ class ProviderRouter:
         now = int(time.time())
         want_pf = (provider_filter or "all").strip()
         want_top = int(top_n or 200)
-        want_top = max(1, min(1000, want_top))
+        want_top = max(1, min(10000, want_top))
 
         def _meta(source: str, age_s: int, count: int, err: str = "") -> dict:
             out = {"source": source, "age_s": int(age_s or 0), "count": int(count or 0),
@@ -11876,6 +12285,7 @@ class Api(CSCRefiner):
         try:
             _g = globals().get('gov')
             if _g is not None:
+                gov.runtime_state = self.gov_state
                 setattr(_g, 'runtime_state', self.gov_state)
         except Exception:
             pass

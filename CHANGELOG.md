@@ -1,10 +1,16 @@
-# Changelog – Comm-SCI-Wrapper
+# Changelog - Comm-SCI-Control-App
 
-All notable changes to **Comm-SCI-Wrapper** are documented in this file.  
-Format: newest versions first. Patch releases are additive and should be safe to upgrade.
+All notable changes are documented in this file.
 
-> This repository provides the *runtime / executor* for the governance ruleset **Comm-SCI-Control**.  
-> The ruleset itself is maintained separately: https://github.com/vfi64/Comm-SCI-Control-private
+## 20.0.3 - 2026-02-20
 
----
-
+- Renamed runtime entrypoint to `Comm-SCI-Control-App.py`.
+- Introduced `src/` layout:
+  - runtime at `src/Comm-SCI-Control-App.py`
+  - supporting modules in `src/` and `src/Module/`
+- Moved tests into `tests/` and updated path handling.
+- Switched default ruleset to `JSON/Comm-SCI-v20.0.3.json`.
+- Added root launcher `Comm-SCI-Control-App.py` that executes the app from `src/`.
+- Removed legacy versioned wrapper/test files from repository root.
+- Updated packaging/test configuration in `pyproject.toml` for `src` + `tests`.
+- Hardened ignore rules for secrets/log artifacts (`Config/Comm-SCI-API-Keys.json`, `Logs/**` content).

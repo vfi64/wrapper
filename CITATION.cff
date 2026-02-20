@@ -1,12 +1,12 @@
 cff-version: 1.2.0
-title: "Comm-SCI-Wrapper"
+title: "Comm-SCI-Control-App"
 type: software
-message: "If you use this wrapper in academic work, please cite it. For the governance ruleset, also cite Comm-SCI-Control."
+message: "If you use this software in academic work, please cite it. For the governance ruleset, also cite Comm-SCI-Control."
 authors:
   - family-names: Fickert
     given-names: Volker
-version: "136"
-date-released: 2026-01-31
+version: "20.0.3"
+date-released: 2026-02-20
 license: Apache-2.0
 repository: https://github.com/vfi64/wrapper
 repository-code: https://github.com/vfi64/wrapper
@@ -16,8 +16,8 @@ preferred-citation:
   authors:
     - family-names: Fickert
       given-names: Volker
-  title: "Comm-SCI-Wrapper"
-  version: "136"
+  title: "Comm-SCI-Control-App"
+  version: "20.0.3"
   year: 2026
   url: https://github.com/vfi64/wrapper
 

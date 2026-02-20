@@ -39,6 +39,18 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 - Add a minimal observability hook: `log_event(kind, payload)` (or equivalent).
 - Add invariants/guards (visible provider switch; stable defaults; UI payload shape).
 
+S0 acceptance checklist:
+- [x] In-code Golden Run checklist is present (`GOLDEN_RUN_STUFE0`).
+- [x] `log_event(kind, payload)` is present and fail-safe.
+- [x] Provider/model switch emits observable events.
+- [ ] Manual Golden Run walkthrough is documented in release notes per change.
+
+S0 test focus:
+- `tests/test_stage0_baseline.py` validates:
+  - Golden checklist presence and essential entries.
+  - `log_event` append behavior.
+  - Provider switch visibility in `session_events`.
+
 ### S1 — Clear internal boundaries (still single file)
 **Goal:** make later extraction safe by defining contracts first.
 - Introduce explicit “sections” and minimal contracts (inputs/outputs).
@@ -79,4 +91,3 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 2. Write a failing test that captures the regression risk.
 3. Implement the smallest change to make the test pass.
 4. Keep PRs small and describable in one paragraph.
-

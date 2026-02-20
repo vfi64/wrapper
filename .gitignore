@@ -9,9 +9,11 @@ Config/output.txt
 Logs/**
 !Logs/**/
 !Logs/**/.gitkeep
+!Logs/**/.gitikeep
 
 # Config: Inhalt ignorieren, Ordnerstruktur erlauben
 Config/
+Comm-SCI-API-Keys.json
 
 # Python cache
 __pycache__/

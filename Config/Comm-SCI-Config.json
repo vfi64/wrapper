@@ -1,6 +1,6 @@
 {
   "model": "gemini-2.0-flash",
-  "active_provider": "gemini",
+  "active_provider": "openrouter",
   "enforcement_policy": "audit_only",
   "providers": {
     "gemini": {
