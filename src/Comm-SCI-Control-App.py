@@ -1995,188 +1995,6 @@ def normalize_known_markdown_control_headings(text: str) -> str:
         return text
 
 
-def sanitize_self_debunking_markdown_in_html(html_text: str) -> str:
-    """Normalize leaked markdown emphasis inside already-rendered Self-Debunking HTML blocks.
-
-    Deterministic scope:
-    - only touches content inside `<div class="self-debunking"...>...</div>`
-    - converts `**label**` and `__label__` to `<strong>label</strong>`
-    - no semantic rewrites, formatting only
-    """
-    try:
-        if not html_text:
-            return html_text
-        # Nested <div> structures are hard to parse reliably with regex.
-        # Keep this deterministic and robust: only run when a self-debunking block exists,
-        # then normalize markdown emphasis tokens globally.
-        if re.search(r"(?is)class=(?:\"|')[^\"']*self-debunking[^\"']*(?:\"|')", html_text) is None:
-            return html_text
-        out = re.sub(r"\*\*([^*\n][^*\n]*?)\*\*", r"<strong>\1</strong>", html_text)
-        out = re.sub(r"__([^_\n][^_\n]*?)__", r"<strong>\1</strong>", out)
-        return out
-    except Exception:
-        return html_text
-
-
-def qc_override_runtime_violations(text: str, overrides: dict | None) -> list[str]:
-    """Deterministic best-effort checks for active QC overrides against runtime output.
-
-    This is intentionally heuristic but deterministic. It does not mutate output; it only
-    returns mismatch messages that can be surfaced in strict_warn/strict_block paths.
-    """
-    try:
-        ov = overrides if isinstance(overrides, dict) else {}
-        if not ov:
-            return []
-
-        # Canonicalize override keys
-        canon = {
-            "clarity": "clarity",
-            "brevity": "brevity",
-            "evidence": "evidence",
-            "empathy": "empathy",
-            "consistency": "consistency",
-            "neutrality": "neutrality",
-            "klarheit": "clarity",
-            "kürze": "brevity",
-            "kuerze": "brevity",
-            "evidenz": "evidence",
-            "empathie": "empathy",
-            "konsistenz": "consistency",
-            "neutralität": "neutrality",
-            "neutralitaet": "neutrality",
-        }
-        ov_clean = {}
-        for k, v in ov.items():
-            kk = canon.get(str(k or "").strip().lower())
-            if not kk:
-                continue
-            try:
-                iv = int(v)
-            except Exception:
-                continue
-            iv = max(0, min(3, iv))
-            ov_clean[kk] = iv
-        if not ov_clean:
-            return []
-
-        raw = str(text or "")
-        plain = re.sub(r"<[^>]+>", " ", raw)
-        plain = re.sub(r"[ \t]+", " ", plain)
-        # Remove pure scaffolding lines so heuristics focus on answer content.
-        filtered = []
-        for ln in plain.splitlines():
-            s = ln.strip()
-            if not s:
-                continue
-            if re.match(r"(?i)^(QC(?:-Matrix)?|Self-?Debunking|Selbst-?Debunking|SCI Trace)\b", s):
-                continue
-            if re.match(r"(?i)^(Plan|Solution|Check|Critic|Linguist|Logician|Adversary|Learn|Dialectic_[A-Za-z0-9_]+)\s*:?\s*$", s):
-                continue
-            filtered.append(s)
-        probe = " ".join(filtered).strip()
-        if not probe:
-            probe = plain.strip()
-
-        words = re.findall(r"[A-Za-zÄÖÜäöüß0-9]+", probe)
-        wc = len(words)
-        sc = max(1, len(re.findall(r"[.!?](?:\s|$)", probe)))
-        avg_sent = (float(wc) / float(sc)) if sc else float(wc)
-
-        def _obs_brevity() -> int:
-            if wc >= 260:
-                return 0
-            if wc >= 170:
-                return 1
-            if wc >= 90:
-                return 2
-            return 3
-
-        def _obs_clarity() -> int:
-            has_structure = bool(re.search(r"(?im)^\s*(?:[-*•]|\d+\.)\s+", raw))
-            if has_structure and 8 <= avg_sent <= 24 and wc >= 80:
-                return 3
-            if wc >= 60 and 7 <= avg_sent <= 28:
-                return 2
-            if wc >= 30:
-                return 1
-            return 0
-
-        def _obs_evidence() -> int:
-            c = 0
-            c += len(re.findall(r"(?i)\b(Source|Measurement|Contrast|Web-?Check)\s*:", raw))
-            c += len(re.findall(r"\[(?:GREEN|YELLOW|RED|GRAY)(?:-(?:TRAIN|WEB|DOC))?\]", raw))
-            c += len(re.findall(r"https?://", raw))
-            if c >= 6:
-                return 3
-            if c >= 3:
-                return 2
-            if c >= 1:
-                return 1
-            return 0
-
-        def _obs_empathy() -> int:
-            c = len(re.findall(r"(?i)\b(Ich verstehe|I understand|gerne|helpful|hilfreich|danke|thanks)\b", probe))
-            if c >= 3:
-                return 3
-            if c >= 1:
-                return 2
-            return 1
-
-        def _obs_consistency() -> int:
-            # Very conservative: only obvious self-contradiction markers.
-            contradictions = [
-                r"(?i)\b(always|immer)\b.*\b(never|niemals)\b",
-                r"(?i)\bist\b.*\bist nicht\b",
-                r"(?i)\bis\b.*\bis not\b",
-            ]
-            bad = any(re.search(p, probe) for p in contradictions)
-            return 1 if bad else 3
-
-        def _obs_neutrality() -> int:
-            loaded = len(
-                re.findall(
-                    r"(?i)\b(unglaublich|katastrophal|lächerlich|idiotisch|ridiculous|disaster|obviously|clearly)\b",
-                    probe,
-                )
-            )
-            if loaded == 0:
-                return 3
-            if loaded <= 2:
-                return 2
-            if loaded <= 4:
-                return 1
-            return 0
-
-        obs_map = {
-            "brevity": _obs_brevity(),
-            "clarity": _obs_clarity(),
-            "evidence": _obs_evidence(),
-            "empathy": _obs_empathy(),
-            "consistency": _obs_consistency(),
-            "neutrality": _obs_neutrality(),
-        }
-        labels = {
-            "brevity": "Brevity",
-            "clarity": "Clarity",
-            "evidence": "Evidence",
-            "empathy": "Empathy",
-            "consistency": "Consistency",
-            "neutrality": "Neutrality",
-        }
-
-        out = []
-        for k, target in ov_clean.items():
-            observed = int(obs_map.get(k, target))
-            if observed != target:
-                out.append(
-                    f"QC-Override mismatch ({labels.get(k,k)}): target={target}, observed={observed} (deterministic runtime check)."
-                )
-        return out
-    except Exception:
-        return []
-
-
 def normalize_self_debunking_language(text: str, lang: str) -> str:
     """Translate Self-Debunking label tokens into the target language (currently DE),
     without changing the required header 'Self-Debunking' or adding new factual claims.
@@ -6795,17 +6613,6 @@ class CSCRefiner:
                 raw_for_render = self._render_sci_trace_as_html_runtime(raw_for_render)
             except Exception:
                 pass
-
-            # Deterministic QC-override runtime checks (best-effort): detect obvious target/output mismatches.
-            # These checks are heuristic but deterministic and only active when overrides are set.
-            override_vios = []
-            try:
-                _ovr_runtime = getattr(self.gov_state, 'qc_overrides', {}) or {}
-                override_vios = qc_override_runtime_violations(raw_for_render, _ovr_runtime)
-                if override_vios:
-                    alerts.append(("QC-Override", "; ".join(override_vios)))
-            except Exception:
-                override_vios = []
             
             # A: Header voranstellen
             if header:
@@ -6829,8 +6636,6 @@ class CSCRefiner:
                         user_prompt=user_raw,
                         raw_response=raw_for_render,
                     )
-                    if override_vios:
-                        hv2 = list(hv2 or []) + list(override_vios)
                 except Exception as e:
                     hv2, sv2 = [], []
                     # Fail-soft: show a warning in chat, but never crash.
@@ -6911,12 +6716,6 @@ class CSCRefiner:
                     final_html_body = html_number_self_debunking(final_html_body, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
                 except Exception:
                     pass
-
-            # After HTML rendering, normalize leaked markdown emphasis inside self-debunking blocks.
-            try:
-                final_html_body = sanitize_self_debunking_markdown_in_html(final_html_body or "")
-            except Exception:
-                pass
             
             # F: Alerts + Body + Timestamp zusammenbauen
             # Render-failure behavior (Variant D = Auto):
