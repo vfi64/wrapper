@@ -51,6 +51,13 @@ pytest -q
 - `Config/Comm-SCI-API-Keys.json` is local-only and ignored by Git.
 - `Logs/**` content is ignored by Git (folder structure kept).
 
+## Enforcement settings
+
+- `enforcement_enabled`: feature flag for strict enforcement (`true` by default).
+- `enforcement_policy`: `audit_only` | `strict_warn` | `strict_block` (default: `audit_only`).
+- `enforcement_blocked_severities`: severities that can trigger blocking in strict mode (default: `["critical", "major"]`).
+- Runtime status is available via local command `Comm Enforcement` (deterministic, no provider call).
+
 ## Dependencies
 
 See `requirements.txt` (runtime) and `pyproject.toml` (packaging/test config).

@@ -614,7 +614,7 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
 
 
     # Wrapper-local commands (not part of the ruleset JSON)
-    for _c in ("QC Override",):
+    for _c in ("QC Override", "Comm Enforcement"):
         try:
             if _c not in all_cmds:
                 all_cmds.append(_c)
@@ -3324,7 +3324,7 @@ HTML_PANEL = """
       <option value="openrouter">Provider: OpenRouter</option>
       <option value="huggingface">Provider: Hugging Face</option>
     </select>
-    <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch /models and refresh cache (OpenRouter/HF)">Refresh Models</button>
+    <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch provider models and refresh cache (Gemini/OpenRouter/HF)">Refresh Models</button>
     <button class="smallbtn" id="qcOverrideBtn" onclick="run('QC Override')" title="QC Override">⚙ QC</button>
 </div>
 
@@ -3493,7 +3493,7 @@ function buildUIFromData(raw){
 
   const p = (data.current_provider || 'gemini');
   const btn = document.getElementById('refreshModelsBtn');
-  if(btn) btn.style.display = (p === 'openrouter' || p === 'huggingface') ? 'block' : 'none';
+  if(btn) btn.style.display = 'block';
 
   // HF catalog controls
   const hfRow = document.getElementById('hfCatalogRow');
@@ -5583,6 +5583,41 @@ class CSCRefiner:
         out.append(f"<div style='margin-top:10px'>{html.escape(self._qc_footer_for_profile(prof))}</div>")
         out.append('</div>')
         return "\n".join(out)
+
+    def _render_comm_enforcement_status(self) -> str:
+        """Deterministic plaintext renderer for 'Comm Enforcement' (no LLM)."""
+        try:
+            enf = self._get_enforcement_settings()
+        except Exception:
+            enf = {"enabled": True, "policy": "audit_only", "blocked_severities": ["critical", "major"]}
+        enabled = "true" if bool((enf or {}).get("enabled", True)) else "false"
+        policy = str((enf or {}).get("policy", "audit_only")).strip().lower() or "audit_only"
+        blocked = ", ".join([str(x) for x in ((enf or {}).get("blocked_severities") or [])]) or "-"
+        return f"Comm Enforcement: enabled={enabled} · policy={policy} · blocked_severities={blocked}"
+
+    def _render_comm_enforcement_status_html(self) -> str:
+        """Deterministic HTML renderer for 'Comm Enforcement' runtime settings (no LLM)."""
+        try:
+            enf = self._get_enforcement_settings()
+        except Exception:
+            enf = {"enabled": True, "policy": "audit_only", "blocked_severities": ["critical", "major"]}
+        enabled = "true" if bool((enf or {}).get("enabled", True)) else "false"
+        policy = str((enf or {}).get("policy", "audit_only")).strip().lower() or "audit_only"
+        blocked = ", ".join([str(x) for x in ((enf or {}).get("blocked_severities") or [])]) or "-"
+        rows = [
+            ("Enabled", enabled),
+            ("Policy", policy),
+            ("Blocked severities", blocked),
+        ]
+        out = []
+        out.append('<div class="comm-help comm-state">')
+        out.append('<div class="help-status">Comm Enforcement (runtime)</div>')
+        out.append('<table class="state-table"><tbody>')
+        for k, v in rows:
+            out.append(f"<tr><th>{html.escape(str(k))}</th><td>{html.escape(str(v))}</td></tr>")
+        out.append('</tbody></table>')
+        out.append('</div>')
+        return "\n".join(out)
     
     def _render_sci_menu_html(self, lang=None):
         """SCI menu: renders in current conversation language (de/en), keeps styling,
@@ -6585,10 +6620,11 @@ class CSCRefiner:
             # Strict enforcement gate (optional): validate final text (pre-render) and optionally warn/block.
             strict_banner_html = ""
             try:
-                pol = self._get_enforcement_policy()
+                enf = self._get_enforcement_settings()
             except Exception:
-                pol = "audit_only"
-            if pol in ("strict_warn", "strict_block"):
+                enf = {"enabled": True, "policy": "audit_only", "blocked_severities": ["critical", "major"]}
+            pol = str((enf or {}).get("policy", "audit_only")).strip().lower()
+            if bool((enf or {}).get("enabled", True)) and pol in ("strict_warn", "strict_block"):
                 try:
                     hv2, sv2 = self.validator.validate(
                         raw_for_render,
@@ -9082,9 +9118,7 @@ class CSCRefiner:
         # Model lists (offline-fast): use in-memory caches warmed from disk; no network here.
         try:
             curp = data.get('current_provider', 'gemini')
-            if curp == 'gemini':
-                data['available_models'] = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-pro']
-            elif curp in ('openrouter', 'huggingface'):
+            if curp in ('gemini', 'openrouter', 'huggingface'):
                 data['available_models'] = self.get_available_models(curp)
         except Exception:
             pass
@@ -9236,6 +9270,17 @@ class CSCRefiner:
                         self._hf_models_cache = [str(m).strip() for m in models if str(m).strip()]
             except Exception:
                 pass
+            # Gemini cache
+            try:
+                p = pr._gemini_cache_path() if hasattr(pr, '_gemini_cache_path') else ''
+                if p and os.path.exists(p):
+                    raw = Path(p).read_text(encoding='utf-8')
+                    obj = json.loads(raw) if raw else {}
+                    models = obj.get('models') or []
+                    if isinstance(models, list):
+                        self._gemini_models_cache = [str(m).strip() for m in models if str(m).strip()]
+            except Exception:
+                pass
         except Exception:
             return
 
@@ -9244,10 +9289,13 @@ class CSCRefiner:
         try:
             p = (provider or '').strip().lower()
             if p == 'gemini':
-                # Keep stable, small default list (non-authoritative). User can type a model manually.
+                cache = getattr(self, '_gemini_models_cache', None)
+                if isinstance(cache, list) and cache:
+                    return cache
                 return [
                     'gemini-2.0-flash',
                     'gemini-2.5-flash',
+                    'gemini-3-flash',
                     'gemini-1.5-pro',
                 ]
             if p == 'openrouter':
@@ -9437,8 +9485,9 @@ class CSCRefiner:
             pass
 
     def refresh_models(self):
-        """Refresh provider model list cache (OpenRouter/Hugging Face best-effort).
+        """Refresh provider model list cache (Gemini/OpenRouter/Hugging Face best-effort).
 
+        - Gemini: refresh cached model list from Google GenAI models API (best-effort).
         - OpenRouter: refresh cached /models list.
         - Hugging Face: tries /models; if unavailable, keeps config-defined list.
         """
@@ -9446,6 +9495,26 @@ class CSCRefiner:
             pr = getattr(self, 'provider_router', None)
             curp = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else 'gemini')
             curp = (curp or 'gemini').strip().lower()
+
+            if curp == 'gemini':
+                models, meta = pr.get_gemini_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_gemini_models_cached') else ([], {})
+                try:
+                    self._gemini_models_cache = list(models) if isinstance(models, list) else []
+                except Exception:
+                    pass
+                try:
+                    if getattr(self, 'panel_win', None):
+                        self.panel_win.evaluate_js('window.refresh_panel && window.refresh_panel()')
+                except Exception:
+                    pass
+                try:
+                    if self.main_win:
+                        self.main_win.evaluate_js(
+                            f"addMsg('sys', 'Gemini models refreshed: {len(models)} (source: {meta.get('source','?')}).')"
+                        )
+                except Exception:
+                    pass
+                return {'status': True, 'provider': 'gemini', 'count': len(models), 'meta': meta}
 
             if curp == 'openrouter':
                 models, meta = pr.get_openrouter_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_openrouter_models_cached') else ([], {})
@@ -10556,7 +10625,8 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
         try:
             models = []
             if curp == 'gemini':
-                models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3-flash', 'gemini-1.5-pro']
+                # Use warmed in-memory cache only; avoid live fetch in get_ui().
+                models = self.get_available_models(curp)
             elif curp == 'openrouter':
                 # Use warmed in-memory cache only; avoid live fetch in get_ui().
                 models = self.get_available_models(curp)
@@ -10956,6 +11026,7 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
         "Comm State": ("Comm State", getattr(self, "_render_comm_state", lambda: "Comm State"), getattr(self, "_render_comm_state_html", lambda: "")),
         "Comm Config": ("Comm Config", getattr(self, "_render_comm_config", lambda: "Comm Config"), getattr(self, "_render_comm_config_html", lambda: "")),
         "Comm Anchor": ("Comm Anchor", (lambda: "Comm Anchor"), getattr(self, "_render_anchor_snapshot_html", lambda: "")),
+        "Comm Enforcement": ("Comm Enforcement", getattr(self, "_render_comm_enforcement_status", lambda: "Comm Enforcement"), getattr(self, "_render_comm_enforcement_status_html", lambda: "")),
     }
 
     if cmd in renderer_map:
@@ -11705,6 +11776,160 @@ class ProviderRouter:
             return OpenAICompatibleClient(base_url=base_url, api_key=key, app_referrer='', app_title='Comm-SCI Desktop')
         except Exception:
             return None
+
+    def _gemini_cache_path(self) -> str:
+        try:
+            return os.path.join(CONFIG_DIR, 'gemini_models_cache.json')
+        except Exception:
+            return 'gemini_models_cache.json'
+
+    def _gemini_default_models(self) -> list:
+        models = []
+        try:
+            m = self.get_provider_model('gemini', fallback_model='').strip()
+            if m:
+                models.append(m)
+        except Exception:
+            pass
+        for m in ('gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3-flash', 'gemini-1.5-pro'):
+            models.append(m)
+        seen = set()
+        uniq = []
+        for m in models:
+            s = str(m or '').strip()
+            if not s:
+                continue
+            k = s.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(s)
+        return uniq
+
+    def _normalize_gemini_model_name(self, raw_name: str) -> str:
+        s = str(raw_name or '').strip()
+        if s.startswith('models/'):
+            s = s.split('/', 1)[1].strip()
+        return s
+
+    def get_gemini_models_cached(self, *, force_refresh: bool = False):
+        """Return (models, meta) using a local cache plus best-effort live Gemini model listing.
+
+        meta: {'source': 'cache'|'cache-stale'|'live'|'fallback'|'none', 'age_s': int, 'count': int}
+        """
+        cache_path = self._gemini_cache_path()
+
+        cache_minutes = 30
+        try:
+            provs = (self.cfg.config or {}).get('providers') or {}
+            pconf = (provs.get('gemini') or {}) if isinstance(provs, dict) else {}
+            cache_minutes = int((pconf.get('model_cache_minutes') or 30) or 30)
+        except Exception:
+            cache_minutes = 30
+
+        now = time.time()
+        cached = None
+        try:
+            if os.path.exists(cache_path):
+                raw = Path(cache_path).read_text(encoding='utf-8')
+                cached = json.loads(raw) if raw else None
+        except Exception:
+            cached = None
+
+        def _extract_models(obj):
+            out = []
+            try:
+                src = (obj or {}).get('models') or []
+                if isinstance(src, list):
+                    for m in src:
+                        mm = self._normalize_gemini_model_name(m)
+                        if mm:
+                            out.append(mm)
+            except Exception:
+                out = []
+            seen = set()
+            uniq = []
+            for m in out:
+                k = m.lower()
+                if k in seen:
+                    continue
+                seen.add(k)
+                uniq.append(m)
+            return sorted(uniq, key=lambda s: s.lower())
+
+        age_s = 10**9
+        ts = 0.0
+        try:
+            ts = float((cached or {}).get('ts') or 0.0)
+            if ts > 0:
+                age_s = int(max(0.0, now - ts))
+        except Exception:
+            ts = 0.0
+            age_s = 10**9
+
+        models_cached = _extract_models(cached)
+        fresh = bool(ts) and (cache_minutes > 0) and (age_s <= int(cache_minutes * 60))
+        if fresh and (not force_refresh) and models_cached:
+            return models_cached, {'source': 'cache', 'age_s': age_s, 'count': len(models_cached)}
+
+        models_live = []
+        if genai is not None:
+            try:
+                key = (get_api_key() or '').strip()
+            except Exception:
+                key = ''
+            if key:
+                try:
+                    client = genai.Client(api_key=key)
+                    stream = client.models.list()
+                    for md in stream:
+                        try:
+                            name_raw = getattr(md, 'name', '')
+                            name = self._normalize_gemini_model_name(name_raw)
+                            if not name or not name.lower().startswith('gemini'):
+                                continue
+                            actions = getattr(md, 'supported_actions', None)
+                            if isinstance(actions, list) and actions:
+                                allow = False
+                                for a in actions:
+                                    aa = str(a or '').strip().lower()
+                                    if aa in ('generatecontent', 'generate_content'):
+                                        allow = True
+                                        break
+                                if not allow:
+                                    continue
+                            models_live.append(name)
+                        except Exception:
+                            continue
+                except Exception:
+                    models_live = []
+
+        if models_live:
+            seen = set()
+            uniq = []
+            for m in models_live:
+                k = str(m or '').strip().lower()
+                if not k or k in seen:
+                    continue
+                seen.add(k)
+                uniq.append(str(m).strip())
+            models_live = sorted(uniq, key=lambda s: s.lower())
+            try:
+                Path(cache_path).write_text(
+                    json.dumps({'ts': now, 'models': models_live}, ensure_ascii=False, indent=2),
+                    encoding='utf-8'
+                )
+            except Exception:
+                pass
+            return models_live, {'source': 'live', 'age_s': 0, 'count': len(models_live)}
+
+        if models_cached:
+            return models_cached, {'source': 'cache-stale', 'age_s': age_s, 'count': len(models_cached)}
+
+        fallback = self._gemini_default_models()
+        if fallback:
+            return fallback, {'source': 'fallback', 'age_s': age_s, 'count': len(fallback)}
+        return [], {'source': 'none', 'age_s': age_s, 'count': 0}
 
     def _openrouter_cache_path(self) -> str:
         try:
@@ -12577,16 +12802,45 @@ class Api(CSCRefiner):
 
 
 
-    def _get_enforcement_policy(self) -> str:
-        """Return enforcement policy from config. Defaults to 'audit_only'."""
+    def _get_enforcement_settings(self) -> dict:
+        """Return enforcement settings from config with safe defaults."""
+        cfg_obj = {}
         try:
-            pol = (getattr(cfg, "config", {}) or {}).get("enforcement_policy", "audit_only")
-            pol = str(pol).strip().lower()
+            cfg_obj = (getattr(cfg, "config", {}) or {})
         except Exception:
-            pol = "audit_only"
-        if pol not in ("audit_only", "strict_warn", "strict_block"):
-            pol = "audit_only"
-        return pol
+            cfg_obj = {}
+
+        def _norm_bool(v, default=True):
+            if isinstance(v, bool):
+                return v
+            if v is None:
+                return bool(default)
+            s = str(v).strip().lower()
+            if s in ("1", "true", "yes", "on"):
+                return True
+            if s in ("0", "false", "no", "off"):
+                return False
+            return bool(default)
+
+        policy = str(cfg_obj.get("enforcement_policy", "audit_only")).strip().lower()
+        if policy not in ("audit_only", "strict_warn", "strict_block"):
+            policy = "audit_only"
+
+        enabled = _norm_bool(cfg_obj.get("enforcement_enabled", True), default=True)
+
+        blocked_raw = cfg_obj.get("enforcement_blocked_severities", ["critical", "major"])
+        if not isinstance(blocked_raw, list):
+            blocked_raw = ["critical", "major"]
+        allowed = {"critical", "major", "minor"}
+        blocked = []
+        for x in blocked_raw:
+            s = str(x).strip().lower()
+            if s and s in allowed and s not in blocked:
+                blocked.append(s)
+        if not blocked:
+            blocked = ["critical", "major"]
+
+        return {"enabled": enabled, "policy": policy, "blocked_severities": blocked}
 
 
     def clear_chat(self):

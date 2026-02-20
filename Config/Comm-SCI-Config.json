@@ -1,6 +1,6 @@
 {
   "model": "gemini-2.0-flash",
-  "active_provider": "gemini",
+  "active_provider": "openrouter",
   "enforcement_policy": "audit_only",
   "providers": {
     "gemini": {
@@ -19,10 +19,15 @@
       "default_model": "microsoft/Phi-3.5-mini-instruct"
     }
   },
-  "answer_language": "de",
+  "answer_language": "en",
   "rate_limit_enabled": true,
   "rate_limit_per_minute": 30,
   "rate_limit_per_hour": 120,
+  "enforcement_enabled": true,
+  "enforcement_blocked_severities": [
+    "critical",
+    "major"
+  ],
   "panel_geom": {
     "x": 1141,
     "y": 34,

@@ -14,3 +14,9 @@ All notable changes are documented in this file.
 - Removed legacy versioned wrapper/test files from repository root.
 - Updated packaging/test configuration in `pyproject.toml` for `src` + `tests`.
 - Hardened ignore rules for secrets/log artifacts (`Config/Comm-SCI-API-Keys.json`, `Logs/**` content).
+- Added Gemini dynamic model refresh/cache integration for panel model list updates.
+- Added enforcement runtime settings:
+  - `enforcement_enabled` feature flag
+  - `enforcement_policy` (`audit_only`/`strict_warn`/`strict_block`)
+  - `enforcement_blocked_severities` default list
+- Added deterministic local command `Comm Enforcement` for runtime status (no provider call).
