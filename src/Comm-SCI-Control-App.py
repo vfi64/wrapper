@@ -189,7 +189,7 @@ def _detect_wrapper_identity() -> tuple[str, str]:
     return "Comm-SCI-Control-App", ""
 
 WRAPPER_NAME, WRAPPER_VERSION = _detect_wrapper_identity()
-MAIN_WINDOW_TITLE = f"{WRAPPER_NAME} Comm-SCI-Control"
+MAIN_WINDOW_TITLE = WRAPPER_NAME
 PANEL_WINDOW_TITLE = f"{WRAPPER_NAME} Panel"
 
 

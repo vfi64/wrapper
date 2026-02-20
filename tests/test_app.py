@@ -1353,7 +1353,7 @@ def test_main_window_title_is_dynamic_and_matches_wrapper_name():
     mod = load_fix_module()
     expected_name = FIX_PATH.stem
     assert getattr(mod, 'WRAPPER_NAME', '') == expected_name
-    assert getattr(mod, "MAIN_WINDOW_TITLE", "") == f"{expected_name} Comm-SCI-Control"
+    assert getattr(mod, "MAIN_WINDOW_TITLE", "") == expected_name
 
     txt = FIX_PATH.read_text(encoding='utf-8')
     assert 'MAIN_WINDOW_TITLE' in txt  # create_window must use the variable, not a stale literal
