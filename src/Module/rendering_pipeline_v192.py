@@ -51,6 +51,13 @@ _EVIDENCE_COLOR: Dict[str, str] = {
     "GRAY": "#616161",
     "WHITE": "#616161",   # treat white circle as gray (legacy)
 }
+_EVIDENCE_ICON: Dict[str, str] = {
+    "GREEN": "🟢",
+    "YELLOW": "🟡",
+    "RED": "🔴",
+    "GRAY": "⚪",
+    "WHITE": "⚪",
+}
 
 _ALLOWED_CSS_PROPS = [
     "color", "font-weight",
@@ -168,25 +175,22 @@ def strip_sci_menu_leaks_plaintext(text: str) -> str:
 # [GREEN] (no emoji)
 # also "⚪" treated as WHITE
 _EVIDENCE_TAG_RE = _re.compile(
-    r"\[(?P<tag>GREEN|YELLOW|RED|GRAY|WHITE)(?P<suffix>\s*:[^\]]+|\s*\d{1,3}%\s*)?\]\s*(?P<emoji>🟢|🟡|🔴|⚪)?",
+    r"\[(?P<tag>GREEN|YELLOW|RED|GRAY|WHITE)(?P<suffix>(?:-[A-Z0-9]+)*|\s*:[^\]]+|\s*\d{1,3}%\s*)?\]\s*(?P<emoji>🟢|🟡|🔴|⚪)?",
     flags=_re.IGNORECASE
 )
 
 def apply_color_spans(text: str, enabled: bool) -> str:
     """
-    Inject <span> wrappers but keep the original visible marker text for auditability.
+    Inject <span> wrappers and render only the evidence icon.
     """
     if not enabled or not text:
         return text
 
     def repl(m: _re.Match) -> str:
         tag_raw = (m.group("tag") or "").upper()
-        suffix = m.group("suffix") or ""
         emoji = m.group("emoji") or ""
         color = _EVIDENCE_COLOR.get(tag_raw, _EVIDENCE_COLOR["GRAY"])
-        # Preserve original marker text (normalized a bit)
-        marker = f"[{tag_raw}{suffix}]"
-        vis = (emoji + " " if emoji else "") + marker
+        vis = emoji or _EVIDENCE_ICON.get(tag_raw, "⚪")
         return f'<span data-evidence="{tag_raw}" style="color: {color}; font-weight: 700;">{_html.escape(vis)}</span>'
 
     return _EVIDENCE_TAG_RE.sub(repl, text)

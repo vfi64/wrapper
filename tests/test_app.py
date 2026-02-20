@@ -920,9 +920,13 @@ def test_apply_color_spans_handles_white_circle_and_multi_suffix():
 
     # Each tag should become a styled span.
     assert out.count("<span style=") >= 3
-    assert "[GREEN-WEB-CHECK]" in out
-    assert "[GRAY]" in out
-    assert "[RED-DOC]" in out
+    # Color-on rendering is icon-only (no visible bracket tokens).
+    assert "[GREEN-WEB-CHECK]" not in out
+    assert "[GRAY]" not in out
+    assert "[RED-DOC]" not in out
+    assert "🟢" in out
+    assert "⚪" in out
+    assert "🔴" in out
 
 
 # -----------------
@@ -1248,7 +1252,7 @@ def test_hf_topn_persists_via_localstorage_in_panel_html():
     _prime_module_gov(mod)
     api = mod.Api()
     html = getattr(mod, "HTML_PANEL", "")
-    assert "localStorage.getItem('hfTopN')" in html
+    assert "_safeLsGet('hfTopN'" in html
     assert "id=\"hfTopN\"" in html
     assert "max=\"10000\"" in html
 

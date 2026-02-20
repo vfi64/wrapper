@@ -1561,6 +1561,12 @@ _EVIDENCE_COLOR = {
     "RED": "#c62828",
     "GRAY": "#616161",
 }
+_EVIDENCE_ICON = {
+    "GREEN": "🟢",
+    "YELLOW": "🟡",
+    "RED": "🔴",
+    "GRAY": "⚪",
+}
 
 def dedupe_qc_lines(text: str) -> str:
     """Remove redundant QC header line if a QC-Matrix footer is present."""
@@ -1956,6 +1962,37 @@ def normalize_evidence_tags(text: str) -> str:
     out = re.sub(r"(?im)\s+[·•]\s*(?=\-?(?:TRAIN|WEB|DOC)\b)", " ", out)
     out = re.sub(r"(?im)\s+\-\s*(TRAIN|WEB|DOC)\b", "", out)
     return out
+
+
+def normalize_known_markdown_control_headings(text: str) -> str:
+    """Normalize leaked Markdown heading markers for known control headings only.
+
+    Scope is intentionally narrow and deterministic:
+    - Only line-start Markdown headings for known wrapper headings are normalized.
+    - Code fences are preserved and never rewritten.
+    - No global markdown stripping.
+    """
+    if not text:
+        return text
+
+    try:
+        parts = str(text).split("```")
+
+        # Only normalize a strict whitelist to avoid changing arbitrary user/model markdown.
+        pat = re.compile(
+            r"(?im)^\s{0,3}#{1,6}\s*(Final Answer|SCI Trace|Self-Debunking|Selbst[- ]?Debunking)\s*:?\s*$"
+        )
+
+        def _repl(m: re.Match) -> str:
+            title = (m.group(1) or "").strip()
+            return f"<strong>{html.escape(title)}:</strong>"
+
+        for i in range(0, len(parts), 2):
+            parts[i] = pat.sub(_repl, parts[i])
+
+        return "```".join(parts)
+    except Exception:
+        return text
 
 
 def normalize_self_debunking_language(text: str, lang: str) -> str:
@@ -2376,14 +2413,11 @@ def apply_color_spans(text: str, enabled: bool = True) -> str:
         return text
 
     def repl(m: re.Match) -> str:
-        tag = m.group("tag")
-        suffix = m.group("suffix") or ""
+        tag = (m.group("tag") or "").upper()
         emoji = m.group("emoji") or ""
         color = _EVIDENCE_COLOR.get(tag, "#616161")
-        token = f"[{tag}{suffix}]"
-        if emoji:
-            token = f"{token} {emoji}"
-        return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
+        icon = emoji or _EVIDENCE_ICON.get(tag, "⚪")
+        return f"<span style=\"color:{color}; font-weight:600;\">{icon}</span>"
 
     # Patterns like: [GREEN] 🟢  or [GREEN-WEB] 🟢
     pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?")
@@ -2401,14 +2435,11 @@ def _reapply_color_styles_if_stripped(html_text: str) -> str:
 
     # Replace empty style="" on our evidence spans.
     def repl(m: re.Match) -> str:
-        tag = m.group("tag")
-        suffix = m.group("suffix") or ""
+        tag = (m.group("tag") or "").upper()
         emoji = m.group("emoji") or ""
         color = _EVIDENCE_COLOR.get(tag, "#616161")
-        token = f"[{tag}{suffix}]"
-        if emoji:
-            token = f"{token} {emoji}"
-        return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
+        icon = emoji or _EVIDENCE_ICON.get(tag, "⚪")
+        return f"<span style=\"color:{color}; font-weight:600;\">{icon}</span>"
 
     # Match: <span style="">[GREEN-WEB-CHECK] 🟢</span>  (or without emoji)
     pat = re.compile(
@@ -3425,6 +3456,26 @@ function _storageKeyForModelQuery(provider){
   return `model_query_${provider||'unknown'}`;
 }
 
+function _safeLsGet(key, fallback){
+  try {
+    if(typeof window !== 'undefined' && window.localStorage){
+      const v = window.localStorage.getItem(String(key || ''));
+      return (v === null || v === undefined) ? fallback : v;
+    }
+  } catch(e) {}
+  return fallback;
+}
+
+function _safeLsSet(key, value){
+  try {
+    if(typeof window !== 'undefined' && window.localStorage){
+      window.localStorage.setItem(String(key || ''), String(value || ''));
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
 function buildUIFromData(raw){
   const base = _fallbackData();
   const data = Object.assign({}, base, (raw || {}));
@@ -3450,13 +3501,19 @@ function buildUIFromData(raw){
   if(p === 'huggingface'){
     const opts = (data.hf_provider_filter_options || ['all']);
     let savedPF = (data.hf_catalog_default_provider_filter || 'all');
-    let savedTopN = String((window.localStorage && localStorage.getItem('hfTopN')) || (data.hf_catalog_default_top_n || 200));
-    try {
-      savedPF = (localStorage.getItem('hf_provider_filter') || savedPF);
-      savedTopN = (localStorage.getItem('hf_catalog_topn') || savedTopN);
-    } catch(e) {}
+    let savedTopN = String(_safeLsGet('hfTopN', (data.hf_catalog_default_top_n || 200)));
+    const topInp = document.getElementById('hfTopN');
+    savedPF = (_safeLsGet('hf_provider_filter', savedPF) || savedPF);
+    savedTopN = (_safeLsGet('hf_catalog_topn', savedTopN) || savedTopN);
     _setSelectOptions('hfProviderFilter', opts.map(x => ({value:x, label:`HF Provider: ${x}`})), savedPF);
-        try { if(topInp && window.localStorage){ topInp.addEventListener('input', ()=>{ try { localStorage.setItem('hfTopN', String(topInp.value||'')); } catch(e){} }); } } catch(e){}
+    try {
+      if(topInp && !topInp.dataset.bound){
+        topInp.addEventListener('input', ()=>{
+          _safeLsSet('hfTopN', String(topInp.value||''));
+        });
+        topInp.dataset.bound = '1';
+      }
+    } catch(e) {}
     if(topInp) topInp.value = savedTopN;
   }
 
@@ -3472,14 +3529,14 @@ function buildUIFromData(raw){
   // Restore free-only (OpenRouter)
   let freeOnly = false;
   try {
-    freeOnly = isOpenRouter && (localStorage.getItem('openrouter_free_only') === '1');
+    freeOnly = isOpenRouter && (_safeLsGet('openrouter_free_only', '0') === '1');
     if(freeCb) freeCb.checked = freeOnly;
   } catch(e) {}
 
   // Restore model search query per provider
   try {
     const key = _storageKeyForModelQuery(p);
-    const savedQ = localStorage.getItem(key) || '';
+    const savedQ = _safeLsGet(key, '') || '';
     const inp = document.getElementById('modelSearch');
     if(inp) inp.value = savedQ;
   } catch(e) {}
@@ -3647,6 +3704,16 @@ async function run(c) {
 
 async function changeProvider() {
   const provider = document.getElementById('provider').value;
+  // Immediately align provider-specific controls to avoid stale UI states.
+  try {
+    const freeRow = document.getElementById('freeOnlyRow');
+    const freeCb = document.getElementById('freeOnly');
+    const isOpenRouter = (provider === 'openrouter');
+    if(freeRow) freeRow.style.display = isOpenRouter ? 'block' : 'none';
+    if(!isOpenRouter && freeCb) freeCb.checked = false;
+    const hfRow = document.getElementById('hfCatalogRow');
+    if(hfRow) hfRow.style.display = (provider === 'huggingface') ? 'flex' : 'none';
+  } catch(e) {}
   try {
     await _apiCall('panel_action', ['set_provider', {provider: provider}], 8000);
     await _apiCall('panel_action', ['refresh_models', {provider: provider}], 15000);
@@ -3655,6 +3722,7 @@ async function changeProvider() {
     return;
   }
   await buildUI();
+  try { setTimeout(() => { try { buildUI(); } catch(e) {} }, 250); } catch(e) {}
 }
 
 function changeModel() {
@@ -3767,7 +3835,7 @@ function clearChat(){
 function onModelSearch(){
   const p = (document.getElementById('provider') || {}).value || 'gemini';
   const q = (document.getElementById('modelSearch') || {}).value || '';
-  try { localStorage.setItem(_storageKeyForModelQuery(p), q); } catch(e) {}
+  _safeLsSet(_storageKeyForModelQuery(p), q);
   applyModelFilters();
 }
 
@@ -3816,7 +3884,7 @@ function toggleFreeOnly() {
   const cb = document.getElementById('freeOnly');
   if(p !== 'openrouter') return;
   const v = cb && cb.checked;
-  try { localStorage.setItem('openrouter_free_only', v ? '1' : '0'); } catch(e) {}
+  _safeLsSet('openrouter_free_only', (v ? '1' : '0'));
   applyModelFilters();
 }
 
@@ -3832,10 +3900,8 @@ async function refreshModels() {
 
 /* ---------- HF catalog hooks (optional; backend may ignore) ---------- */
 function onHFProviderFilterChange(){
-  try {
-    const v = (document.getElementById('hfProviderFilter') || {}).value || 'all';
-    localStorage.setItem('hf_provider_filter', v);
-  } catch(e) {}
+  const v = (document.getElementById('hfProviderFilter') || {}).value || 'all';
+  _safeLsSet('hf_provider_filter', v);
 }
 
 async function fetchHFCatalog(){
@@ -3846,9 +3912,9 @@ async function fetchHFCatalog(){
   try {
     topN = parseInt((document.getElementById('hfTopN') || {}).value || '200', 10);
     if(!isFinite(topN) || topN < 1) topN = 200;
-        try { if(window.localStorage){ localStorage.setItem('hfTopN', String(topN)); } } catch(e){}
+    _safeLsSet('hfTopN', String(topN));
     pf = (document.getElementById('hfProviderFilter') || {}).value || 'all';
-    localStorage.setItem('hf_catalog_topn', String(topN));
+    _safeLsSet('hf_catalog_topn', String(topN));
   } catch(e) {}
   try {
     await _apiCall('panel_action', ['hf_catalog', {top_n: topN, provider_filter: pf, force_refresh: true}], 20000);
@@ -6251,6 +6317,7 @@ class CSCRefiner:
         try:
             # 1. Command? -> Render via v192 pipeline if available (deterministic-ish), else legacy Markdown
             if is_command:
+                raw_response = normalize_known_markdown_control_headings(raw_response or "")
                 if _rendering_pipeline_v192 is not None:
                     try:
                         rctx = _rendering_pipeline_v192.RenderContext(
@@ -6274,6 +6341,7 @@ class CSCRefiner:
             if not getattr(self.gov_state, 'comm_active', False):
                 html_out = ""
                 try:
+                    raw_response = normalize_known_markdown_control_headings(raw_response or "")
                     if _rendering_pipeline_v192 is not None:
                         try:
                             rctx = _rendering_pipeline_v192.RenderContext(
@@ -6585,6 +6653,7 @@ class CSCRefiner:
             raw_for_render = re.sub(r'(?<!\n)\nQC-Matrix:', r'\n\nQC-Matrix:', raw_for_render)
             
             # E: Render (prefer v192 pipeline if available, else legacy Markdown+Sanitize+SD numbering)
+            raw_for_render = normalize_known_markdown_control_headings(raw_for_render or "")
             if _rendering_pipeline_v192 is not None:
                 try:
                     # For SD/labels we follow Answer Language (not UI language) because SD must be in Answer Language.
@@ -7703,16 +7772,24 @@ class CSCRefiner:
             except Exception:
                 fallback = ''
             prov_id = 'huggingface' if provider in ('huggingface','hf') else 'openrouter'
+            models = []
+            # Load provider-specific model candidates up-front so fallback can work
+            # even when a configured default model is invalid for the active provider.
+            try:
+                if provider in ('huggingface', 'hf'):
+                    if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
+                        models, _meta = pr.get_huggingface_models_cached(force_refresh=False)
+                    if (not models) and pr is not None and hasattr(pr, 'get_huggingface_models_from_config'):
+                        models = pr.get_huggingface_models_from_config() or []
+                else:
+                    if pr is not None and hasattr(pr, 'get_openrouter_models_cached'):
+                        models, _meta = pr.get_openrouter_models_cached(force_refresh=False)
+            except Exception:
+                models = []
             model = (model_override or self._provider_model(prov_id, fallback_model=fallback) or '').strip()
             if not model:
                 # Optional: auto-pick first model from cached /models list (best-effort)
                 try:
-                    models, _meta = (pr.get_openrouter_models_cached(force_refresh=False) if pr is not None and hasattr(pr,'get_openrouter_models_cached') else ([], {}))
-                    if provider in ('huggingface','hf') and (not models):
-                        try:
-                            models = pr.get_huggingface_models_from_config() if pr is not None and hasattr(pr,'get_huggingface_models_from_config') else []
-                        except Exception:
-                            models = []
                     if models:
                         model = str(models[0]).strip()
                 except Exception:
@@ -7756,7 +7833,7 @@ class CSCRefiner:
                 cand.append(model)
                 # Optional explicit fallback list from config
                 provs = (self.cfg_mgr.config or {}).get('providers') or {}
-                pconf = provs.get(provider) if isinstance(provs, dict) else {}
+                pconf = provs.get(prov_id) if isinstance(provs, dict) else {}
                 fb = (pconf or {}).get('fallback_models') if isinstance(pconf, dict) else None
                 if isinstance(fb, list):
                     for x in fb:
@@ -7781,7 +7858,10 @@ class CSCRefiner:
                 pass
 
             # Keep attempts bounded.
-            cand = cand[:5] if isinstance(cand, list) else [model]
+            # Hugging Face catalogs can contain many provider-specific entries where early
+            # candidates may fail with 4xx; allow a slightly wider search window there.
+            _max_cand = 12 if provider in ('huggingface', 'hf') else 5
+            cand = cand[:_max_cand] if isinstance(cand, list) else [model]
 
             last_err = None
             for mi, mname in enumerate(cand):
@@ -10472,18 +10552,14 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
             data['current_model'] = cm
         except Exception:
             pass
-        # Available models list
+        # Available models list (must stay fast and local: no network here)
         try:
             models = []
             if curp == 'gemini':
                 models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3-flash', 'gemini-1.5-pro']
             elif curp == 'openrouter':
-                pr = getattr(self, 'provider_router', None)
-                if pr is not None and hasattr(pr, 'get_openrouter_models_cached'):
-                    models, meta = pr.get_openrouter_models_cached(force_refresh=False)
-                    data['openrouter_models_meta'] = meta
-                else:
-                    models = []
+                # Use warmed in-memory cache only; avoid live fetch in get_ui().
+                models = self.get_available_models(curp)
             elif curp == 'huggingface':
                 pr = getattr(self, 'provider_router', None)
                 models = []
@@ -10492,29 +10568,10 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
                 data['hf_catalog_default_top_n'] = int(getattr(self, 'hf_catalog_top_n', 200) or 200)
                 data['hf_catalog_default_provider_filter'] = (getattr(self, 'hf_catalog_provider_filter', 'all') or 'all')
 
-                # 1) Prefer HF Hub catalog (cached) when available (default: Top 200, all providers)
-                try:
-                    if pr is not None and hasattr(pr, 'get_huggingface_catalog_cached'):
-                        cat_models, cat_meta = pr.get_huggingface_catalog_cached(top_n=int(getattr(self, 'hf_catalog_top_n', int(data.get('hf_catalog_default_top_n', 200) or 200)) or 200),
-                                                                               provider_filter=(getattr(self, 'hf_catalog_provider_filter', 'all') or 'all'),
-                                                                               force_refresh=False)
-                        if cat_models:
-                            models = cat_models
-                            data['huggingface_catalog_meta'] = cat_meta
-                except Exception:
-                    pass
+                # 1) Use warmed in-memory cache only; avoid live fetch in get_ui().
+                models = self.get_available_models(curp)
 
-                # 2) Otherwise: HF router /models cache (may be unavailable)
-                if not models:
-                    meta = {'source': 'none'}
-                    try:
-                        if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
-                            models, meta = pr.get_huggingface_models_cached(force_refresh=False)
-                            data['huggingface_models_meta'] = meta
-                    except Exception:
-                        models = []
-
-                # 3) Fallback: configured HF models list
+                # 2) Fallback: configured HF models list (local config/key file)
                 if not models:
                     try:
                         if pr is not None and hasattr(pr, 'get_huggingface_models_from_config'):

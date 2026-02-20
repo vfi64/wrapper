@@ -14,6 +14,12 @@ _EVIDENCE_COLOR = {
     "RED": "#c62828",
     "GRAY": "#616161",
 }
+_EVIDENCE_ICON = {
+    "GREEN": "🟢",
+    "YELLOW": "🟡",
+    "RED": "🔴",
+    "GRAY": "⚪",
+}
 
 def _get_css_sanitizer():
     """Return a Bleach CSSSanitizer allowing only the minimal inline styles we inject."""
@@ -33,14 +39,11 @@ def apply_color_spans(text: str, enabled: bool = True) -> str:
         return text
 
     def repl(m: re.Match) -> str:
-        tag = m.group("tag")
-        suffix = m.group("suffix") or ""
+        tag = (m.group("tag") or "").upper()
         emoji = m.group("emoji") or ""
         color = _EVIDENCE_COLOR.get(tag, "#616161")
-        token = f"[{tag}{suffix}]"
-        if emoji:
-            token = f"{token} {emoji}"
-        return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
+        icon = emoji or _EVIDENCE_ICON.get(tag, "⚪")
+        return f"<span style=\"color:{color}; font-weight:600;\">{icon}</span>"
 
     pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?")
     return pat.sub(repl, text)
@@ -52,13 +55,10 @@ def _reapply_color_styles_if_stripped(html_text: str) -> str:
 
     def repl(m: re.Match) -> str:
         tag = (m.group("tag") or "").upper()
-        suffix = m.group("suffix") or ""
         emoji = m.group("emoji") or ""
         color = _EVIDENCE_COLOR.get(tag, "#616161")
-        token = f"[{tag}{suffix}]"
-        if emoji:
-            token = f"{token} {emoji}"
-        return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
+        icon = emoji or _EVIDENCE_ICON.get(tag, "⚪")
+        return f"<span style=\"color:{color}; font-weight:600;\">{icon}</span>"
 
     pat = re.compile(
         r"<span\s+style=\"\"\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",

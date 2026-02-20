@@ -1,27 +1,16 @@
-# Secrets
 Config/Comm-SCI-API-Keys.json
 *.env
 .env
 .env.*
 
-# Laufzeitdaten: Logs, Exporte, Caches
 Logs/**
 !Logs/**/
 !Logs/**/.gitkeep
 !Logs/**/.gitikeep
-exports/
-cache/
-Config/huggingface_catalog_cache.json
-Config/huggingface_models_cache.json
-Config/openrouter_models_cache.json
-output.txt
-Config/output.txt
 
-# Build-/Temp-Dateien
 __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
 
-# Maschinenspezifische Dateien
 .DS_Store

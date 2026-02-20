@@ -39,17 +39,15 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 - Add a minimal observability hook: `log_event(kind, payload)` (or equivalent).
 - Add invariants/guards (visible provider switch; stable defaults; UI payload shape).
 
-S0 acceptance checklist:
-- [x] In-code Golden Run checklist is present (`GOLDEN_RUN_STUFE0`).
-- [x] `log_event(kind, payload)` is present and fail-safe.
-- [x] Provider/model switch emits observable events.
-- [ ] Manual Golden Run walkthrough is documented in release notes per change.
+#### S0 acceptance checklist
+- [ ] `GOLDEN_RUN_STUFE0` exists and contains startup/panel/provider/export/QC-relevant steps.
+- [ ] `Api.log_event(...)` is callable fail-safe and appends JSON-safe session events.
+- [ ] Provider switch emits a visible event trail (`provider_switch`) in observability data.
+- [ ] Smoke tests run locally without network calls (`pytest -q` from project root).
 
-S0 test focus:
-- `tests/test_stage0_baseline.py` validates:
-  - Golden checklist presence and essential entries.
-  - `log_event` append behavior.
-  - Provider switch visibility in `session_events`.
+#### S0 test focus (current repo)
+- `tests/test_stage0_baseline.py`
+- Existing baseline guards in `tests/test_app.py` (startup defaults, UI header/title invariants, no-network smoke).
 
 ### S1 — Clear internal boundaries (still single file)
 **Goal:** make later extraction safe by defining contracts first.
