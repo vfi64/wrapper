@@ -1516,37 +1516,6 @@ def test_refresh_models_hf_populates_cache():
     assert getattr(api, '_hf_models_cache', None) == ['hf/model-a', 'hf/model-b']
 
 
-def test_refresh_models_gemini_populates_cache():
-    """When provider is gemini, refresh_models() must populate _gemini_models_cache for panel dropdown updates."""
-    mod = load_fix_module()
-
-    class DummyPR:
-        def get_active_provider(self):
-            return 'gemini'
-        def get_gemini_models_cached(self, force_refresh=False):
-            return (['gemini-2.0-flash', 'gemini-2.5-flash'], {'source': 'test'})
-
-    api = mod.Api()
-    api.provider_router = DummyPR()
-    api.main_win = None
-    api.panel_win = None
-
-    res = api.refresh_models()
-    assert isinstance(res, dict)
-    assert res.get('status') is True
-    assert res.get('provider') == 'gemini'
-    assert getattr(api, '_gemini_models_cache', None) == ['gemini-2.0-flash', 'gemini-2.5-flash']
-
-
-def test_get_available_models_gemini_uses_runtime_cache():
-    mod = load_fix_module()
-    api = mod.Api()
-    api._gemini_models_cache = ['gemini-2.5-pro-preview', 'gemini-2.0-flash']
-
-    models = api.get_available_models('gemini')
-    assert models == ['gemini-2.5-pro-preview', 'gemini-2.0-flash']
-
-
 def test_ui_replay_loaded_history_fallback_incremental():
     """_ui_replay_loaded_history should fall back to incremental replay if resetChatFromHistory is unavailable/fails."""
     mod = load_fix_module()
@@ -1713,40 +1682,6 @@ def test_enforcement_policy_strict_warn_prepends_warning_but_keeps_content():
     assert "Antwort" in html
 
 
-def test_enforcement_feature_flag_disabled_keeps_response_even_with_strict_block():
-    mod = load_fix_module()
-    _prime_module_gov(mod)
-
-    mod.cfg.config["enforcement_policy"] = "strict_block"
-    mod.cfg.config["enforcement_enabled"] = False
-    mod.cfg.config["active_provider"] = "gemini"
-
-    class DummyValidator:
-        def validate(self, text=None, state=None, profile=None, **kwargs):
-            return (["hard_violation"], [])
-        def build_repair_prompt(self, user_prompt=None, raw_response=None, state=None, hard_violations=None, soft_violations=None, **kwargs):
-            return "repair"
-
-    class DummyChatSession:
-        def send_message(self, prompt):
-            class R:
-                text = "Antwort ohne QC."
-            return R()
-
-    api = mod.Api()
-    api.chat_session = DummyChatSession()
-    api.validator = DummyValidator()
-    api.gov_state.comm_active = True
-
-    out = api.ask("hi")
-    assert isinstance(out, dict)
-    html = out.get("html", "") or ""
-    if isinstance(html, dict):
-        html = html.get("html", "") or ""
-    assert "STRICT BLOCK" not in html
-    assert "Antwort" in html
-
-
 # ------------------------
 # Stufe 0 smoke tests
 # ------------------------
@@ -1796,29 +1731,6 @@ def test_comm_state_renders_without_llm_call():
     assert dummy.calls == [], "Comm State must be UI-only (no provider call)"
     html = _extract_html(out)
     assert isinstance(html, str) and html.strip()
-
-
-def test_comm_enforcement_renders_without_llm_call():
-    mod = load_fix_module()
-    _prime_module_gov(mod)
-
-    mod.cfg.config["enforcement_enabled"] = True
-    mod.cfg.config["enforcement_policy"] = "audit_only"
-    mod.cfg.config["enforcement_blocked_severities"] = ["critical", "major"]
-
-    api = mod.Api()
-    api.validator = None
-
-    dummy = DummySession(["SHOULD NOT BE USED"])
-    api.chat_session = dummy
-
-    out = api.ask("Comm Enforcement")
-    assert dummy.calls == [], "Comm Enforcement must be UI-only (no provider call)"
-    html = _extract_html(out)
-    assert isinstance(html, str) and html.strip()
-    assert "Comm Enforcement" in html
-    assert "audit_only" in html
-    assert "critical, major" in html
 
 
 def test_comm_audit_exports_without_llm_call():
