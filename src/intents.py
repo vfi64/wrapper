@@ -44,6 +44,19 @@ class ActivateDynamicOneShot:
     pass
 
 
+@dataclass(frozen=True)
+class ComplianceViolation:
+    rule: str
+    severity: str = "major"  # critical|major|minor
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class ProcessModelResponse:
+    raw_text: str
+    violations: tuple[ComplianceViolation, ...] = ()
+
+
 Intent = Union[
     ToggleComm,
     ToggleSCI,
@@ -53,6 +66,7 @@ Intent = Union[
     SetAnchorAuto,
     EnterSciRecursion,
     ActivateDynamicOneShot,
+    ProcessModelResponse,
 ]
 
 

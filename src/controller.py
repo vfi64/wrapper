@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from intents import Intent, intent_from_command
+from intents import Intent, ProcessModelResponse, intent_from_command
 from state import apply_state_to_runtime, state_from_runtime
 from transitions import apply_intent
 
@@ -38,7 +38,9 @@ def dispatch_intent(
         pass
 
     effects: List[str] = []
-    if token == "Comm Stop":
+    if isinstance(intent, ProcessModelResponse):
+        effects.append("enforcement_processed")
+    elif token == "Comm Stop":
         effects.append("recreate_session_without_governance")
     elif token == "Comm Start":
         effects.append("recreate_session_with_governance")

@@ -5,8 +5,10 @@ from typing import Any, Dict, List
 
 from intents import (
     ActivateDynamicOneShot,
+    ComplianceViolation,
     EnterSciRecursion,
     Intent,
+    ProcessModelResponse,
     SelectProfile,
     SetAnchorAuto,
     SetOverlay,
@@ -69,6 +71,45 @@ def _apply_comm_start_defaults(state: WrapperState, data: Dict[str, Any]) -> Wra
             new_state.sci_pending = False
             new_state.sci_variant = ""
     return new_state
+
+
+def _norm_policy(value: str) -> str:
+    p = (value or "").strip().lower()
+    if p in {"audit_only", "strict_warn", "strict_block"}:
+        return p
+    return "audit_only"
+
+
+def _norm_severity(value: str) -> str:
+    s = (value or "").strip().lower()
+    if s in {"critical", "major", "minor"}:
+        return s
+    return "major"
+
+
+def _warning_prefix(violations: list[ComplianceViolation]) -> str:
+    lines = ["⚠️ Compliance Warnung:", ""]
+    for v in violations:
+        sev = _norm_severity(v.severity).upper()
+        msg = (v.message or "").strip()
+        if msg:
+            lines.append(f"- [{sev}] {v.rule}: {msg}")
+        else:
+            lines.append(f"- [{sev}] {v.rule}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _blocked_text(violations: list[ComplianceViolation]) -> str:
+    lines = ["⛔ Antwort blockiert.", "", "Das Modell hat zwingende Regeln verletzt:"]
+    for v in violations:
+        sev = _norm_severity(v.severity).upper()
+        msg = (v.message or "").strip()
+        if msg:
+            lines.append(f"- [{sev}] {v.rule}: {msg}")
+        else:
+            lines.append(f"- [{sev}] {v.rule}")
+    return "\n".join(lines)
 
 
 def apply_intent(state: WrapperState, intent: Intent, ruleset_data: Dict[str, Any]) -> TransitionResult:
@@ -151,5 +192,39 @@ def apply_intent(state: WrapperState, intent: Intent, ruleset_data: Dict[str, An
         new_state.dynamic_nudge = "one-shot"
         events.append({"event": "dynamic_one_shot_armed"})
         return TransitionResult(new_state, [], events)
+
+    if isinstance(intent, ProcessModelResponse):
+        violations = list(intent.violations or [])
+        policy = _norm_policy(str(new_state.enforcement_policy or "audit_only"))
+        enabled = bool(new_state.enforcement_enabled)
+        blocked_set = {
+            _norm_severity(s)
+            for s in (new_state.blocked_severities or ["critical"])
+        } or {"critical"}
+
+        final_text = str(intent.raw_text or "")
+        action = "pass"
+        if enabled and violations:
+            if policy == "strict_block":
+                has_blocking = any(_norm_severity(v.severity) in blocked_set for v in violations)
+                if has_blocking:
+                    final_text = _blocked_text(violations)
+                    action = "blocked"
+            if action != "blocked" and policy == "strict_warn":
+                final_text = _warning_prefix(violations) + final_text
+                action = "warned"
+            if action == "pass":
+                action = "audited"
+
+        events.append(
+            {
+                "event": "response_enforcement_evaluated",
+                "policy": policy,
+                "enabled": enabled,
+                "violations_count": len(violations),
+                "action": action,
+            }
+        )
+        return TransitionResult(new_state, [final_text], events)
 
     return TransitionResult(new_state, [], events)

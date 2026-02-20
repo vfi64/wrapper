@@ -2576,6 +2576,39 @@ def test_qc_override_runtime_violations_detects_brevity_mismatch():
     assert any("Brevity" in v for v in vios)
 
 
+def test_normalize_known_markdown_control_headings_converts_generic_subheadings():
+    mod = load_fix_module()
+    raw = (
+        "#### Physikalische Perspektive\n"
+        "Text\n"
+        "### Subsection\n"
+        "## Another one\n"
+    )
+    out = mod.normalize_known_markdown_control_headings(raw)
+    assert "#### Physikalische Perspektive" not in out
+    assert "### Subsection" not in out
+    assert "## Another one" not in out
+    assert "<strong>Physikalische Perspektive:</strong>" in out
+    assert "<strong>Subsection:</strong>" in out
+    assert "<strong>Another one:</strong>" in out
+
+
+def test_html_number_self_debunking_numbers_weakness_lines_in_box():
+    mod = load_fix_module()
+    html_in = (
+        "<div class=\"self-debunking\">"
+        "<div>Selbst-Debunking:</div>\n"
+        "<div><strong>Schwäche</strong>: Punkt eins.</div>\n"
+        "<div><strong>Warum das wichtig ist</strong>: A.</div>\n"
+        "<div><strong>Schwäche</strong>: Punkt zwei.</div>\n"
+        "<div><strong>Warum das wichtig ist</strong>: B.</div>\n"
+        "</div>"
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "1. <strong>Schwäche</strong>" in out
+    assert "2. <strong>Schwäche</strong>" in out
+
+
 def test_cgi_user_feedback_triplet_is_intercepted_without_llm_call(tmp_path):
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -2974,3 +3007,169 @@ def test_toggle_btn_shows_action_not_state():
     assert '{label_prefix}: OFF' in body or 'label_prefix}: OFF' in body, "Toggle label does not show OFF when is_on=True"
     # And the else branch must show ON.
     assert '{label_prefix}: ON' in body or 'label_prefix}: ON' in body, "Toggle label does not show ON when is_on=False"
+
+def test_html_number_self_debunking_removes_orphan_markers_and_no_double_prefix():
+    mod = load_fix_module()
+    html_in = (
+        "<div class=\"self-debunking\">"
+        "<div>Selbst-Debunking:</div>\n"
+        "<div>1.</div>\n"
+        "<div>Schwäche: Punkt eins.</div>\n"
+        "<div>Warum das wichtig ist: A.</div>\n"
+        "<div>2.</div>\n"
+        "<div>2. Schwäche: Punkt zwei.</div>\n"
+        "<div>Warum das wichtig ist: B.</div>\n"
+        "</div>"
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "<div>1.</div>" not in out
+    assert "<div>2.</div>" not in out
+    assert "2. 2." not in out
+    assert "1. <strong>Schwäche</strong>: Punkt eins." in out
+    assert "2. <strong>Schwäche</strong>: Punkt zwei." in out
+
+def test_normalize_known_markdown_control_headings_converts_prefixed_subheadings():
+    mod = load_fix_module()
+    raw = (
+        "[GREEN] ### Kulturelle Perspektive\n"
+        "🟡 #### Physikalische Perspektive\n"
+        "• ## Historische Perspektive\n"
+    )
+    out = mod.normalize_known_markdown_control_headings(raw)
+    assert "### Kulturelle Perspektive" not in out
+    assert "#### Physikalische Perspektive" not in out
+    assert "## Historische Perspektive" not in out
+    assert "<strong>Kulturelle Perspektive:</strong>" in out
+    assert "<strong>Physikalische Perspektive:</strong>" in out
+    assert "<strong>Historische Perspektive:</strong>" in out
+
+
+def test_normalize_self_debunking_numbering_text_numbers_and_drops_orphans():
+    mod = load_fix_module()
+    raw = (
+        "Self-Debunking:\n"
+        "1.\n"
+        "Weakness: First point.\n"
+        "Why it matters: A.\n"
+        "2.\n"
+        "2. Weakness: Second point.\n"
+        "What would verify/falsify (next check): B.\n"
+        "\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ0)"
+    )
+    out = mod.normalize_self_debunking_numbering_text(raw, lang="de")
+    assert "\n1.\n" not in out
+    assert "\n2.\n" not in out
+    assert "1. Schwäche: First point." in out
+    assert "2. Schwäche: Second point." in out
+    assert "2. 2. Schwäche" not in out
+
+
+def test_strip_verification_route_display_lines_hides_train_fallback_lines():
+    mod = load_fix_module()
+    raw = (
+        "Antwortblock\n"
+        "Verification Route\n"
+        "Source: TRAIN (general background knowledge)\n"
+        "Measurement: not performed\n"
+        "Contrast: plausible alternative noted but not evaluated\n"
+        "Web-Check: not performed\n"
+        "Self-Debunking:\n"
+    )
+    out = mod.strip_verification_route_display_lines(raw)
+    assert "Verification Route" not in out
+    assert "Source: TRAIN" not in out
+    assert "Measurement: not performed" not in out
+    assert "Contrast: plausible alternative" not in out
+    assert "Web-Check: not performed" not in out
+    assert "Self-Debunking:" in out
+
+
+def test_build_repair_prompt_uses_answer_language_from_state():
+    mod = load_fix_module()
+    gov_mgr = types.SimpleNamespace(loaded=False, data={})
+    validator = mod.OutputComplianceValidator(gov_mgr, None)
+    state = types.SimpleNamespace(answer_language="de", sci_variant="", sci_active=False, qc_overrides={})
+    prompt = validator.build_repair_prompt(
+        user_prompt="Was ist Zeit?",
+        raw_response="SCI Trace:\n1. Plan:\nTime is ...",
+        state=state,
+        hard_violations=["Missing SCI Trace step"],
+        soft_violations=[],
+    )
+    assert "Render explanatory text in German" in prompt
+
+def test_normalize_self_debunking_numbering_text_handles_german_title_and_dedups():
+    mod = load_fix_module()
+    raw = (
+        "Selbst-Debunking:\n"
+        "1.\n"
+        "1. Schwäche: Punkt eins.\n"
+        "Warum das wichtig ist: A.\n"
+        "2.\n"
+        "2. Schwäche: Punkt zwei.\n"
+        "Warum das wichtig ist: B.\n"
+        "\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ0)"
+    )
+    out = mod.normalize_self_debunking_numbering_text(raw, lang="de")
+    assert "\n1.\n" not in out
+    assert "\n2.\n" not in out
+    assert "1. Schwäche: Punkt eins." in out
+    assert "2. Schwäche: Punkt zwei." in out
+    assert "2. 2. Schwäche" not in out
+
+
+def test_html_number_self_debunking_handles_single_line_html_block():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking"><div>Selbst-Debunking:</div><div>1.</div>'
+        '<div>1. Schwäche: Punkt eins.</div><div>Warum das wichtig ist: A.</div>'
+        '<div>2.</div><div>2. Schwäche: Punkt zwei.</div><div>Warum das wichtig ist: B.</div></div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "<div>1.</div>" not in out
+    assert "<div>2.</div>" not in out
+    assert "2. 2." not in out
+    assert "1. Schwäche: Punkt eins." in out or "1. <strong>Schwäche</strong>: Punkt eins." in out
+    assert "2. Schwäche: Punkt zwei." in out or "2. <strong>Schwäche</strong>: Punkt zwei." in out
+
+
+def test_normalize_hash_subheadings_in_html_converts_leaked_hash_titles():
+    mod = load_fix_module()
+    html_in = (
+        "<div>#### Kulturelle Zeit</div>\n"
+        "<div>### Ethische Implikationen</div>\n"
+        "<div>## Fazit</div>\n"
+    )
+    out = mod.normalize_hash_subheadings_in_html(html_in)
+    assert "#### Kulturelle Zeit" not in out
+    assert "### Ethische Implikationen" not in out
+    assert "## Fazit" not in out
+    assert "<strong>Kulturelle Zeit:</strong>" in out
+    assert "<strong>Ethische Implikationen:</strong>" in out
+    assert "<strong>Fazit:</strong>" in out
+
+def test_detect_self_debunking_numbered_html_detects_numbered_de_block():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">\n'
+        '<div>Selbst-Debunking:</div>\n'
+        '<div>1. <strong>Schwäche</strong>: Punkt eins.</div>\n'
+        '<div><strong>Warum das wichtig ist</strong>: A.</div>\n'
+        '<div>2. <strong>Schwäche</strong>: Punkt zwei.</div>\n'
+        '</div>'
+    )
+    assert mod.detect_self_debunking_numbered_html(html_in) is True
+
+
+def test_detect_self_debunking_numbered_html_false_when_only_orphan_numbers():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">\n'
+        '<div>Selbst-Debunking:</div>\n'
+        '<div>1.</div>\n'
+        '<div>2.</div>\n'
+        '</div>'
+    )
+    assert mod.detect_self_debunking_numbered_html(html_in) is False

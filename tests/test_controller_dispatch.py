@@ -1,5 +1,5 @@
 from controller import dispatch, dispatch_intent
-from intents import SelectProfile
+from intents import ComplianceViolation, ProcessModelResponse, SelectProfile
 from state import WrapperState
 
 
@@ -48,3 +48,19 @@ def test_controller_dispatch_intent_applies_profile_switch_effect():
     assert out.applied is True
     assert "profile_switch" in out.effects
     assert state.active_profile == "Expert"
+
+
+def test_controller_dispatch_intent_process_model_response_reports_enforcement_effect():
+    state = WrapperState(enforcement_policy="strict_warn", enforcement_enabled=True)
+    intent = ProcessModelResponse(
+        raw_text="Hallo",
+        violations=(ComplianceViolation(rule="SCI Trace", severity="major"),),
+    )
+    out = dispatch_intent(
+        intent=intent,
+        cmd="",
+        runtime_state=state,
+        ruleset_data={},
+    )
+    assert out.applied is True
+    assert "enforcement_processed" in out.effects

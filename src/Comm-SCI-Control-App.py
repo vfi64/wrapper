@@ -1967,12 +1967,12 @@ def normalize_evidence_tags(text: str) -> str:
 
 
 def normalize_known_markdown_control_headings(text: str) -> str:
-    """Normalize leaked Markdown heading markers for known control headings only.
+    """Normalize leaked Markdown heading markers for control and common subheadings.
 
-    Scope is intentionally narrow and deterministic:
-    - Only line-start Markdown headings for known wrapper headings are normalized.
-    - Code fences are preserved and never rewritten.
-    - No global markdown stripping.
+    Deterministic scope:
+    - Keep code fences untouched.
+    - Normalize known control headings (SCI Trace, Self-Debunking, ...).
+    - Normalize common content subheadings with ##/###/#### into bold lines.
     """
     if not text:
         return text
@@ -1980,19 +1980,66 @@ def normalize_known_markdown_control_headings(text: str) -> str:
     try:
         parts = str(text).split("```")
 
-        # Only normalize a strict whitelist to avoid changing arbitrary user/model markdown.
-        pat = re.compile(
+        # Normalize strict control-heading whitelist first.
+        pat_control = re.compile(
             r"(?im)^\s{0,3}#{1,6}\s*(Final Answer|SCI Trace|Self-Debunking|Selbst[- ]?Debunking)\s*:?\s*$"
         )
 
-        def _repl(m: re.Match) -> str:
+        def _repl_control(m: re.Match) -> str:
             title = (m.group(1) or "").strip()
             return f"<strong>{html.escape(title)}:</strong>"
 
+        # Then normalize generic content subheadings (##/###/####) to bold text.
+        # Keep this conservative: no empty headings, no very long lines.
+        # Accept optional evidence/linker prefixes and bullets before hashes.
+        pat_sub = re.compile(
+            r"(?im)^\s{0,3}"
+            r"(?:\[(?:GREEN|YELLOW|RED|GRAY)(?:-[A-Z0-9]+)*\]\s*)?"
+            r"(?:[🟢🟡🔴⚪⚪️]\s*)?"
+            r"(?:[•*\-]\s*)?"
+            r"#{2,4}\s*([^\n#][^\n]{0,120}?)\s*$"
+        )
+
+        def _repl_sub(m: re.Match) -> str:
+            title = (m.group(1) or "").strip()
+            if not title:
+                return m.group(0)
+            # Avoid double conversion if a control heading already matched.
+            if re.fullmatch(r"(?i)(Final Answer|SCI Trace|Self-Debunking|Selbst[- ]?Debunking)\s*:?", title):
+                return f"<strong>{html.escape(title.rstrip(':'))}:</strong>"
+            return f"<strong>{html.escape(title.rstrip(':'))}:</strong>"
+
         for i in range(0, len(parts), 2):
-            parts[i] = pat.sub(_repl, parts[i])
+            parts[i] = pat_control.sub(_repl_control, parts[i])
+            parts[i] = pat_sub.sub(_repl_sub, parts[i])
 
         return "```".join(parts)
+    except Exception:
+        return text
+
+
+def strip_verification_route_display_lines(text: str) -> str:
+    """Hide noisy verification-route marker lines from UI display.
+
+    Contract markers may be useful for validation/audit but reduce readability in chat.
+    This function is display-only and deterministic.
+    """
+    try:
+        if not text:
+            return text
+        out_lines = []
+        pats = [
+            re.compile(r"(?im)^\s*Verification\s+Route\s*:?\s*$"),
+            re.compile(r"(?im)^\s*Source\s*:\s*TRAIN\b.*$"),
+            re.compile(r"(?im)^\s*Measurement\s*:\s*not\s+performed\b.*$"),
+            re.compile(r"(?im)^\s*Contrast\s*:\s*plausible\s+alternative\b.*$"),
+            re.compile(r"(?im)^\s*Web[\s\-]*Check\s*:\s*not\s+performed\b.*$"),
+        ]
+        for ln in str(text).splitlines():
+            if any(p.match(ln or "") for p in pats):
+                continue
+            out_lines.append(ln)
+        return "\n".join(out_lines)
     except Exception:
         return text
 
@@ -2175,7 +2222,7 @@ def normalize_self_debunking_language(text: str, lang: str) -> str:
 
         # Isolate the Self-Debunking block up to the QC footer (or end of text).
         # We keep the section header unchanged but translate common label tokens inside.
-        m = re.search(r"(?is)(\bSelf-Debunking\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
         if not m:
             return text
 
@@ -2210,7 +2257,7 @@ def bold_self_debunking_labels(text: str, lang: str) -> str:
     try:
         if not text:
             return text
-        m = re.search(r"(?is)(\bSelf-Debunking\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
         if not m:
             return text
         block = m.group(1)
@@ -2247,86 +2294,235 @@ def bold_self_debunking_labels(text: str, lang: str) -> str:
     except Exception:
         return text
 
-def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
-    """Best-effort: add 1./2./3. numbering to Self-Debunking in already-rendered HTML.
 
-    This is a safety net for cases where earlier plain-text enforcement could not operate
-    (e.g., the Self-Debunking block was embedded in an HTML-rendered SCI Trace segment).
+def normalize_self_debunking_numbering_text(text: str, *, lang: str = "en") -> str:
+    """Ensure stable numbered Self-Debunking points in plain text before HTML rendering."""
+    try:
+        if not text:
+            return text
+        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        if not m:
+            return text
+
+        block = m.group(1)
+        lines = block.splitlines()
+        if not lines:
+            return text
+
+        out = []
+        n = 0
+        # Keep title line unchanged
+        out.append(lines[0])
+        for ln in lines[1:]:
+            s = (ln or "").strip()
+            # Remove orphan marker lines that cause visible double numbering.
+            if re.fullmatch(r"\d+\.", s or ""):
+                continue
+
+            if lang.lower().startswith("de"):
+                ln = re.sub(r"(?i)\bWeakness\b\s*:", "Schwäche:", ln)
+                ln = re.sub(r"(?i)\bWhy\s+it\s+matters\b\s*:", "Warum das wichtig ist:", ln)
+                ln = re.sub(
+                    r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\b\s*:",
+                    "Was würde verifizieren/falsifizieren (nächster Check):",
+                    ln,
+                )
+
+            # Number only the Weakness/Schwäche lead lines.
+            if re.match(
+                r"(?im)^\s*(?:\d+\.\s*)?(?:\*\*|__)?(?:Weakness|Schwäche)(?:\*\*|__)?\s*:",
+                ln or "",
+            ):
+                n += 1
+                ln = re.sub(r"(?im)^\s*\d+\.\s*", "", ln, count=1)
+                ln = f"{n}. {ln.lstrip()}"
+            out.append(ln)
+
+        start, end = m.span(1)
+        return text[:start] + "\n".join(out) + text[end:]
+    except Exception:
+        return text
+
+
+def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
+    """Best-effort: add stable 1./2./3. numbering to Self-Debunking in rendered HTML.
+
+    Safety goals:
+    - Never inject numbering inside existing <ol> lists.
+    - Remove orphan list-marker lines like "1." that can appear after Markdown conversion.
+    - Keep exactly one numeric prefix on each Weakness/Schwäche line.
     """
     try:
         if not html_text:
             return html_text
-        # Normalize tag boundaries so splitlines() can work even when HTML arrives as a single line.
-        html_text = html_text.replace('><', '><')
-        # Only proceed if the header exists.
+        # Normalize compact one-line HTML so line-wise processing can see block rows.
+        html_text = str(html_text).replace("><", ">\n<")
         if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", html_text) is None:
             return html_text
 
-        # Work line-wise to keep it simple.
-        lines = html_text.splitlines()
-        out = []
-        in_sd = False
-        in_ol = False
-        n = 0
-        for ln in lines:
-            if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", ln):
-                in_sd = True
-                in_ol = False
-                n = 0
-                out.append(ln)
-                continue
-            if in_sd:
-                # Localize common label fragments inside the Self-Debunking block.
+        def _normalize_block(body: str) -> str:
+            if '<ol' in body.lower():
+                return body
+
+            # Drop standalone marker lines ("1.", "2.") that cause visible double numbering.
+            body = re.sub(
+                r'(?im)^\s*<div[^>]*>\s*\d+\.\s*</div>\s*$',
+                '',
+                body,
+            )
+            body = re.sub(
+                r'(?im)^\s*\d+\.\s*(?:<br\s*/?>\s*)?$',
+                '',
+                body,
+            )
+
+            n = 0
+            out_lines = []
+            for ln in body.splitlines():
+                # Localize the three canonical labels inside the block.
                 if lang.lower().startswith('de'):
                     ln = ln.replace('Weakness:', 'Schwäche:')
                     ln = ln.replace('Why it matters:', 'Warum das wichtig ist:')
                     ln = ln.replace('What would verify/falsify (next check):', 'Was würde verifizieren/falsifizieren (nächster Check):')
+                    ln = ln.replace('<strong>Weakness</strong>:', '<strong>Schwäche</strong>:')
+                    ln = ln.replace('<strong>Why it matters</strong>:', '<strong>Warum das wichtig ist</strong>:')
+                    ln = ln.replace(
+                        '<strong>What would verify/falsify (next check)</strong>:',
+                        '<strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:'
+                    )
                 else:
                     ln = ln.replace('Schwäche:', 'Weakness:')
                     ln = ln.replace('Warum das wichtig ist:', 'Why it matters:')
                     ln = ln.replace('Was würde verifizieren/falsifizieren (nächster Check):', 'What would verify/falsify (next check):')
 
-                # Bold the label token before the colon (formatting only).
-                try:
-                    for lab in (
-                        'Weakness', 'Schwäche',
-                        'Why it matters', 'Warum relevant', 'Warum das wichtig ist',
-                        'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
-                        'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
-                        'Next check', 'Nächster Check',
-                    ):
-                        ln = re.sub(rf"\b{re.escape(lab)}\s*:", rf"<strong>{lab}</strong>:", ln)
-                except Exception:
-                    pass
+                # Bold known labels (formatting only).
+                for lab in (
+                    'Weakness', 'Schwäche',
+                    'Why it matters', 'Warum relevant', 'Warum das wichtig ist',
+                    'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
+                    'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
+                    'Next check', 'Nächster Check',
+                ):
+                    ln = re.sub(rf"\b{re.escape(lab)}\s*:", rf"<strong>{lab}</strong>:", ln)
 
-                # Stop when QC footer starts.
-                if re.search(r"(?i)>\s*QC(?:-Matrix)?\s*:", ln) or re.search(r"(?im)^\s*QC(?:-Matrix)?\s*:", re.sub(r"<[^>]+>","",ln)):
-                    in_sd = False
-                    out.append(ln)
-                    continue
-                # Track whether the Self-Debunking section is already an ordered list (<ol>).
-                # If yes, DO NOT inject "1." prefixes into <div>/<li> lines (would cause double numbering).
-                if "<ol" in ln.lower():
-                    in_ol = True
-                if "</ol" in ln.lower():
-                    in_ol = False
-
-                # Number the first line of each point when it starts with Weakness/Schwäche.
-                plain = re.sub(r"<[^>]+>", "", ln).strip()
-                if (not in_ol) and re.match(r"(?i)^(Weakness|Schwäche)\b\s*:", plain):
+                # Count/number only Weakness lines.
+                plain = re.sub(r'<[^>]+>', '', ln).strip()
+                if re.match(r'(?i)^(?:\d+\.\s*)?(Weakness|Schwäche)\b\s*:', plain):
                     n += 1
-                    if n <= 6 and (f"{n}." not in plain):
-                        # Insert "n. " after the opening <div> or at line start.
-                        if "<div" in ln:
-                            ln = re.sub(r"(<div[^>]*>\s*)", r"\1" + str(n) + ". ", ln, count=1)
-                        else:
-                            ln = f"{n}. " + ln
+                    # Remove any existing numeric prefix immediately after opening div/start.
+                    ln = re.sub(r'(?i)(<div[^>]*>\s*)\d+\.\s*', r'\1', ln, count=1)
+                    ln = re.sub(r'(?i)^\s*\d+\.\s*', '', ln, count=1)
+                    if '<div' in ln:
+                        ln = re.sub(r'(<div[^>]*>\s*)', lambda m: f"{m.group(1)}{n}. ", ln, count=1)
+                    else:
+                        ln = f'{n}. ' + ln
+
+                out_lines.append(ln)
+
+            return '\n'.join([x for x in out_lines if x is not None])
+
+        # Primary path: normalize explicit self-debunking boxes.
+        block_re = re.compile(
+            r'(?is)(<div[^>]*class=(?:"|\')[^"\']*self-debunking[^"\']*(?:"|\')[^>]*>)(.*?)(</div>)'
+        )
+
+        def _block_sub(mb: re.Match) -> str:
+            return mb.group(1) + _normalize_block(mb.group(2)) + mb.group(3)
+
+        out_text = block_re.sub(_block_sub, html_text)
+
+        # Fallback path: line-wise region between Self-Debunking header and QC footer.
+        lines = out_text.splitlines()
+        out = []
+        in_sd = False
+        chunk = []
+
+        def _flush_chunk() -> None:
+            nonlocal chunk
+            if chunk:
+                out.extend(_normalize_block('\n'.join(chunk)).splitlines())
+                chunk = []
+
+        for ln in lines:
+            plain = re.sub(r'<[^>]+>', '', ln)
+            if (not in_sd) and re.search(r'(?i)Self-Debunking|Selbst[- ]?Debunking', plain):
+                in_sd = True
                 out.append(ln)
+                continue
+            if in_sd and re.search(r'(?im)^\s*QC(?:-Matrix)?\s*:', plain):
+                _flush_chunk()
+                in_sd = False
+                out.append(ln)
+                continue
+            if in_sd:
+                chunk.append(ln)
             else:
                 out.append(ln)
-        return "\n".join(out)
+
+        _flush_chunk()
+        return '\n'.join(out)
     except Exception:
         return html_text
+
+
+def normalize_hash_subheadings_in_html(html_text: str) -> str:
+    """Final safety net: convert leaked ##/###/#### headings in rendered HTML to bold lines."""
+    try:
+        if not html_text:
+            return html_text
+        out = str(html_text)
+        out = out.replace("><", ">\n<")
+        pat = re.compile(
+            r"(?im)^(\s*(?:\[(?:GREEN|YELLOW|RED|GRAY)(?:-[A-Z0-9]+)*\]\s*)?(?:[🟢🟡🔴⚪⚪️]\s*)?(?:[•*\-]\s*)?)#{2,4}\s*([^\n<]{1,120})\s*$"
+        )
+        pat_tag = re.compile(
+            r"(?is)^(\s*<(?P<tag>div|p|li)\b[^>]*>\s*)"
+            r"((?:\[(?:GREEN|YELLOW|RED|GRAY)(?:-[A-Z0-9]+)*\]\s*)?(?:[🟢🟡🔴⚪⚪️]\s*)?(?:[•*\-]\s*)?)"
+            r"#{2,4}\s*([^\n<]{1,120})\s*"
+            r"(</(?P=tag)>\s*)$"
+        )
+        lines = []
+        for ln in out.splitlines():
+            mt = pat_tag.match(ln or "")
+            if mt:
+                pre = mt.group(1) or ""
+                lead = mt.group(3) or ""
+                title = (mt.group(4) or "").strip().rstrip(":")
+                post = mt.group(5) or ""
+                if title:
+                    lines.append(f"{pre}{lead}<strong>{html.escape(title)}:</strong>{post}")
+                    continue
+            m = pat.match(ln or "")
+            if m:
+                lead = m.group(1) or ""
+                title = (m.group(2) or "").strip().rstrip(":")
+                if title:
+                    lines.append(f"{lead}<strong>{html.escape(title)}:</strong>")
+                    continue
+            lines.append(ln)
+        return "\n".join(lines)
+    except Exception:
+        return html_text
+
+
+def detect_self_debunking_numbered_html(html_text: str) -> bool:
+    """Audit helper: detect numbered Self-Debunking points in rendered HTML."""
+    try:
+        if not html_text:
+            return False
+        raw = str(html_text)
+        if re.search(r"(?i)self[- ]?debunking|selbst[- ]?debunking", raw) is None:
+            return False
+        plain = re.sub(r"<[^>]+>", "\n", raw)
+        m = re.search(
+            r"(?is)(Self[- ]?Debunking|Selbst[- ]?Debunking).*?(?:\n\s*QC(?:-Matrix)?\s*:|\Z)",
+            plain,
+        )
+        block = m.group(0) if m else plain
+        return bool(re.search(r"(?im)^\s*\d+\.\s*(Schwäche|Weakness)\b", block))
+    except Exception:
+        return False
+
 
 def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is_command: bool = False, lang: str = "en") -> str:
     """Deterministically enforce the Self-Debunking contract (2–3 numbered points) when required.
@@ -2369,7 +2565,9 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
         def _finalize_sd(t: str) -> str:
             # Apply language normalization first (for DE) then bold labels (formatting only).
             t2 = normalize_self_debunking_language(t, lang)
-            return bold_self_debunking_labels(t2, lang)
+            t2 = bold_self_debunking_labels(t2, lang)
+            t2 = normalize_self_debunking_numbering_text(t2, lang=lang)
+            return t2
 
         # Locate QC footer (insertion anchor)
         qc_m = re.search(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$", text)
@@ -4759,7 +4957,9 @@ class OutputComplianceValidator:
 
 
     def build_repair_prompt(self, *, user_prompt: str, raw_response: str, state, hard_violations: list, soft_violations: list):
-        lang = self._conversation_lang()
+        lang = (getattr(state, "answer_language", "") or "").strip().lower()
+        if lang not in ("de", "en"):
+            lang = self._conversation_lang()
         parts = []
         parts.append("CONTROL LAYER REPAIR REQUEST (one pass).")
         parts.append("You MUST output a corrected assistant message that complies with the active Comm-SCI ruleset.")
@@ -4819,6 +5019,12 @@ class OutputComplianceValidator:
                 parts.append(f"  - {s}")
             parts.append("- Each step must contain at least one substantive sentence; do NOT output empty step headers.")
             parts.append("- If content must be withheld, keep the step label and write: 'Redacted: <reason>'.")
+            try:
+                brev = int((getattr(state, "qc_overrides", {}) or {}).get("brevity", 2))
+            except Exception:
+                brev = 2
+            if brev <= 0:
+                parts.append("- Because Brevity=0 is active: each SCI Trace step must contain at least TWO substantive sentences.")
             parts.append("")
 
 
@@ -6539,7 +6745,7 @@ class CSCRefiner:
                     _raw_qc_count = len(_qc_pat.findall(str(raw_response or "")))
                     _html_qc_count = len(_qc_pat.findall(re.sub(r"<[^>]+>", "", str(html_out or ""))))
                     _sd_boxed = ("self-debunking" in str(html_out or "").lower()) or ("selbst-debunking" in str(html_out or "").lower())
-                    _sd_numbered = bool(re.search(r"<(?:b|strong)[^>]*>\s*1\s*\.", str(html_out or ""), re.IGNORECASE))
+                    _sd_numbered = detect_self_debunking_numbered_html(str(html_out or ""))
             
                     def _looks_like_rendered_html(h: str) -> bool:
                         if not h:
@@ -6728,6 +6934,13 @@ class CSCRefiner:
             # Enforce Self-Debunking contract deterministically (when required by JSON).
             try:
                 raw_for_render = enforce_self_debunking_contract(raw_for_render, gov, prof, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
+            except Exception:
+                pass
+            try:
+                raw_for_render = normalize_self_debunking_numbering_text(
+                    raw_for_render,
+                    lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
+                )
             except Exception:
                 pass
 
@@ -6925,6 +7138,13 @@ class CSCRefiner:
             if strict_banner_html:
                 alert_html = strict_banner_html + alert_html
 
+            # Display-only cleanup: hide VRG fallback marker lines in chat output.
+            # Validation already ran on raw_for_render above.
+            try:
+                raw_for_render = strip_verification_route_display_lines(raw_for_render or "")
+            except Exception:
+                pass
+
             
             # B: Bilder einbetten
             raw_for_render = _auto_embed_image_urls(raw_for_render)
@@ -6971,6 +7191,19 @@ class CSCRefiner:
                 final_html_body = sanitize_self_debunking_markdown_in_html(final_html_body or "")
             except Exception:
                 pass
+            try:
+                final_html_body = normalize_hash_subheadings_in_html(final_html_body or "")
+            except Exception:
+                pass
+
+            # Ensure Self-Debunking points are visibly numbered in HTML on all render paths (v192 + legacy).
+            try:
+                final_html_body = html_number_self_debunking(
+                    final_html_body or "",
+                    lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
+                )
+            except Exception:
+                pass
             
             # F: Alerts + Body + Timestamp zusammenbauen
             # Render-failure behavior (Variant D = Auto):
@@ -6995,7 +7228,7 @@ class CSCRefiner:
                 _raw_qc_count = len(_qc_pat.findall(str(raw_for_render or "")))
                 _html_qc_count = len(_qc_pat.findall(re.sub(r"<[^>]+>", "", str(final_html_body or ""))))
                 _sd_boxed = ("self-debunking" in str(final_html_body or "").lower()) or ("selbst-debunking" in str(final_html_body or "").lower())
-                _sd_numbered = bool(re.search(r"<(?:b|strong)[^>]*>\s*1\s*\.", str(final_html_body or ""), re.IGNORECASE))
+                _sd_numbered = detect_self_debunking_numbered_html(str(final_html_body or ""))
                 _norm_summary = {
                     "qc_footer_raw_count": _raw_qc_count,
                     "qc_footer_html_count": _html_qc_count,
@@ -7092,7 +7325,10 @@ class CSCRefiner:
 
             # Small, explicit wrapper directives.
             lines = []
-            lines.append(f"[OUTPUT LANGUAGE] Final answer content in {lang_name} ({lang}). Keep ALL headings/labels/scaffolding in English.")
+            lines.append(
+                f"[OUTPUT LANGUAGE] Final answer and SCI Trace content in {lang_name} ({lang}). "
+                "Keep fixed protocol tokens/step labels unchanged."
+            )
             lines.append("[ANSWER LENGTH] Be slightly more detailed than minimal (+10-20%). Avoid one-liners.")
 
             # QC overrides (session-local): these should influence BOTH
@@ -7195,6 +7431,12 @@ class CSCRefiner:
 
                     if hints:
                         lines.append("[QC BEHAVIOR] " + " ".join(hints))
+                    try:
+                        sci_now = bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False))
+                    except Exception:
+                        sci_now = False
+                    if sci_now and isinstance(b, int) and b <= 0:
+                        lines.append("[SCI TRACE DETAIL] Brevity=0 is active: write at least two substantive sentences per SCI Trace step.")
             lines.append("")
             return "\n".join(lines) + raw
         except Exception:

@@ -24,6 +24,24 @@ def _default_overlay_from_ruleset(ruleset: Dict[str, Any], profile: str) -> str:
         return ""
 
 
+def _norm_enforcement_policy(value: str) -> str:
+    p = (value or "").strip().lower()
+    if p in {"audit_only", "strict_warn", "strict_block"}:
+        return p
+    return "audit_only"
+
+
+def _norm_blocked_severities(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return ["critical"]
+    out: list[str] = []
+    for item in value:
+        s = str(item or "").strip().lower()
+        if s in {"critical", "major", "minor"} and s not in out:
+            out.append(s)
+    return out or ["critical"]
+
+
 @dataclass
 class WrapperState:
     comm_active: bool = False
@@ -49,6 +67,9 @@ class WrapperState:
     sci_recursion_one_shot: bool = False
 
     qc_overrides: Dict[str, int] = field(default_factory=dict)
+    enforcement_policy: str = "audit_only"
+    enforcement_enabled: bool = True
+    blocked_severities: list[str] = field(default_factory=lambda: ["critical"])
 
 
 def state_from_runtime(runtime_state: Any) -> WrapperState:
@@ -74,6 +95,9 @@ def state_from_runtime(runtime_state: Any) -> WrapperState:
         sci_recursion_parent_variant=str(getattr(runtime_state, "sci_recursion_parent_variant", "") or ""),
         sci_recursion_one_shot=bool(getattr(runtime_state, "sci_recursion_one_shot", False)),
         qc_overrides=dict(getattr(runtime_state, "qc_overrides", {}) or {}),
+        enforcement_policy=_norm_enforcement_policy(str(getattr(runtime_state, "enforcement_policy", "audit_only") or "audit_only")),
+        enforcement_enabled=bool(getattr(runtime_state, "enforcement_enabled", True)),
+        blocked_severities=_norm_blocked_severities(getattr(runtime_state, "blocked_severities", ["critical"])),
     )
 
 
@@ -100,6 +124,21 @@ def init_state_from_ruleset(
         default_profile = "Standard"
 
     overlay = _default_overlay_from_ruleset(data, default_profile)
+    enforcement_cfg = data.get("enforcement") if isinstance(data.get("enforcement"), dict) else {}
+    policy = _norm_enforcement_policy(
+        str(
+            (enforcement_cfg.get("policy") if isinstance(enforcement_cfg, dict) else "")
+            or data.get("enforcement_policy")
+            or "audit_only"
+        )
+    )
+    enabled = bool(
+        (enforcement_cfg.get("enabled") if isinstance(enforcement_cfg, dict) else True)
+        if isinstance(enforcement_cfg, dict) else True
+    )
+    blocked = _norm_blocked_severities(
+        (enforcement_cfg.get("blocked_severities") if isinstance(enforcement_cfg, dict) else ["critical"])
+    )
     return WrapperState(
         comm_active=False,
         active_profile=default_profile,
@@ -111,4 +150,7 @@ def init_state_from_ruleset(
         sci_variant="",
         sci_active=False,
         sci_pending_turns=0,
+        enforcement_policy=policy,
+        enforcement_enabled=enabled,
+        blocked_severities=blocked,
     )
