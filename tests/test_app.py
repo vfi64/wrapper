@@ -2574,6 +2574,30 @@ def test_self_debunking_numbered_points_have_indented_continuations():
     assert re.search(r"(?m)^\s{3}\*\*Warum das wichtig ist\*\*:", out)
     assert re.search(r"(?m)^\s{3}\*\*Was würde verifizieren/falsifizieren \(nächster Check\)\*\*:", out)
 
+
+def test_sanitize_self_debunking_markdown_in_html_converts_bold_markers():
+    mod = load_fix_module()
+    html_in = (
+        "<div class=\"self-debunking\">"
+        "<div>**What would verify/falsify (next check)**: test.</div>"
+        "<div>__Weakness__: example.</div>"
+        "</div>"
+    )
+    out = mod.sanitize_self_debunking_markdown_in_html(html_in)
+    assert "**What would verify/falsify (next check)**" not in out
+    assert "__Weakness__" not in out
+    assert "<strong>What would verify/falsify (next check)</strong>" in out
+    assert "<strong>Weakness</strong>" in out
+
+
+def test_qc_override_runtime_violations_detects_brevity_mismatch():
+    mod = load_fix_module()
+    short_txt = "Kurze Antwort."
+    vios = mod.qc_override_runtime_violations(short_txt, {"brevity": 0})
+    assert isinstance(vios, list)
+    assert any("Brevity" in v for v in vios)
+
+
 def test_cgi_user_feedback_triplet_is_intercepted_without_llm_call(tmp_path):
     mod = load_fix_module()
     _prime_module_gov(mod)
