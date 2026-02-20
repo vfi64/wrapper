@@ -51,11 +51,13 @@ except Exception:
     _panel_normalize_ui = None  # type: ignore
 
 try:
-    from intents import intent_from_command as _intent_from_command  # type: ignore
+    from intents import intent_from_command as _intent_from_command, ProcessModelResponse as _ProcessModelResponse, ComplianceViolation as _ComplianceViolation  # type: ignore
     from state import state_from_runtime as _state_from_runtime, apply_state_to_runtime as _state_apply_to_runtime, init_state_from_ruleset as _state_init_from_ruleset  # type: ignore
     from transitions import apply_intent as _apply_intent  # type: ignore
 except Exception:
     _intent_from_command = None  # type: ignore
+    _ProcessModelResponse = None  # type: ignore
+    _ComplianceViolation = None  # type: ignore
     _state_from_runtime = None  # type: ignore
     _state_apply_to_runtime = None  # type: ignore
     _state_init_from_ruleset = None  # type: ignore
@@ -1995,6 +1997,168 @@ def normalize_known_markdown_control_headings(text: str) -> str:
         return text
 
 
+def sanitize_self_debunking_markdown_in_html(html_text: str) -> str:
+    """Normalize leaked markdown emphasis inside already-rendered Self-Debunking HTML blocks.
+
+    Deterministic scope:
+    - only runs if a self-debunking block exists
+    - converts `**label**` / `__label__` to `<strong>label</strong>`
+    - formatting only (no semantic rewrites)
+    """
+    try:
+        if not html_text:
+            return html_text
+        if re.search(r"(?is)class=(?:\"|')[^\"']*self-debunking[^\"']*(?:\"|')", html_text) is None:
+            return html_text
+        out = re.sub(r"\*\*([^*\n][^*\n]*?)\*\*", r"<strong>\1</strong>", html_text)
+        out = re.sub(r"__([^_\n][^_\n]*?)__", r"<strong>\1</strong>", out)
+        return out
+    except Exception:
+        return html_text
+
+
+def qc_override_runtime_violations(text: str, overrides: dict | None) -> list[str]:
+    """Deterministic best-effort checks for active QC overrides against runtime output."""
+    try:
+        ov = overrides if isinstance(overrides, dict) else {}
+        if not ov:
+            return []
+
+        canon = {
+            "clarity": "clarity",
+            "brevity": "brevity",
+            "evidence": "evidence",
+            "empathy": "empathy",
+            "consistency": "consistency",
+            "neutrality": "neutrality",
+            "klarheit": "clarity",
+            "kürze": "brevity",
+            "kuerze": "brevity",
+            "evidenz": "evidence",
+            "empathie": "empathy",
+            "konsistenz": "consistency",
+            "neutralität": "neutrality",
+            "neutralitaet": "neutrality",
+        }
+        ov_clean = {}
+        for k, v in ov.items():
+            kk = canon.get(str(k or "").strip().lower())
+            if not kk:
+                continue
+            try:
+                iv = int(v)
+            except Exception:
+                continue
+            ov_clean[kk] = max(0, min(3, iv))
+        if not ov_clean:
+            return []
+
+        raw = str(text or "")
+        plain = re.sub(r"<[^>]+>", " ", raw)
+        plain = re.sub(r"[ \t]+", " ", plain)
+        filtered = []
+        for ln in plain.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            if re.match(r"(?i)^(QC(?:-Matrix)?|Self-?Debunking|Selbst-?Debunking|SCI Trace)\b", s):
+                continue
+            if re.match(r"(?i)^(Plan|Solution|Check|Critic|Linguist|Logician|Adversary|Learn|Dialectic_[A-Za-z0-9_]+)\s*:?\s*$", s):
+                continue
+            filtered.append(s)
+        probe = " ".join(filtered).strip() or plain.strip()
+
+        words = re.findall(r"[A-Za-zÄÖÜäöüß0-9]+", probe)
+        wc = len(words)
+        sc = max(1, len(re.findall(r"[.!?](?:\s|$)", probe)))
+        avg_sent = (float(wc) / float(sc)) if sc else float(wc)
+
+        def _obs_brevity() -> int:
+            if wc >= 260:
+                return 0
+            if wc >= 170:
+                return 1
+            if wc >= 90:
+                return 2
+            return 3
+
+        def _obs_clarity() -> int:
+            has_structure = bool(re.search(r"(?im)^\s*(?:[-*•]|\d+\.)\s+", raw))
+            if has_structure and 8 <= avg_sent <= 24 and wc >= 80:
+                return 3
+            if wc >= 60 and 7 <= avg_sent <= 28:
+                return 2
+            if wc >= 30:
+                return 1
+            return 0
+
+        def _obs_evidence() -> int:
+            c = 0
+            c += len(re.findall(r"(?i)\b(Source|Measurement|Contrast|Web-?Check)\s*:", raw))
+            c += len(re.findall(r"\[(?:GREEN|YELLOW|RED|GRAY)(?:-(?:TRAIN|WEB|DOC))?\]", raw))
+            c += len(re.findall(r"https?://", raw))
+            if c >= 6:
+                return 3
+            if c >= 3:
+                return 2
+            if c >= 1:
+                return 1
+            return 0
+
+        def _obs_empathy() -> int:
+            c = len(re.findall(r"(?i)\b(Ich verstehe|I understand|gerne|helpful|hilfreich|danke|thanks)\b", probe))
+            if c >= 3:
+                return 3
+            if c >= 1:
+                return 2
+            return 1
+
+        def _obs_consistency() -> int:
+            contradictions = [
+                r"(?i)\b(always|immer)\b.*\b(never|niemals)\b",
+                r"(?i)\bist\b.*\bist nicht\b",
+                r"(?i)\bis\b.*\bis not\b",
+            ]
+            return 1 if any(re.search(p, probe) for p in contradictions) else 3
+
+        def _obs_neutrality() -> int:
+            loaded = len(re.findall(r"(?i)\b(unglaublich|katastrophal|lächerlich|idiotisch|ridiculous|disaster|obviously|clearly)\b", probe))
+            if loaded == 0:
+                return 3
+            if loaded <= 2:
+                return 2
+            if loaded <= 4:
+                return 1
+            return 0
+
+        obs_map = {
+            "brevity": _obs_brevity(),
+            "clarity": _obs_clarity(),
+            "evidence": _obs_evidence(),
+            "empathy": _obs_empathy(),
+            "consistency": _obs_consistency(),
+            "neutrality": _obs_neutrality(),
+        }
+        labels = {
+            "brevity": "Brevity",
+            "clarity": "Clarity",
+            "evidence": "Evidence",
+            "empathy": "Empathy",
+            "consistency": "Consistency",
+            "neutrality": "Neutrality",
+        }
+        out = []
+        for k, target in ov_clean.items():
+            observed = int(obs_map.get(k, target))
+            if observed != target:
+                out.append(
+                    f"QC-Override mismatch ({labels.get(k,k)}): target={target}, observed={observed} (deterministic runtime check)."
+                )
+        return out
+    except Exception:
+        return []
+
+
 def normalize_self_debunking_language(text: str, lang: str) -> str:
     """Translate Self-Debunking label tokens into the target language (currently DE),
     without changing the required header 'Self-Debunking' or adding new factual claims.
@@ -3324,7 +3488,7 @@ HTML_PANEL = """
       <option value="openrouter">Provider: OpenRouter</option>
       <option value="huggingface">Provider: Hugging Face</option>
     </select>
-    <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch /models and refresh cache (OpenRouter/HF)">Refresh Models</button>
+    <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch provider models and refresh cache (Gemini/OpenRouter/HF)">Refresh Models</button>
     <button class="smallbtn" id="qcOverrideBtn" onclick="run('QC Override')" title="QC Override">⚙ QC</button>
 </div>
 
@@ -3493,7 +3657,7 @@ function buildUIFromData(raw){
 
   const p = (data.current_provider || 'gemini');
   const btn = document.getElementById('refreshModelsBtn');
-  if(btn) btn.style.display = (p === 'openrouter' || p === 'huggingface') ? 'block' : 'none';
+  if(btn) btn.style.display = 'block';
 
   // HF catalog controls
   const hfRow = document.getElementById('hfCatalogRow');
@@ -6578,6 +6742,16 @@ class CSCRefiner:
                 raw_for_render = self._render_sci_trace_as_html_runtime(raw_for_render)
             except Exception:
                 pass
+
+            # Deterministic QC-override runtime checks (best-effort): detect obvious target/output mismatches.
+            override_vios = []
+            try:
+                _ovr_runtime = getattr(self.gov_state, 'qc_overrides', {}) or {}
+                override_vios = qc_override_runtime_violations(raw_for_render, _ovr_runtime)
+                if override_vios:
+                    alerts.append(("QC-Override", "; ".join(override_vios)))
+            except Exception:
+                override_vios = []
             
             # A: Header voranstellen
             if header:
@@ -6585,10 +6759,15 @@ class CSCRefiner:
             # Strict enforcement gate (optional): validate final text (pre-render) and optionally warn/block.
             strict_banner_html = ""
             try:
-                pol = self._get_enforcement_policy()
+                _ens = self._get_enforcement_settings()
+                pol = str((_ens or {}).get("policy") or "audit_only")
+                ens_enabled = bool((_ens or {}).get("enabled", True))
+                ens_blocked = list((_ens or {}).get("blocked_severities") or ["critical", "major"])
             except Exception:
                 pol = "audit_only"
-            if pol in ("strict_warn", "strict_block"):
+                ens_enabled = True
+                ens_blocked = ["critical", "major"]
+            if ens_enabled and pol in ("strict_warn", "strict_block"):
                 try:
                     hv2, sv2 = self.validator.validate(
                         raw_for_render,
@@ -6600,6 +6779,8 @@ class CSCRefiner:
                         user_prompt=user_raw,
                         raw_response=raw_for_render,
                     )
+                    if override_vios:
+                        hv2 = list(hv2 or []) + list(override_vios)
                 except Exception as e:
                     hv2, sv2 = [], []
                     # Fail-soft: show a warning in chat, but never crash.
@@ -6608,34 +6789,138 @@ class CSCRefiner:
                     except Exception:
                         pass
                 if hv2:
-                    if pol == "strict_block":
+                    # Build structured violations (code/message/severity) for incremental policy handling.
+                    vios_struct = []
+                    try:
+                        if _compliance_scan is not None and hasattr(_compliance_scan, "classify_violation_messages_best_effort"):
+                            vios_struct = _compliance_scan.classify_violation_messages_best_effort(
+                                [str(x) for x in (hv2 or [])],
+                                default_severity="critical",  # keep strict_block backward-compatible for current hard-validator path
+                            ) or []
+                    except Exception:
+                        vios_struct = []
+
+                    # New incremental path: evaluate strict action via modular transition intent.
+                    # Fallback to legacy behavior if modules are unavailable.
+                    strict_action = None
+                    try:
+                        if (
+                            _state_from_runtime is not None
+                            and _apply_intent is not None
+                            and _ProcessModelResponse is not None
+                            and _ComplianceViolation is not None
+                        ):
+                            dom_state = _state_from_runtime(self.gov_state)
+                            try:
+                                dom_state.enforcement_policy = pol
+                            except Exception:
+                                pass
+                            try:
+                                dom_state.enforcement_enabled = bool(ens_enabled)
+                            except Exception:
+                                dom_state.enforcement_enabled = True
+                            try:
+                                _bsl = [str(x).strip().lower() for x in (ens_blocked or []) if str(x).strip()]
+                                dom_state.blocked_severities = _bsl or ["critical", "major"]
+                            except Exception:
+                                dom_state.blocked_severities = ["critical", "major"]
+
+                            vio_objs = []
+                            if isinstance(vios_struct, list) and vios_struct:
+                                for vv in vios_struct:
+                                    if not isinstance(vv, dict):
+                                        continue
+                                    vio_objs.append(
+                                        _ComplianceViolation(
+                                            rule=str(vv.get("code") or "hard_violation"),
+                                            severity=str(vv.get("severity") or "critical"),
+                                            message=str(vv.get("message") or ""),
+                                        )
+                                    )
+                            else:
+                                for msg in hv2 or []:
+                                    vio_objs.append(
+                                        _ComplianceViolation(
+                                            rule="hard_violation",
+                                            severity="critical",
+                                            message=str(msg),
+                                        )
+                                    )
+
+                            tr = _apply_intent(
+                                dom_state,
+                                _ProcessModelResponse(raw_text=raw_for_render, violations=tuple(vio_objs)),
+                                {},
+                            )
+                            evs = list(getattr(tr, "audit_events", []) or [])
+                            if evs:
+                                strict_action = str((evs[-1] or {}).get("action") or "").strip().lower() or None
+                    except Exception:
+                        strict_action = None
+
+                    if strict_action is None:
+                        strict_action = "blocked" if pol == "strict_block" else "warned"
+
+                    if strict_action == "blocked":
+                        vio_lines = []
+                        if isinstance(vios_struct, list) and vios_struct:
+                            for vv in vios_struct:
+                                sev = str((vv or {}).get("severity") or "").strip().upper()
+                                msg = str((vv or {}).get("message") or "").strip()
+                                code = str((vv or {}).get("code") or "").strip()
+                                if msg:
+                                    vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(msg)}</li>")
+                                else:
+                                    vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(code)}</li>")
+                        else:
+                            vio_lines = [f"<li>{html.escape(str(x))}</li>" for x in hv2]
                         blocked_html = (
                             "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
                             "<summary>⛔ STRICT BLOCK (hard violations)</summary>"
                             "<div class='csc-details'>"
                             "<p>The model response was blocked by the wrapper because hard rule violations remained after repair/enforcement.</p>"
                             "<ul>"
-                            + "".join(f"<li>{html.escape(str(x))}</li>" for x in hv2)
+                            + "".join(vio_lines)
                             + "</ul>"
                             "<p><i>(Content withheld by wrapper)</i></p>"
                             "</div></details>"
                         )
                         try:
-                            return ({"html": sanitize_html(blocked_html), "text": "", "csc": None}, {"strict_enforcement": "blocked", "hard_violations": hv2})
+                            return (
+                                {"html": sanitize_html(blocked_html), "text": "", "csc": None},
+                                {"strict_enforcement": "blocked", "hard_violations": hv2, "violations_struct": vios_struct},
+                            )
                         except Exception:
-                            return ({"html": blocked_html, "text": "", "csc": None}, {"strict_enforcement": "blocked", "hard_violations": hv2})
+                            return (
+                                {"html": blocked_html, "text": "", "csc": None},
+                                {"strict_enforcement": "blocked", "hard_violations": hv2, "violations_struct": vios_struct},
+                            )
                     else:
-                        # strict_warn
-                        strict_banner_html = (
-                            "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
-                            "<summary>⚠️ RULE VIOLATION DETECTED (strict_warn)</summary>"
-                            "<div class='csc-details'>"
-                            "<p>The following response still contains hard rule violations after repair/enforcement:</p>"
-                            "<ul>"
-                            + "".join(f"<li>{html.escape(str(x))}</li>" for x in hv2)
-                            + "</ul>"
-                            "</div></details><hr>"
-                        )
+                        if strict_action == "warned":
+                            # strict_warn
+                            vio_lines = []
+                            if isinstance(vios_struct, list) and vios_struct:
+                                for vv in vios_struct:
+                                    sev = str((vv or {}).get("severity") or "").strip().upper()
+                                    msg = str((vv or {}).get("message") or "").strip()
+                                    code = str((vv or {}).get("code") or "").strip()
+                                    if msg:
+                                        vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(msg)}</li>")
+                                    else:
+                                        vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(code)}</li>")
+                            else:
+                                vio_lines = [f"<li>{html.escape(str(x))}</li>" for x in hv2]
+
+                            strict_banner_html = (
+                                "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
+                                "<summary>⚠️ RULE VIOLATION DETECTED (strict_warn)</summary>"
+                                "<div class='csc-details'>"
+                                "<p>The following response still contains hard rule violations after repair/enforcement:</p>"
+                                "<ul>"
+                                + "".join(vio_lines)
+                                + "</ul>"
+                                "</div></details><hr>"
+                            )
             # Strict warn: show banner above the normal alerts/content
             if strict_banner_html:
                 alert_html = strict_banner_html + alert_html
@@ -6680,6 +6965,12 @@ class CSCRefiner:
                     final_html_body = html_number_self_debunking(final_html_body, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
                 except Exception:
                     pass
+
+            # After HTML rendering, normalize leaked markdown emphasis inside self-debunking blocks.
+            try:
+                final_html_body = sanitize_self_debunking_markdown_in_html(final_html_body or "")
+            except Exception:
+                pass
             
             # F: Alerts + Body + Timestamp zusammenbauen
             # Render-failure behavior (Variant D = Auto):
@@ -9082,9 +9373,7 @@ class CSCRefiner:
         # Model lists (offline-fast): use in-memory caches warmed from disk; no network here.
         try:
             curp = data.get('current_provider', 'gemini')
-            if curp == 'gemini':
-                data['available_models'] = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-pro']
-            elif curp in ('openrouter', 'huggingface'):
+            if curp in ('gemini', 'openrouter', 'huggingface'):
                 data['available_models'] = self.get_available_models(curp)
         except Exception:
             pass
@@ -9236,6 +9525,17 @@ class CSCRefiner:
                         self._hf_models_cache = [str(m).strip() for m in models if str(m).strip()]
             except Exception:
                 pass
+            # Gemini cache
+            try:
+                p = pr._gemini_cache_path() if hasattr(pr, '_gemini_cache_path') else ''
+                if p and os.path.exists(p):
+                    raw = Path(p).read_text(encoding='utf-8')
+                    obj = json.loads(raw) if raw else {}
+                    models = obj.get('models') or []
+                    if isinstance(models, list):
+                        self._gemini_models_cache = [str(m).strip() for m in models if str(m).strip()]
+            except Exception:
+                pass
         except Exception:
             return
 
@@ -9244,10 +9544,13 @@ class CSCRefiner:
         try:
             p = (provider or '').strip().lower()
             if p == 'gemini':
-                # Keep stable, small default list (non-authoritative). User can type a model manually.
+                cache = getattr(self, '_gemini_models_cache', None)
+                if isinstance(cache, list) and cache:
+                    return cache
                 return [
                     'gemini-2.0-flash',
                     'gemini-2.5-flash',
+                    'gemini-3-flash',
                     'gemini-1.5-pro',
                 ]
             if p == 'openrouter':
@@ -9437,8 +9740,9 @@ class CSCRefiner:
             pass
 
     def refresh_models(self):
-        """Refresh provider model list cache (OpenRouter/Hugging Face best-effort).
+        """Refresh provider model list cache (Gemini/OpenRouter/Hugging Face best-effort).
 
+        - Gemini: refresh cached model list from Google GenAI models API (best-effort).
         - OpenRouter: refresh cached /models list.
         - Hugging Face: tries /models; if unavailable, keeps config-defined list.
         """
@@ -9446,6 +9750,26 @@ class CSCRefiner:
             pr = getattr(self, 'provider_router', None)
             curp = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else 'gemini')
             curp = (curp or 'gemini').strip().lower()
+
+            if curp == 'gemini':
+                models, meta = pr.get_gemini_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_gemini_models_cached') else ([], {})
+                try:
+                    self._gemini_models_cache = list(models) if isinstance(models, list) else []
+                except Exception:
+                    pass
+                try:
+                    if getattr(self, 'panel_win', None):
+                        self.panel_win.evaluate_js('window.refresh_panel && window.refresh_panel()')
+                except Exception:
+                    pass
+                try:
+                    if self.main_win:
+                        self.main_win.evaluate_js(
+                            f"addMsg('sys', 'Gemini models refreshed: {len(models)} (source: {meta.get('source','?')}).')"
+                        )
+                except Exception:
+                    pass
+                return {'status': True, 'provider': 'gemini', 'count': len(models), 'meta': meta}
 
             if curp == 'openrouter':
                 models, meta = pr.get_openrouter_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_openrouter_models_cached') else ([], {})
@@ -10556,7 +10880,8 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
         try:
             models = []
             if curp == 'gemini':
-                models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3-flash', 'gemini-1.5-pro']
+                # Use warmed in-memory cache only; avoid live fetch in get_ui().
+                models = self.get_available_models(curp)
             elif curp == 'openrouter':
                 # Use warmed in-memory cache only; avoid live fetch in get_ui().
                 models = self.get_available_models(curp)
@@ -11706,6 +12031,160 @@ class ProviderRouter:
         except Exception:
             return None
 
+    def _gemini_cache_path(self) -> str:
+        try:
+            return os.path.join(CONFIG_DIR, 'gemini_models_cache.json')
+        except Exception:
+            return 'gemini_models_cache.json'
+
+    def _gemini_default_models(self) -> list:
+        models = []
+        try:
+            m = self.get_provider_model('gemini', fallback_model='').strip()
+            if m:
+                models.append(m)
+        except Exception:
+            pass
+        for m in ('gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3-flash', 'gemini-1.5-pro'):
+            models.append(m)
+        seen = set()
+        uniq = []
+        for m in models:
+            s = str(m or '').strip()
+            if not s:
+                continue
+            k = s.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(s)
+        return uniq
+
+    def _normalize_gemini_model_name(self, raw_name: str) -> str:
+        s = str(raw_name or '').strip()
+        if s.startswith('models/'):
+            s = s.split('/', 1)[1].strip()
+        return s
+
+    def get_gemini_models_cached(self, *, force_refresh: bool = False):
+        """Return (models, meta) using a local cache plus best-effort live Gemini model listing.
+
+        meta: {'source': 'cache'|'cache-stale'|'live'|'fallback'|'none', 'age_s': int, 'count': int}
+        """
+        cache_path = self._gemini_cache_path()
+
+        cache_minutes = 30
+        try:
+            provs = (self.cfg.config or {}).get('providers') or {}
+            pconf = (provs.get('gemini') or {}) if isinstance(provs, dict) else {}
+            cache_minutes = int((pconf.get('model_cache_minutes') or 30) or 30)
+        except Exception:
+            cache_minutes = 30
+
+        now = time.time()
+        cached = None
+        try:
+            if os.path.exists(cache_path):
+                raw = Path(cache_path).read_text(encoding='utf-8')
+                cached = json.loads(raw) if raw else None
+        except Exception:
+            cached = None
+
+        def _extract_models(obj):
+            out = []
+            try:
+                src = (obj or {}).get('models') or []
+                if isinstance(src, list):
+                    for m in src:
+                        mm = self._normalize_gemini_model_name(m)
+                        if mm:
+                            out.append(mm)
+            except Exception:
+                out = []
+            seen = set()
+            uniq = []
+            for m in out:
+                k = m.lower()
+                if k in seen:
+                    continue
+                seen.add(k)
+                uniq.append(m)
+            return sorted(uniq, key=lambda s: s.lower())
+
+        age_s = 10**9
+        ts = 0.0
+        try:
+            ts = float((cached or {}).get('ts') or 0.0)
+            if ts > 0:
+                age_s = int(max(0.0, now - ts))
+        except Exception:
+            ts = 0.0
+            age_s = 10**9
+
+        models_cached = _extract_models(cached)
+        fresh = bool(ts) and (cache_minutes > 0) and (age_s <= int(cache_minutes * 60))
+        if fresh and (not force_refresh) and models_cached:
+            return models_cached, {'source': 'cache', 'age_s': age_s, 'count': len(models_cached)}
+
+        models_live = []
+        if genai is not None:
+            try:
+                key = (get_api_key() or '').strip()
+            except Exception:
+                key = ''
+            if key:
+                try:
+                    client = genai.Client(api_key=key)
+                    stream = client.models.list()
+                    for md in stream:
+                        try:
+                            name_raw = getattr(md, 'name', '')
+                            name = self._normalize_gemini_model_name(name_raw)
+                            if not name or not name.lower().startswith('gemini'):
+                                continue
+                            actions = getattr(md, 'supported_actions', None)
+                            if isinstance(actions, list) and actions:
+                                allow = False
+                                for a in actions:
+                                    aa = str(a or '').strip().lower()
+                                    if aa in ('generatecontent', 'generate_content'):
+                                        allow = True
+                                        break
+                                if not allow:
+                                    continue
+                            models_live.append(name)
+                        except Exception:
+                            continue
+                except Exception:
+                    models_live = []
+
+        if models_live:
+            seen = set()
+            uniq = []
+            for m in models_live:
+                k = str(m or '').strip().lower()
+                if not k or k in seen:
+                    continue
+                seen.add(k)
+                uniq.append(str(m).strip())
+            models_live = sorted(uniq, key=lambda s: s.lower())
+            try:
+                Path(cache_path).write_text(
+                    json.dumps({'ts': now, 'models': models_live}, ensure_ascii=False, indent=2),
+                    encoding='utf-8'
+                )
+            except Exception:
+                pass
+            return models_live, {'source': 'live', 'age_s': 0, 'count': len(models_live)}
+
+        if models_cached:
+            return models_cached, {'source': 'cache-stale', 'age_s': age_s, 'count': len(models_cached)}
+
+        fallback = self._gemini_default_models()
+        if fallback:
+            return fallback, {'source': 'fallback', 'age_s': age_s, 'count': len(fallback)}
+        return [], {'source': 'none', 'age_s': age_s, 'count': 0}
+
     def _openrouter_cache_path(self) -> str:
         try:
             return os.path.join(CONFIG_DIR, 'openrouter_models_cache.json')
@@ -12577,16 +13056,51 @@ class Api(CSCRefiner):
 
 
 
-    def _get_enforcement_policy(self) -> str:
-        """Return enforcement policy from config. Defaults to 'audit_only'."""
+    def _get_enforcement_settings(self) -> dict:
+        """Return normalized enforcement settings from config (fail-safe defaults)."""
+        conf = {}
         try:
-            pol = (getattr(cfg, "config", {}) or {}).get("enforcement_policy", "audit_only")
-            pol = str(pol).strip().lower()
+            conf = (getattr(cfg, "config", {}) or {})
+            if not isinstance(conf, dict):
+                conf = {}
+        except Exception:
+            conf = {}
+
+        nested = conf.get("enforcement")
+        if not isinstance(nested, dict):
+            nested = {}
+
+        try:
+            pol_raw = nested.get("policy", conf.get("enforcement_policy", "audit_only"))
+            pol = str(pol_raw or "audit_only").strip().lower()
         except Exception:
             pol = "audit_only"
         if pol not in ("audit_only", "strict_warn", "strict_block"):
             pol = "audit_only"
-        return pol
+
+        try:
+            enabled = bool(nested.get("enabled", conf.get("enforcement_enabled", True)))
+        except Exception:
+            enabled = True
+
+        raw_bs = nested.get("blocked_severities", conf.get("enforcement_blocked_severities", ["critical", "major"]))
+        bs = []
+        if isinstance(raw_bs, list):
+            for item in raw_bs:
+                s = str(item or "").strip().lower()
+                if s in ("critical", "major", "minor") and s not in bs:
+                    bs.append(s)
+        if not bs:
+            bs = ["critical", "major"]
+
+        return {"enabled": enabled, "policy": pol, "blocked_severities": bs}
+
+    def _get_enforcement_policy(self) -> str:
+        """Return normalized enforcement policy from config."""
+        try:
+            return str((self._get_enforcement_settings() or {}).get("policy") or "audit_only")
+        except Exception:
+            return "audit_only"
 
 
     def clear_chat(self):

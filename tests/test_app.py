@@ -1516,6 +1516,37 @@ def test_refresh_models_hf_populates_cache():
     assert getattr(api, '_hf_models_cache', None) == ['hf/model-a', 'hf/model-b']
 
 
+def test_refresh_models_gemini_populates_cache():
+    """When provider is gemini, refresh_models() must populate _gemini_models_cache for panel dropdown updates."""
+    mod = load_fix_module()
+
+    class DummyPR:
+        def get_active_provider(self):
+            return 'gemini'
+        def get_gemini_models_cached(self, force_refresh=False):
+            return (['gemini-2.0-flash', 'gemini-2.5-flash'], {'source': 'test'})
+
+    api = mod.Api()
+    api.provider_router = DummyPR()
+    api.main_win = None
+    api.panel_win = None
+
+    res = api.refresh_models()
+    assert isinstance(res, dict)
+    assert res.get('status') is True
+    assert res.get('provider') == 'gemini'
+    assert getattr(api, '_gemini_models_cache', None) == ['gemini-2.0-flash', 'gemini-2.5-flash']
+
+
+def test_get_available_models_gemini_uses_runtime_cache():
+    mod = load_fix_module()
+    api = mod.Api()
+    api._gemini_models_cache = ['gemini-2.5-pro-preview', 'gemini-2.0-flash']
+
+    models = api.get_available_models('gemini')
+    assert models == ['gemini-2.5-pro-preview', 'gemini-2.0-flash']
+
+
 def test_ui_replay_loaded_history_fallback_incremental():
     """_ui_replay_loaded_history should fall back to incremental replay if resetChatFromHistory is unavailable/fails."""
     mod = load_fix_module()
@@ -1679,6 +1710,41 @@ def test_enforcement_policy_strict_warn_prepends_warning_but_keeps_content():
         html = html.get("html", "") or ""
     assert "RULE VIOLATION DETECTED" in html
     # content should still be visible in strict_warn
+    assert "Antwort" in html
+
+
+def test_enforcement_disabled_bypasses_strict_block_and_warn():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    mod.cfg.config["enforcement_policy"] = "strict_block"
+    mod.cfg.config["enforcement_enabled"] = False
+    mod.cfg.config["active_provider"] = "gemini"
+
+    class DummyValidator:
+        def validate(self, text=None, state=None, profile=None, **kwargs):
+            return (["hard_violation"], [])
+        def build_repair_prompt(self, user_prompt=None, raw_response=None, state=None, hard_violations=None, soft_violations=None, **kwargs):
+            return "repair"
+
+    class DummyChatSession:
+        def send_message(self, prompt):
+            class R:
+                text = "Antwort ohne QC."
+            return R()
+
+    api = mod.Api()
+    api.chat_session = DummyChatSession()
+    api.validator = DummyValidator()
+    api.gov_state.comm_active = True
+
+    out = api.ask("hi")
+    assert isinstance(out, dict)
+    html = out.get("html", "") or ""
+    if isinstance(html, dict):
+        html = html.get("html", "") or ""
+    assert "STRICT BLOCK" not in html
+    assert "RULE VIOLATION DETECTED" not in html
     assert "Antwort" in html
 
 
@@ -2485,6 +2551,30 @@ def test_self_debunking_numbered_points_have_indented_continuations():
     # Critical: continuation lines must be indented (>=3 spaces) so they stay within list items
     assert re.search(r"(?m)^\s{3}\*\*Warum das wichtig ist\*\*:", out)
     assert re.search(r"(?m)^\s{3}\*\*Was würde verifizieren/falsifizieren \(nächster Check\)\*\*:", out)
+
+
+def test_sanitize_self_debunking_markdown_in_html_converts_bold_markers():
+    mod = load_fix_module()
+    html_in = (
+        "<div class=\"self-debunking\">"
+        "<div>**What would verify/falsify (next check)**: test.</div>"
+        "<div>__Weakness__: example.</div>"
+        "</div>"
+    )
+    out = mod.sanitize_self_debunking_markdown_in_html(html_in)
+    assert "**What would verify/falsify (next check)**" not in out
+    assert "__Weakness__" not in out
+    assert "<strong>What would verify/falsify (next check)</strong>" in out
+    assert "<strong>Weakness</strong>" in out
+
+
+def test_qc_override_runtime_violations_detects_brevity_mismatch():
+    mod = load_fix_module()
+    short_txt = "Kurze Antwort."
+    vios = mod.qc_override_runtime_violations(short_txt, {"brevity": 0})
+    assert isinstance(vios, list)
+    assert any("Brevity" in v for v in vios)
+
 
 def test_cgi_user_feedback_triplet_is_intercepted_without_llm_call(tmp_path):
     mod = load_fix_module()
