@@ -73,6 +73,11 @@ try:
 except Exception:
     _controller_dispatch_intent = None  # type: ignore
 
+try:
+    from governance_service import GovernanceService as _GovernanceService  # type: ignore
+except Exception:
+    _GovernanceService = None  # type: ignore
+
 # Stage 3e (CI): strict module mode. If enabled, missing extracted modules is a hard error.
 _STRICT_MODULES = (os.environ.get('WRAPPER_STRICT_MODULES', '') or '').strip().lower() in ('1', 'true', 'yes', 'on')
 if _STRICT_MODULES:
@@ -7622,6 +7627,54 @@ class CSCRefiner:
             # Fallback bei schwerem Error
             return f"<span style='color:red'>Runtime Error in Renderer: {e}</span>", None
 
+    def _normalize_raw_output_contracts(self, text: str, *, governance_enabled: bool, is_command: bool = False) -> str:
+        """Apply raw governance/output contract normalizations in deterministic order."""
+        repaired = text
+        lang = getattr(getattr(self, 'gov_state', None), 'answer_language', 'de')
+        profile_name = getattr(getattr(self, 'gov_state', None), 'active_profile', 'Standard') or 'Standard'
+
+        svc = getattr(self, 'governance_service', None)
+        if svc is not None and hasattr(svc, 'normalize_output_contracts'):
+            try:
+                return svc.normalize_output_contracts(
+                    repaired,
+                    gov_mgr=gov,
+                    profile_name=profile_name,
+                    governance_enabled=bool(governance_enabled),
+                    is_command=bool(is_command),
+                    lang=lang,
+                )
+            except Exception:
+                pass
+
+        try:
+            if not governance_enabled:
+                raise RuntimeError('governance disabled')
+            repaired = enforce_qc_footer_deltas(repaired, gov, profile_name)
+        except Exception:
+            pass
+        try:
+            repaired = normalize_evidence_tags(repaired)
+        except Exception:
+            pass
+        try:
+            if not governance_enabled:
+                raise RuntimeError('governance disabled')
+            repaired = enforce_self_debunking_contract(
+                repaired,
+                gov,
+                profile_name,
+                is_command=is_command,
+                lang=lang,
+            )
+        except Exception:
+            pass
+        try:
+            repaired = normalize_sci_trace_numbering(repaired, gov)
+        except Exception:
+            pass
+        return repaired
+
     def _apply_output_prefs_to_user_message(self, user_raw: str) -> str:
         """Apply wrapper-level preferences to the USER message only.
 
@@ -9333,28 +9386,11 @@ class CSCRefiner:
                         # --- Normalize RAW model output for validation (plain text only) ---
             repaired_raw = raw_resp
             governance_enabled_now = bool(getattr(self, 'session_with_governance', True))
-            try:
-                if not governance_enabled_now:
-                    raise RuntimeError('governance disabled')
-                _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                repaired_raw = enforce_qc_footer_deltas(repaired_raw, gov, _prof_now)
-            except Exception:
-                pass
-            try:
-                repaired_raw = normalize_evidence_tags(repaired_raw)
-            except Exception:
-                pass
-            try:
-                if not governance_enabled_now:
-                    raise RuntimeError('governance disabled')
-                _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                repaired_raw = enforce_self_debunking_contract(repaired_raw, gov, _prof_now, is_command=False, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
-            except Exception:
-                pass
-            try:
-                repaired_raw = normalize_sci_trace_numbering(repaired_raw, gov)
-            except Exception:
-                pass
+            repaired_raw = self._normalize_raw_output_contracts(
+                repaired_raw,
+                governance_enabled=governance_enabled_now,
+                is_command=False,
+            )
 
             # --- Validate + ONE repair pass for HARD violations (on RAW text, not HTML) ---
             repair_banner_html = ""
@@ -9454,26 +9490,11 @@ class CSCRefiner:
 
                         # Normalize again (raw text)
                         repaired_raw = raw2
-                        try:
-                            if not governance_enabled_now:
-                                raise RuntimeError('governance disabled')
-                            _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                            repaired_raw = enforce_qc_footer_deltas(repaired_raw, gov, _prof_now)
-                        except Exception:
-                            pass
-                        try:
-                            repaired_raw = normalize_evidence_tags(repaired_raw)
-                        except Exception:
-                            pass
-                        try:
-                            _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                            repaired_raw = enforce_self_debunking_contract(repaired_raw, gov, _prof_now, is_command=False, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
-                        except Exception:
-                            pass
-                        try:
-                            repaired_raw = normalize_sci_trace_numbering(repaired_raw, gov)
-                        except Exception:
-                            pass
+                        repaired_raw = self._normalize_raw_output_contracts(
+                            repaired_raw,
+                            governance_enabled=governance_enabled_now,
+                            is_command=False,
+                        )
 
                         # Banner (visible; does not claim perfection beyond one pass)
                         try:
@@ -13573,6 +13594,21 @@ class Api(CSCRefiner):
         except Exception:
             self.provider_router = None
             self.provider_service = None
+
+        try:
+            if _GovernanceService is not None:
+                self.governance_service = _GovernanceService(
+                    normalize_headings_fn=normalize_known_markdown_control_headings,
+                    enforce_self_debunking_fn=enforce_self_debunking_contract,
+                    normalize_sci_trace_fn=normalize_sci_trace_numbering,
+                    normalize_self_debunking_numbering_fn=normalize_self_debunking_numbering,
+                    enforce_qc_footer_fn=enforce_qc_footer_deltas,
+                    normalize_evidence_tags_fn=normalize_evidence_tags,
+                )
+            else:
+                self.governance_service = None
+        except Exception:
+            self.governance_service = None
 
         # Window handles
         self.main_win = None
