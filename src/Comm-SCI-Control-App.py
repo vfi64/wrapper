@@ -2029,11 +2029,17 @@ def strip_verification_route_display_lines(text: str) -> str:
             return text
         out_lines = []
         pats = [
-            re.compile(r"(?im)^\s*Verification\s+Route\s*:?\s*$"),
-            re.compile(r"(?im)^\s*Source\s*:\s*TRAIN\b.*$"),
-            re.compile(r"(?im)^\s*Measurement\s*:\s*not\s+performed\b.*$"),
-            re.compile(r"(?im)^\s*Contrast\s*:\s*plausible\s+alternative\b.*$"),
-            re.compile(r"(?im)^\s*Web[\s\-]*Check\s*:\s*not\s+performed\b.*$"),
+            # Header variants
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Verification\s+Route(?:\s+Gate)?\s*:?.*$"),
+            # Marker lines (EN/DE, with/without bullets)
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Source\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Measurement\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Contrast\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Web[\s\-]*Check\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Quelle\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Messung\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Kontrast\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Web[\s\-]*Prüfung\s*:.*$"),
         ]
         for ln in str(text).splitlines():
             if any(p.match(ln or "") for p in pats):
@@ -2085,6 +2091,46 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
             if starts_comm and has_sep and has_active_profile and token_count >= 4:
                 continue
 
+            out_lines.append(ln)
+
+        return "\n".join(out_lines)
+    except Exception:
+        return text
+
+
+def strip_sci_trace_line_when_inactive(
+    text: str,
+    *,
+    sci_active: bool = False,
+    sci_variant: str = "",
+    sci_pending: bool = False,
+) -> str:
+    """Remove leaked plain-text 'SCI Trace:' lines when SCI is inactive.
+
+    This is display cleanup only and intentionally conservative:
+    - Runs only when SCI is effectively OFF (no active variant, not pending).
+    - Keeps code fences untouched.
+    """
+    try:
+        if not text:
+            return text
+        if bool(sci_active) or bool((sci_variant or "").strip()) or bool(sci_pending):
+            return text
+
+        out_lines = []
+        in_code = False
+        for ln in str(text).splitlines():
+            s = (ln or "").strip()
+            if s.startswith("```"):
+                in_code = not in_code
+                out_lines.append(ln)
+                continue
+            if in_code:
+                out_lines.append(ln)
+                continue
+
+            if re.match(r"(?im)^\s*SCI\s*Trace\s*:\s*.*$", s):
+                continue
             out_lines.append(ln)
 
         return "\n".join(out_lines)
@@ -2342,9 +2388,9 @@ def normalize_self_debunking_language(text: str, lang: str) -> str:
         repl = [
             (r"(?i)\bWeakness\b\s*:", "Schwäche:"),
             (r"(?i)\bWhy\s+it\s+matters\b\s*:", "Warum das wichtig ist:"),
-            (r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\b\s*:",
+            (r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\s*:",
              "Was würde verifizieren/falsifizieren (nächster Check):"),
-            (r"(?i)\bWhat\s+would\s+verify\s+or\s+falsify\s*\(next\s+check\)\b\s*:",
+            (r"(?i)\bWhat\s+would\s+verify\s+or\s+falsify\s*\(next\s+check\)\s*:",
              "Was würde verifizieren oder falsifizieren (nächster Check):"),
             (r"(?i)\bNext\s+check\b\s*:", "Nächster Check:"),
         ]
@@ -2428,11 +2474,20 @@ def normalize_self_debunking_numbering_text(text: str, *, lang: str = "en") -> s
             if re.fullmatch(r"\d+\.", s or ""):
                 continue
 
+            # Strip leaked list prefixes in front of known Self-Debunking labels.
+            # Weakness/Schwäche lines get renumbered deterministically below.
+            ln = re.sub(
+                r"(?im)^\s*\d+\.\s*(?=(?:\*\*|__)?(?:Weakness|Schwäche|Why it matters|Warum relevant|Warum das wichtig ist|What would verify/falsify \(next check\)|What would verify or falsify \(next check\)|Was würde verifizieren/falsifizieren \(nächster Check\)|Was würde verifizieren oder falsifizieren \(nächster Check\)|Next check|Nächster Check|Prüfen/Widerlegen \(nächster Schritt\))(?:\*\*|__)?\s*:)",
+                "",
+                ln,
+                count=1,
+            )
+
             if lang.lower().startswith("de"):
                 ln = re.sub(r"(?i)\bWeakness\b\s*:", "Schwäche:", ln)
                 ln = re.sub(r"(?i)\bWhy\s+it\s+matters\b\s*:", "Warum das wichtig ist:", ln)
                 ln = re.sub(
-                    r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\b\s*:",
+                    r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\s*:",
                     "Was würde verifizieren/falsifizieren (nächster Check):",
                     ln,
                 )
@@ -3108,7 +3163,17 @@ def ensure_qc_footer_present(text: str, gov_mgr, profile_name: str, overrides: d
         if not (oc.get('require_qc_footer', False) or (gd.get('qc', {}) or {}).get('enabled', False)):
             return text
         if re.search(r'(?im)^\s*QC(?:-Matrix)?\s*:\s*', text):
-            return text
+            has_metric = bool(
+                re.search(
+                    r'(?im)^\s*QC(?:-Matrix)?\s*:.*(?:Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality|Klarheit|Kürze|Kuerze|Evidenz|Empathie|Konsistenz|Neutralität|Neutralitaet)\s+\d+\s*\(\s*Δ',
+                    text,
+                )
+            )
+            if has_metric:
+                return text
+            # Remove malformed/empty QC lines and rebuild canonical footer below.
+            text = re.sub(r'(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$', '', text)
+            text = re.sub(r'\n{3,}', '\n\n', text).strip()
 
         vals = {}
         try:
@@ -7103,6 +7168,17 @@ class CSCRefiner:
             try:
                 if (not is_command) and (not bool(ctx.get('sci_pending'))):
                     raw_for_render = strip_sci_menu_from_answer(raw_for_render)
+            except Exception:
+                pass
+
+            # If SCI is off, remove leaked inline "SCI Trace: ..." lines from model output.
+            try:
+                raw_for_render = strip_sci_trace_line_when_inactive(
+                    raw_for_render,
+                    sci_active=bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False)),
+                    sci_variant=(getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''),
+                    sci_pending=bool(getattr(getattr(self, 'gov_state', None), 'sci_pending', False)),
+                )
             except Exception:
                 pass
 

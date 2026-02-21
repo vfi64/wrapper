@@ -666,6 +666,30 @@ def test_qc_alternative_footer_is_canonicalized_and_respects_override():
 
 
 
+def test_ensure_qc_footer_present_rebuilds_empty_qc_matrix_line():
+    mod = load_fix_module()
+
+    class DummyGov:
+        loaded = True
+        data = {"global_defaults": {"output_contract": {"require_qc_footer": True}, "qc": {"enabled": True}}}
+        def get_effective_qc_values(self, profile_name, overrides=None):
+            return {
+                "clarity": 3, "brevity": 2, "evidence": 2,
+                "empathy": 2, "consistency": 3, "neutrality": 2,
+            }
+        def get_effective_qc_corridor(self, profile_name, overrides=None):
+            return {
+                "clarity": (2, 3), "brevity": (2, 2), "evidence": (2, 2),
+                "empathy": (2, 2), "consistency": (2, 3), "neutrality": (2, 2),
+            }
+
+    raw = "Antworttext\n\nQC-Matrix:\n"
+    out = mod.ensure_qc_footer_present(raw, DummyGov(), "Standard", overrides={})
+    assert out.count("QC-Matrix:") == 1
+    assert "Klarheit 3 (Δ0)" in out
+    assert "Kürze 2 (Δ0)" in out
+
+
 def test_qc_override_changes_delta_calculation():
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -3085,6 +3109,24 @@ def test_strip_verification_route_display_lines_hides_train_fallback_lines():
     assert "Self-Debunking:" in out
 
 
+def test_strip_verification_route_display_lines_hides_gate_and_bulleted_markers():
+    mod = load_fix_module()
+    raw = (
+        "Antwortblock\n"
+        "Verification Route Gate:\n"
+        "- Source: TRAIN - Allgemeinwissen\n"
+        "- Measurement: Nicht durchgeführt\n"
+        "- Contrast: Alternative beachtet, aber nicht bewertet.-Check: Nicht durchgeführt\n"
+        "Selbst-Debunking:\n"
+    )
+    out = mod.strip_verification_route_display_lines(raw)
+    assert "Verification Route Gate" not in out
+    assert "Source:" not in out
+    assert "Measurement:" not in out
+    assert "Contrast:" not in out
+    assert "Selbst-Debunking:" in out
+
+
 def test_strip_internal_scaffolding_status_lines_removes_leaked_profile_status():
     mod = load_fix_module()
     raw = (
@@ -3168,6 +3210,45 @@ def test_normalize_self_debunking_numbering_text_handles_german_title_and_dedups
     assert "1. Schwäche: Punkt eins." in out
     assert "2. Schwäche: Punkt zwei." in out
     assert "2. 2. Schwäche" not in out
+
+
+def test_normalize_self_debunking_numbering_text_strips_numbered_field_labels_in_single_point():
+    mod = load_fix_module()
+    raw = (
+        "Self-Debunking:\n"
+        "1. Schwäche: Die Definition von Zeit ist sehr abstrakt und lässt viele Fragen offen.\n"
+        "2. Warum das wichtig ist: Eine präzisere Definition wäre hilfreich.\n"
+        "3. What would verify/falsify (next check): Eine detailliertere Analyse.\n"
+        "\n"
+        "QC-Matrix: Clarity 3 (Δ0)"
+    )
+    out = mod.normalize_self_debunking_numbering_text(raw, lang="de")
+    assert "1. Schwäche:" in out
+    assert "\n2. Warum das wichtig ist:" not in out
+    assert "\n3. What would verify/falsify" not in out
+    assert "Warum das wichtig ist:" in out
+    assert "Was würde verifizieren/falsifizieren (nächster Check):" in out
+
+
+def test_strip_sci_trace_line_when_inactive_removes_leaked_inline_trace():
+    mod = load_fix_module()
+    raw = (
+        "Antworttext.\n"
+        "SCI Trace: Die Frage nach der Natur der Zeit ist komplex.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = mod.strip_sci_trace_line_when_inactive(raw, sci_active=False, sci_variant="", sci_pending=False)
+    assert "SCI Trace:" not in out
+    assert "Self-Debunking:" in out
+    assert "Antworttext." in out
+
+
+def test_strip_sci_trace_line_when_inactive_keeps_trace_when_variant_active():
+    mod = load_fix_module()
+    raw = "SCI Trace: Plan\n1. Plan: ...\n"
+    out = mod.strip_sci_trace_line_when_inactive(raw, sci_active=True, sci_variant="B", sci_pending=False)
+    assert out == raw
 
 
 def test_dedupe_self_debunking_sections_keeps_single_canonical_block():
