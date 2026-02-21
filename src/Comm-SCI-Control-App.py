@@ -6483,9 +6483,14 @@ class CSCRefiner:
             # --- Stateless provider (OpenRouter) ---
             if provider in ('openrouter', 'huggingface', 'hf', 'openai', 'openai_compat'):
                 pr = getattr(self, 'provider_router', None)
+                psvc = getattr(self, 'provider_service', None)
+                if psvc is not None and hasattr(psvc, 'router') and pr is not None:
+                    psvc.router = pr
                 client = None
                 try:
-                    if pr is not None:
+                    if psvc is not None:
+                        client = psvc.get_openai_client(provider)
+                    elif pr is not None:
                         if provider in ('huggingface', 'hf') and hasattr(pr, 'build_huggingface_client'):
                             client = pr.build_huggingface_client()
                         elif hasattr(pr, 'build_openrouter_client'):
@@ -6502,7 +6507,11 @@ class CSCRefiner:
 
                 model = ''
                 try:
-                    model = (getattr(cfg, 'get_provider_model', lambda _p: '')(provider) or '').strip()
+                    model = (
+                        psvc.get_provider_model(provider, fallback_model='')
+                        if psvc is not None
+                        else (getattr(cfg, 'get_provider_model', lambda _p: '')(provider) or '')
+                    ).strip()
                 except Exception:
                     model = ''
                 if not model:
@@ -8271,6 +8280,17 @@ class CSCRefiner:
 
     def _active_provider(self) -> str:
         try:
+            psvc = getattr(self, 'provider_service', None)
+            if psvc is not None and hasattr(psvc, 'router') and getattr(self, 'provider_router', None) is not None:
+                # Keep service/router references in sync for tests and hot-swaps.
+                psvc.router = getattr(self, 'provider_router', None)
+            if psvc is not None:
+                pr = getattr(psvc, 'router', None)
+                if pr is not None and hasattr(pr, 'get_active_provider'):
+                    return str(pr.get_active_provider() or 'gemini').strip().lower()
+        except Exception:
+            pass
+        try:
             pr = getattr(self, 'provider_router', None)
             if pr is not None and hasattr(pr, 'get_active_provider'):
                 return pr.get_active_provider()
@@ -8283,6 +8303,14 @@ class CSCRefiner:
             return 'gemini'
 
     def _provider_model(self, provider: str = '', fallback_model: str = '') -> str:
+        try:
+            psvc = getattr(self, 'provider_service', None)
+            if psvc is not None and hasattr(psvc, 'router') and getattr(self, 'provider_router', None) is not None:
+                psvc.router = getattr(self, 'provider_router', None)
+            if psvc is not None:
+                return psvc.get_provider_model(provider, fallback_model=fallback_model)
+        except Exception:
+            pass
         try:
             pr = getattr(self, 'provider_router', None)
             if pr is not None and hasattr(pr, 'get_provider_model'):
@@ -10281,11 +10309,17 @@ class CSCRefiner:
         """
         try:
             pr = getattr(self, 'provider_router', None)
-            curp = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else 'gemini')
+            psvc = getattr(self, 'provider_service', None)
+            if psvc is not None and hasattr(psvc, 'router') and pr is not None:
+                psvc.router = pr
+            curp = (self._active_provider() or 'gemini')
             curp = (curp or 'gemini').strip().lower()
 
             if curp == 'gemini':
-                models, meta = pr.get_gemini_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_gemini_models_cached') else ([], {})
+                if psvc is not None:
+                    models, meta = psvc.get_cached_models('gemini', force_refresh=True)
+                else:
+                    models, meta = pr.get_gemini_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_gemini_models_cached') else ([], {})
                 try:
                     self._gemini_models_cache = list(models) if isinstance(models, list) else []
                 except Exception:
@@ -10305,7 +10339,10 @@ class CSCRefiner:
                 return {'status': True, 'provider': 'gemini', 'count': len(models), 'meta': meta}
 
             if curp == 'openrouter':
-                models, meta = pr.get_openrouter_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_openrouter_models_cached') else ([], {})
+                if psvc is not None:
+                    models, meta = psvc.get_cached_models('openrouter', force_refresh=True)
+                else:
+                    models, meta = pr.get_openrouter_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_openrouter_models_cached') else ([], {})
                 try:
                     self._openrouter_models_cache = list(models) if isinstance(models, list) else []
                 except Exception:
@@ -10321,7 +10358,9 @@ class CSCRefiner:
                 models = []
                 meta = {'source': 'none'}
                 try:
-                    if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
+                    if psvc is not None:
+                        models, meta = psvc.get_cached_models('huggingface', force_refresh=True)
+                    elif pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
                         models, meta = pr.get_huggingface_models_cached(force_refresh=True)
                 except Exception:
                     models = []
