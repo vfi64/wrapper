@@ -3334,6 +3334,63 @@ def test_render_sci_trace_runtime_accepts_bullet_step_headers():
     assert "Critic:</div>" in out
 
 
+def test_render_sci_trace_runtime_handles_complex_step_labels_variant_g():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "G"
+
+    def _variant_def(_v):
+        return ({}, ["Pre-mortem: assume failure", "List failure modes", "Mitigations/controls"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "SCI Trace:\n"
+        "• Pre-mortem: assume failure: Annahme X.\n"
+        "• List failure modes: Modus A, Modus B.\n"
+        "• Mitigations/controls: Gegenmaßnahme Y.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "Missing SCI Trace step content" not in out
+    assert "Pre-mortem: assume failure:</div>" in out
+    assert "List failure modes:</div>" in out
+    assert "Mitigations/controls:</div>" in out
+
+
+def test_normalize_sci_trace_numbering_handles_complex_step_labels():
+    mod = load_fix_module()
+
+    class GOV:
+        data = {
+            "global_defaults": {
+                "output_contract": {
+                    "sci_trace_contract": {
+                        "required_steps": [
+                            "Pre-mortem: assume failure",
+                            "List failure modes",
+                            "Mitigations/controls",
+                        ]
+                    }
+                }
+            }
+        }
+
+    raw = (
+        "SCI Trace:\n"
+        "• Pre-mortem: assume failure: Annahme X.\n"
+        "• List failure modes: Modus A.\n"
+        "• Mitigations/controls: Gegenmaßnahme Y.\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.normalize_sci_trace_numbering(raw, GOV())
+    assert "1. Pre-mortem: assume failure:" in out
+    assert "2. List failure modes:" in out
+    assert "3. Mitigations/controls:" in out
+
+
 def test_html_number_self_debunking_handles_single_line_html_block():
     mod = load_fix_module()
     html_in = (

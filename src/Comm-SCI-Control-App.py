@@ -3298,6 +3298,35 @@ def strip_sci_menu_from_answer(text: str) -> str:
     except Exception:
         return text
 
+def match_required_sci_step_header(line: str, required_steps: list[str]):
+    """Return (step, rest) when line starts with a required SCI step header.
+
+    Supports optional bullet markers/list numbering and bold wrappers around the step label.
+    Step labels are matched against ruleset labels as-is (including spaces, '/', '+', ':', '-').
+    """
+    try:
+        s = str(line or "")
+        if not s or not isinstance(required_steps, list):
+            return None, None
+        prefix = r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*"
+        steps = sorted(
+            [str(x).strip() for x in required_steps if str(x or "").strip()],
+            key=len,
+            reverse=True,
+        )
+        for step in steps:
+            esc = re.escape(step)
+            pat = re.compile(
+                prefix + rf"(?:\*\*|__)?{esc}(?:\*\*|__)?\s*:\s*(?P<rest>.*)$",
+                flags=re.IGNORECASE,
+            )
+            m = pat.match(s)
+            if m:
+                return step, (m.group("rest") or "").strip()
+        return None, None
+    except Exception:
+        return None, None
+
 def normalize_sci_trace_numbering(text: str, gov) -> str:
     try:
         if not text or 'SCI Trace' not in text:
@@ -3335,10 +3364,6 @@ def normalize_sci_trace_numbering(text: str, gov) -> str:
         sci_header = lines[sci_idx].strip()
         body = lines[sci_idx + 1:end_idx]
         post = lines[end_idx:]
-
-        # Helper: detect step header lines (allow optional leading ordered-list prefix)
-        step_set = {str(s) for s in required_steps}
-        hdr_re = re.compile(r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)(\s*:)\s*$")
 
         # Parse step blocks
         blocks = {}
@@ -3379,14 +3404,14 @@ def normalize_sci_trace_numbering(text: str, gov) -> str:
         # Count how many headers we actually recognize; if none -> do nothing
         recognized = 0
         for ln in body:
-            m = hdr_re.match(ln)
-            if m:
-                name = m.group(1)
-                if name in step_set:
-                    flush()
-                    cur = name
-                    recognized += 1
-                    continue
+            step_name, rest = match_required_sci_step_header(ln, required_steps)
+            if step_name:
+                flush()
+                cur = step_name
+                recognized += 1
+                if rest:
+                    buf.append(rest)
+                continue
             if cur is not None:
                 buf.append(ln)
         flush()
@@ -3455,10 +3480,6 @@ def render_sci_trace_as_html(text: str, gov) -> str:
         body = lines[sci_idx + 1:end_idx]
         post = lines[end_idx:]
 
-        step_set = {str(s) for s in required_steps}
-        # Accept optional leading numbering + colon
-        hdr_re = re.compile(r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$" )
-
         blocks: dict[str, list[str]] = {}
         cur = None
         buf: list[str] = []
@@ -3481,14 +3502,14 @@ def render_sci_trace_as_html(text: str, gov) -> str:
 
         recognized = 0
         for ln in body:
-            m = hdr_re.match(ln)
-            if m:
-                name = m.group(1)
-                if name in step_set:
-                    flush()
-                    cur = name
-                    recognized += 1
-                    continue
+            step_name, rest = match_required_sci_step_header(ln, required_steps)
+            if step_name:
+                flush()
+                cur = step_name
+                recognized += 1
+                if rest:
+                    buf.append(rest)
+                continue
             if cur is not None:
                 buf.append(ln)
         flush()
@@ -6785,13 +6806,11 @@ class CSCRefiner:
             # If this immediate list already contains SCI step headers (e.g. "• Plan: ..."),
             # keep it as content; otherwise it is typically an empty placeholder list.
             try:
-                _head = re.compile(r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*(?:\*\*|__)?([A-Za-z][A-Za-z0-9_]*)(?:\*\*|__)?\s*:")
-                _step_names = {str(s).strip().lower() for s in required_steps}
                 _has_step_header = False
                 for _ln in lines[sci_idx + 1:trace_list_end]:
                     _plain = re.sub(r"<[^>]+>", "", _ln or "")
-                    _m = _head.match(_plain)
-                    if _m and (_m.group(1) or "").strip().lower() in _step_names:
+                    _step, _rest = match_required_sci_step_header(_plain, required_steps)
+                    if _step:
                         _has_step_header = True
                         break
                 if _has_step_header:
@@ -6823,11 +6842,6 @@ class CSCRefiner:
                 s = re.sub(r"</?p>", "", s, flags=re.IGNORECASE)
                 return s
 
-            # Step header detection (accepts: Plan: , **Plan:** , 1. Plan: ...)
-            step_set = {s for s in required_steps}
-            step_lookup = {s.lower(): s for s in required_steps}
-            hdr_re = re.compile(r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*(?:\*\*|__)?(?P<name>[A-Za-z][A-Za-z0-9_]*)?(?:\*\*|__)?\s*:\s*(?P<rest>.*)$")
-
             blocks = {}
             out_main = []
             cur_step = None
@@ -6851,22 +6865,14 @@ class CSCRefiner:
             recognized_steps = 0
             for ln in main:
                 ln2 = _strip_basic_tags(re.sub(r"<[^>]+>", "", ln))
-                m = hdr_re.match(ln2)
-                if m and m.group("name"):
-                    name = m.group("name")
-                    canon = None
-                    if name in step_set:
-                        canon = name
-                    else:
-                        canon = step_lookup.get(name.lower())
-                    if canon:
-                        flush()
-                        cur_step = canon
-                        recognized_steps += 1
-                        inline = (m.group("rest") or "").strip()
-                        if inline:
-                            buf.append(inline)
-                        continue
+                step_name, rest = match_required_sci_step_header(ln2, required_steps)
+                if step_name:
+                    flush()
+                    cur_step = step_name
+                    recognized_steps += 1
+                    if rest:
+                        buf.append(rest)
+                    continue
                 if cur_step is not None:
                     buf.append(ln2)
                 else:
