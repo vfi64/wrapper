@@ -2508,6 +2508,30 @@ def normalize_self_debunking_numbering_text(text: str, *, lang: str = "en") -> s
         return text
 
 
+def normalize_inline_self_debunking_header(text: str) -> str:
+    """Ensure Self-Debunking header starts on its own line for deterministic boxing."""
+    try:
+        if not text:
+            return text
+        out = str(text)
+        # If title leaks inline after a sentence, split into a new block.
+        out = re.sub(
+            r"([^\n])\s+((?:SCI\s*Trace\s*:\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:)",
+            r"\1\n\n\2",
+            out,
+            flags=re.IGNORECASE,
+        )
+        # If title line has immediate inline body, push the body to the next line.
+        out = re.sub(
+            r"(?im)^(\s*(?:SCI\s*Trace\s*:\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:)\s+(?=\S)",
+            r"\1\n",
+            out,
+        )
+        return out
+    except Exception:
+        return text
+
+
 def dedupe_self_debunking_sections(text: str) -> str:
     """Keep exactly one Self-Debunking section when duplicates leak from weaker models.
 
@@ -3314,7 +3338,7 @@ def normalize_sci_trace_numbering(text: str, gov) -> str:
 
         # Helper: detect step header lines (allow optional leading ordered-list prefix)
         step_set = {str(s) for s in required_steps}
-        hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)(\s*:)\s*$")
+        hdr_re = re.compile(r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)(\s*:)\s*$")
 
         # Parse step blocks
         blocks = {}
@@ -3433,7 +3457,7 @@ def render_sci_trace_as_html(text: str, gov) -> str:
 
         step_set = {str(s) for s in required_steps}
         # Accept optional leading numbering + colon
-        hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$" )
+        hdr_re = re.compile(r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$" )
 
         blocks: dict[str, list[str]] = {}
         cur = None
@@ -6758,6 +6782,23 @@ class CSCRefiner:
                 k += 1
             trace_list_end = k  # exclusive
 
+            # If this immediate list already contains SCI step headers (e.g. "• Plan: ..."),
+            # keep it as content; otherwise it is typically an empty placeholder list.
+            try:
+                _head = re.compile(r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*(?:\*\*|__)?([A-Za-z][A-Za-z0-9_]*)(?:\*\*|__)?\s*:")
+                _step_names = {str(s).strip().lower() for s in required_steps}
+                _has_step_header = False
+                for _ln in lines[sci_idx + 1:trace_list_end]:
+                    _plain = re.sub(r"<[^>]+>", "", _ln or "")
+                    _m = _head.match(_plain)
+                    if _m and (_m.group(1) or "").strip().lower() in _step_names:
+                        _has_step_header = True
+                        break
+                if _has_step_header:
+                    trace_list_end = sci_idx + 1
+            except Exception:
+                pass
+
             # Build a working copy without the original (often empty) trace list block
             pre = lines[:sci_idx]
             rest = lines[trace_list_end:]
@@ -6785,7 +6826,7 @@ class CSCRefiner:
             # Step header detection (accepts: Plan: , **Plan:** , 1. Plan: ...)
             step_set = {s for s in required_steps}
             step_lookup = {s.lower(): s for s in required_steps}
-            hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*(?:\*\*|__)?(?P<name>[A-Za-z][A-Za-z0-9_]*)?(?:\*\*|__)?\s*:\s*(?P<rest>.*)$")
+            hdr_re = re.compile(r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*(?:\*\*|__)?(?P<name>[A-Za-z][A-Za-z0-9_]*)?(?:\*\*|__)?\s*:\s*(?P<rest>.*)$")
 
             blocks = {}
             out_main = []
@@ -7188,6 +7229,12 @@ class CSCRefiner:
                     sci_variant=(getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''),
                     sci_pending=bool(getattr(getattr(self, 'gov_state', None), 'sci_pending', False)),
                 )
+            except Exception:
+                pass
+
+            # Normalize inline "Self-Debunking: ..." leaks so the block parser can box it deterministically.
+            try:
+                raw_for_render = normalize_inline_self_debunking_header(raw_for_render)
             except Exception:
                 pass
 

@@ -3297,6 +3297,43 @@ def test_dedupe_self_debunking_sections_keeps_single_canonical_block():
     assert "QC-Matrix:" in out
 
 
+def test_normalize_inline_self_debunking_header_splits_inline_block():
+    mod = load_fix_module()
+    raw = (
+        "Antwortsatz mit Ende. Self-Debunking: 1. Schwäche: X.\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.normalize_inline_self_debunking_header(raw)
+    assert "Ende.\n\nSelf-Debunking:" in out
+    assert "Self-Debunking:\n1. Schwäche: X." in out
+
+
+def test_render_sci_trace_runtime_accepts_bullet_step_headers():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "B"
+
+    def _variant_def(_v):
+        return ({}, ["Plan", "Solution", "Critic"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "SCI Trace:\n"
+        "• Plan: Schritt A.\n"
+        "• Solution: Schritt B.\n"
+        "• Critic: Schritt C.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "<ol" in out
+    assert "Plan:</div>" in out
+    assert "Solution:</div>" in out
+    assert "Critic:</div>" in out
+
+
 def test_html_number_self_debunking_handles_single_line_html_block():
     mod = load_fix_module()
     html_in = (
