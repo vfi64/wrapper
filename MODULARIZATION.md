@@ -61,6 +61,13 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 - Ensure explicit provider/model change events (no silent switching).
 - Provider/model cache per provider, deterministic selection.
 
+#### S2 acceptance checklist
+- [x] `ProviderService` is present and used by `_llm_call` for provider canonicalization, client build, default model resolution, and fallback models.
+- [x] Connect/refresh paths (`_connect_api`, `refresh_models`) use provider abstraction with deterministic fallbacks.
+- [x] Regression tests cover provider alias canonicalization and provider fallback model extraction.
+- [x] SCI output formatting remains deterministic across variants A–H (including complex step labels with spaces/slashes/colons).
+- [x] Local test suite remains green without network calls.
+
 ### S3 — Governance engine isolation
 **Goal:** move policy/rules application into a dedicated service.
 - Introduce `GovernanceService` (route/apply/wrap/postprocess/validate‑and‑repair/policy gate).
