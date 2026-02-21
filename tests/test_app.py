@@ -1562,6 +1562,33 @@ def test_refresh_models_gemini_populates_cache():
     assert getattr(api, '_gemini_models_cache', None) == ['gemini-2.0-flash', 'gemini-2.5-flash']
 
 
+def test_provider_service_canonical_provider_id_maps_aliases():
+    mod = load_fix_module()
+    psvc = mod.ProviderService(types.SimpleNamespace(config={}), None)
+
+    assert psvc.canonical_provider_id('hf') == 'huggingface'
+    assert psvc.canonical_provider_id('HuggingFace') == 'huggingface'
+    assert psvc.canonical_provider_id('openai') == 'openrouter'
+    assert psvc.canonical_provider_id('openrouter') == 'openrouter'
+    assert psvc.canonical_provider_id('gemini') == 'gemini'
+    assert psvc.canonical_provider_id('unknown-provider') == 'openrouter'
+
+
+def test_provider_service_reads_config_fallback_models_deduped():
+    mod = load_fix_module()
+    cfg = types.SimpleNamespace(config={
+        'providers': {
+            'huggingface': {
+                'fallback_models': ['a/model-1', 'a/model-1', 'b/model-2', ''],
+            },
+        },
+    })
+    psvc = mod.ProviderService(cfg, None)
+
+    got = psvc.get_config_fallback_models('hf')
+    assert got == ['a/model-1', 'b/model-2']
+
+
 def test_get_available_models_gemini_uses_runtime_cache():
     mod = load_fix_module()
     api = mod.Api()

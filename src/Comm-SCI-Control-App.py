@@ -8560,7 +8560,9 @@ class CSCRefiner:
                 canon_pid = 'huggingface' if provider in ('huggingface', 'hf') else 'openrouter'
             client = None
             try:
-                if canon_pid == 'huggingface':
+                if psvc is not None:
+                    client = psvc.get_openai_client(canon_pid)
+                elif canon_pid == 'huggingface':
                     if pr is not None and hasattr(pr, 'build_huggingface_client'):
                         client = pr.build_huggingface_client()
                 else:
@@ -8583,7 +8585,9 @@ class CSCRefiner:
             # Load provider-specific model candidates up-front so fallback can work
             # even when a configured default model is invalid for the active provider.
             try:
-                if canon_pid == 'huggingface':
+                if psvc is not None:
+                    models, _meta = psvc.get_cached_models(canon_pid, force_refresh=False)
+                elif canon_pid == 'huggingface':
                     if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
                         models, _meta = pr.get_huggingface_models_cached(force_refresh=False)
                     if (not models) and pr is not None and hasattr(pr, 'get_huggingface_models_from_config'):
@@ -8593,7 +8597,18 @@ class CSCRefiner:
                         models, _meta = pr.get_openrouter_models_cached(force_refresh=False)
             except Exception:
                 models = []
-            model = (model_override or self._provider_model(prov_id, fallback_model=fallback) or '').strip()
+            try:
+                model = (
+                    model_override
+                    or (
+                        psvc.get_provider_model(prov_id, fallback_model=fallback)
+                        if psvc is not None
+                        else self._provider_model(prov_id, fallback_model=fallback)
+                    )
+                    or ''
+                ).strip()
+            except Exception:
+                model = (model_override or self._provider_model(prov_id, fallback_model=fallback) or '').strip()
             if not model:
                 # Optional: auto-pick first model from cached /models list (best-effort)
                 try:
@@ -8639,9 +8654,11 @@ class CSCRefiner:
             try:
                 cand.append(model)
                 # Optional explicit fallback list from config
-                provs = (self.cfg_mgr.config or {}).get('providers') or {}
-                pconf = provs.get(prov_id) if isinstance(provs, dict) else {}
-                fb = (pconf or {}).get('fallback_models') if isinstance(pconf, dict) else None
+                fb = psvc.get_config_fallback_models(prov_id) if psvc is not None else None
+                if not isinstance(fb, list):
+                    provs = (self.cfg_mgr.config or {}).get('providers') or {}
+                    pconf = provs.get(prov_id) if isinstance(provs, dict) else {}
+                    fb = (pconf or {}).get('fallback_models') if isinstance(pconf, dict) else None
                 if isinstance(fb, list):
                     for x in fb:
                         sx = str(x or '').strip()
@@ -13239,6 +13256,88 @@ class ProviderRouter:
 
 
 
+class ProviderService:
+    """Thin provider facade used by Api._llm_call and model refresh paths."""
+
+    def __init__(self, cfg_mgr, provider_router):
+        self.cfg = cfg_mgr
+        self.router = provider_router
+
+    def canonical_provider_id(self, provider: str) -> str:
+        p = str(provider or "").strip().lower()
+        if p in ("hf", "huggingface"):
+            return "huggingface"
+        if p in ("openai", "openai_compat", "openrouter"):
+            return "openrouter"
+        if p == "gemini":
+            return "gemini"
+        return "openrouter"
+
+    def get_openai_client(self, provider: str):
+        pid = self.canonical_provider_id(provider)
+        r = self.router
+        if r is None:
+            return None
+        try:
+            if pid == "huggingface" and hasattr(r, "build_huggingface_client"):
+                return r.build_huggingface_client()
+            if pid == "openrouter" and hasattr(r, "build_openrouter_client"):
+                return r.build_openrouter_client()
+        except Exception:
+            return None
+        return None
+
+    def get_cached_models(self, provider: str, *, force_refresh: bool = False):
+        pid = self.canonical_provider_id(provider)
+        r = self.router
+        models, meta = [], {}
+        if r is None:
+            return models, meta
+        try:
+            if pid == "huggingface":
+                if hasattr(r, "get_huggingface_models_cached"):
+                    models, meta = r.get_huggingface_models_cached(force_refresh=force_refresh)
+                if (not models) and hasattr(r, "get_huggingface_models_from_config"):
+                    models = r.get_huggingface_models_from_config() or []
+            elif pid == "openrouter":
+                if hasattr(r, "get_openrouter_models_cached"):
+                    models, meta = r.get_openrouter_models_cached(force_refresh=force_refresh)
+            elif pid == "gemini":
+                if hasattr(r, "get_gemini_models_cached"):
+                    models, meta = r.get_gemini_models_cached(force_refresh=force_refresh)
+        except Exception:
+            models, meta = [], {}
+        return models or [], meta or {}
+
+    def get_provider_model(self, provider: str, *, fallback_model: str = "") -> str:
+        pid = self.canonical_provider_id(provider)
+        r = self.router
+        if r is None:
+            return str(fallback_model or "").strip()
+        try:
+            if hasattr(r, "get_provider_model"):
+                return str(r.get_provider_model(pid, fallback_model=fallback_model) or "").strip()
+        except Exception:
+            pass
+        return str(fallback_model or "").strip()
+
+    def get_config_fallback_models(self, provider: str):
+        pid = self.canonical_provider_id(provider)
+        out = []
+        try:
+            provs = (getattr(self.cfg, "config", {}) or {}).get("providers") or {}
+            pconf = provs.get(pid) if isinstance(provs, dict) else {}
+            fb = (pconf or {}).get("fallback_models") if isinstance(pconf, dict) else None
+            if isinstance(fb, list):
+                for x in fb:
+                    sx = str(x or "").strip()
+                    if sx and sx not in out:
+                        out.append(sx)
+        except Exception:
+            out = []
+        return out
+
+
 # ----------------------------
 # STUFE 2+: JSONL instrumentation (audit stream, append-only)
 # ----------------------------
@@ -13359,6 +13458,7 @@ class Api(CSCRefiner):
         # Provider routing (single-file adapters)
         try:
             self.provider_router = ProviderRouter(globals().get('cfg'))
+            self.provider_service = ProviderService(globals().get('cfg'), self.provider_router)
             # Warm provider model caches from disk (no network).
             try:
                 self._warm_model_caches_from_disk()
@@ -13380,6 +13480,7 @@ class Api(CSCRefiner):
             
         except Exception:
             self.provider_router = None
+            self.provider_service = None
 
         # Window handles
         self.main_win = None
