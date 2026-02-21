@@ -3085,6 +3085,56 @@ def test_strip_verification_route_display_lines_hides_train_fallback_lines():
     assert "Self-Debunking:" in out
 
 
+def test_strip_internal_scaffolding_status_lines_removes_leaked_profile_status():
+    mod = load_fix_module()
+    raw = (
+        "Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
+        "Profile: Expert · Overlay: Strict · SCI: B · Color: on\n"
+        "Inhalt bleibt sichtbar.\n"
+    )
+    out = mod.strip_internal_scaffolding_status_lines(raw)
+    assert "Active profile:" in out
+    assert "Profile: Expert · Overlay: Strict · SCI: B · Color: on" not in out
+    assert "Inhalt bleibt sichtbar." in out
+
+
+def test_strip_internal_scaffolding_status_lines_keeps_normal_profile_sentence():
+    mod = load_fix_module()
+    raw = (
+        "Profile: Expert und Standard sind zwei Modi.\n"
+        "Diese Zeile enthält keine interne Statusmatrix.\n"
+    )
+    out = mod.strip_internal_scaffolding_status_lines(raw)
+    assert out == raw.rstrip("\n")
+
+
+def test_strip_internal_scaffolding_status_html_removes_profile_block():
+    mod = load_fix_module()
+    html_in = (
+        "<p>Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on</p>"
+        "<p>Profile: Expert · Overlay: Strict · SCI: B · Color: on</p>"
+        "<p>Inhalt bleibt sichtbar.</p>"
+    )
+    out = mod.strip_internal_scaffolding_status_html(html_in)
+    assert "Active profile:" in out
+    assert "Profile: Expert · Overlay: Strict · SCI: B · Color: on" not in out
+    assert "Inhalt bleibt sichtbar." in out
+
+
+def test_strip_exact_status_header_line_removes_exact_duplicate_only():
+    mod = load_fix_module()
+    header = "Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on"
+    raw = (
+        header + "\n"
+        "Profile: Expert · Overlay: Strict · SCI: B · Color: on\n"
+        "Inhalt bleibt sichtbar.\n"
+    )
+    out = mod.strip_exact_status_header_line(raw, header)
+    assert header not in out
+    assert "Profile: Expert · Overlay: Strict · SCI: B · Color: on" in out
+    assert "Inhalt bleibt sichtbar." in out
+
+
 def test_build_repair_prompt_uses_answer_language_from_state():
     mod = load_fix_module()
     gov_mgr = types.SimpleNamespace(loaded=False, data={})
@@ -3118,6 +3168,25 @@ def test_normalize_self_debunking_numbering_text_handles_german_title_and_dedups
     assert "1. Schwäche: Punkt eins." in out
     assert "2. Schwäche: Punkt zwei." in out
     assert "2. 2. Schwäche" not in out
+
+
+def test_dedupe_self_debunking_sections_keeps_single_canonical_block():
+    mod = load_fix_module()
+    raw = (
+        "SCI Trace: Selbst-Debunking:\n"
+        "• Schwäche: A\n"
+        "• Schwäche: B\n"
+        "Selbst-Debunking:\n"
+        "1. Schwäche: C\n"
+        "2. Schwäche: D\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.dedupe_self_debunking_sections(raw)
+    assert "SCI Trace: Selbst-Debunking:" not in out
+    assert out.count("Selbst-Debunking:") == 1
+    assert "1. Schwäche: C" in out
+    assert "2. Schwäche: D" in out
+    assert "QC-Matrix:" in out
 
 
 def test_html_number_self_debunking_handles_single_line_html_block():

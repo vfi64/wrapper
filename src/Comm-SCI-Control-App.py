@@ -2044,6 +2044,115 @@ def strip_verification_route_display_lines(text: str) -> str:
         return text
 
 
+def strip_internal_scaffolding_status_lines(text: str) -> str:
+    """Remove leaked internal status scaffold lines from model output (display-only).
+
+    Deterministic and conservative:
+    - only full lines starting with "Profile:" (or "Comm:")
+    - only if they clearly look like wrapper status scaffolding
+      (contains separators plus multiple control tokens)
+    - code fences remain untouched
+    """
+    try:
+        if not text:
+            return text
+
+        out_lines = []
+        in_code = False
+        for ln in str(text).splitlines():
+            s = (ln or "").strip()
+            if s.startswith("```"):
+                in_code = not in_code
+                out_lines.append(ln)
+                continue
+            if in_code:
+                out_lines.append(ln)
+                continue
+
+            low = s.lower()
+            starts_status = low.startswith("profile:")
+            starts_comm = low.startswith("comm:")
+            has_sep = any(ch in s for ch in ("·", "•", "|"))
+            token_count = sum(
+                1
+                for t in ("overlay", "sci", "color", "control layer", "qc", "cgi")
+                if t in low
+            )
+            has_active_profile = "active profile" in low
+
+            if starts_status and has_sep and token_count >= 3:
+                continue
+            if starts_comm and has_sep and has_active_profile and token_count >= 4:
+                continue
+
+            out_lines.append(ln)
+
+        return "\n".join(out_lines)
+    except Exception:
+        return text
+
+
+def strip_internal_scaffolding_status_html(html_text: str) -> str:
+    """Fallback cleanup: remove leaked scaffold status lines from rendered HTML blocks.
+
+    This runs post-render and only removes full block nodes (<p>/<div>/<li>) that
+    look like internal status scaffolding.
+    """
+    try:
+        if not html_text:
+            return html_text
+
+        block_pat = re.compile(r"(?is)<(p|div|li)\b[^>]*>(.*?)</\1>")
+
+        def _is_scaffold(inner_html: str) -> bool:
+            txt = re.sub(r"(?is)<[^>]+>", " ", inner_html or "")
+            txt = html.unescape(txt or "")
+            txt = re.sub(r"\s+", " ", txt).strip()
+            low = txt.lower()
+            starts_status = low.startswith("profile:")
+            starts_comm = low.startswith("comm:")
+            has_sep = any(ch in txt for ch in ("·", "•", "|"))
+            token_count = sum(
+                1
+                for t in ("overlay", "sci", "color", "control layer", "qc", "cgi")
+                if t in low
+            )
+            has_active_profile = "active profile" in low
+            if starts_status and has_sep and token_count >= 3:
+                return True
+            if starts_comm and has_sep and has_active_profile and token_count >= 4:
+                return True
+            return False
+
+        def _repl(m: re.Match) -> str:
+            inner = m.group(2) or ""
+            return "" if _is_scaffold(inner) else m.group(0)
+
+        out = block_pat.sub(_repl, str(html_text))
+        return out
+    except Exception:
+        return html_text
+
+
+def strip_exact_status_header_line(text: str, header_line: str) -> str:
+    """Remove exact copies of the canonical header line from model output.
+
+    This ensures the wrapper can prepend exactly one authoritative header line.
+    """
+    try:
+        if not text or not header_line:
+            return text
+        out = []
+        target = str(header_line).strip()
+        for ln in str(text).splitlines():
+            if (ln or "").strip() == target:
+                continue
+            out.append(ln)
+        return "\n".join(out)
+    except Exception:
+        return text
+
+
 def sanitize_self_debunking_markdown_in_html(html_text: str) -> str:
     """Normalize leaked markdown emphasis inside already-rendered Self-Debunking HTML blocks.
 
@@ -2340,6 +2449,72 @@ def normalize_self_debunking_numbering_text(text: str, *, lang: str = "en") -> s
 
         start, end = m.span(1)
         return text[:start] + "\n".join(out) + text[end:]
+    except Exception:
+        return text
+
+
+def dedupe_self_debunking_sections(text: str) -> str:
+    """Keep exactly one Self-Debunking section when duplicates leak from weaker models.
+
+    Rules (deterministic):
+    - Detect section headers:
+      - "Self-Debunking:" / "Selbst-Debunking:"
+      - "SCI Trace: Self-Debunking:" / "SCI Trace: Selbst-Debunking:"
+    - If multiple are present, keep the last *pure* Self-Debunking section.
+      If none is pure, keep the last detected section.
+    - Section ends at next SD header, QC-Matrix header, or end of text.
+    """
+    try:
+        if not text:
+            return text
+
+        lines = str(text).splitlines()
+        if not lines:
+            return text
+
+        re_sd_header = re.compile(
+            r"(?i)^\s*(?:(?P<sci>SCI\s*Trace)\s*:\s*)?(?P<sd>Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:\s*$"
+        )
+        re_qc = re.compile(r"(?i)^\s*QC(?:-Matrix)?\s*:")
+
+        starts = []
+        for i, ln in enumerate(lines):
+            m = re_sd_header.match((ln or "").strip())
+            if m:
+                starts.append((i, bool(m.group("sci"))))
+
+        if len(starts) <= 1:
+            return text
+
+        # Build section ranges [start, end)
+        ranges = []
+        for idx, (start_i, is_sci_prefixed) in enumerate(starts):
+            end_i = len(lines)
+            for j in range(start_i + 1, len(lines)):
+                s = (lines[j] or "").strip()
+                if re_sd_header.match(s) or re_qc.match(s):
+                    end_i = j
+                    break
+            ranges.append((start_i, end_i, is_sci_prefixed))
+
+        # Keep last pure SD section if available; else last section.
+        keep = None
+        for r in ranges:
+            if not r[2]:
+                keep = r
+        if keep is None:
+            keep = ranges[-1]
+
+        # Remove all non-kept SD ranges.
+        remove_mask = [False] * len(lines)
+        for r in ranges:
+            if r is keep:
+                continue
+            for k in range(r[0], r[1]):
+                remove_mask[k] = True
+
+        out_lines = [ln for i, ln in enumerate(lines) if not remove_mask[i]]
+        return "\n".join(out_lines)
     except Exception:
         return text
 
@@ -6943,6 +7118,10 @@ class CSCRefiner:
                 )
             except Exception:
                 pass
+            try:
+                raw_for_render = dedupe_self_debunking_sections(raw_for_render)
+            except Exception:
+                pass
 
             # Normalize SCI Trace numbering (only step headers numbered)
             try:
@@ -6965,6 +7144,16 @@ class CSCRefiner:
                     alerts.append(("QC-Override", "; ".join(override_vios)))
             except Exception:
                 override_vios = []
+
+            # Remove internal status scaffolding leaked by weaker models.
+            try:
+                raw_for_render = strip_internal_scaffolding_status_lines(raw_for_render or "")
+            except Exception:
+                pass
+            try:
+                raw_for_render = strip_exact_status_header_line(raw_for_render or "", header or "")
+            except Exception:
+                pass
             
             # A: Header voranstellen
             if header:
@@ -7193,6 +7382,10 @@ class CSCRefiner:
                 pass
             try:
                 final_html_body = normalize_hash_subheadings_in_html(final_html_body or "")
+            except Exception:
+                pass
+            try:
+                final_html_body = strip_internal_scaffolding_status_html(final_html_body or "")
             except Exception:
                 pass
 
@@ -8284,9 +8477,14 @@ class CSCRefiner:
         # OpenAI-compatible providers path (OpenRouter / Hugging Face router)
         if provider in ('openrouter', 'openai', 'openai_compat', 'huggingface', 'hf'):
             pr = getattr(self, 'provider_router', None)
+            psvc = getattr(self, 'provider_service', None)
+            try:
+                canon_pid = psvc.canonical_provider_id(provider) if psvc is not None else ('huggingface' if provider in ('huggingface', 'hf') else 'openrouter')
+            except Exception:
+                canon_pid = 'huggingface' if provider in ('huggingface', 'hf') else 'openrouter'
             client = None
             try:
-                if provider in ('huggingface', 'hf'):
+                if canon_pid == 'huggingface':
                     if pr is not None and hasattr(pr, 'build_huggingface_client'):
                         client = pr.build_huggingface_client()
                 else:
@@ -8296,7 +8494,7 @@ class CSCRefiner:
                 client = None
             if client is None or not getattr(client, 'api_key', ''):
                 # Provider configured but no key found
-                pname = 'Hugging Face' if provider in ('huggingface', 'hf') else 'OpenRouter'
+                pname = 'Hugging Face' if canon_pid == 'huggingface' else 'OpenRouter'
                 raise RuntimeError(f"{pname} client not configured (missing API key?)")
 
             # Choose model
@@ -8304,12 +8502,12 @@ class CSCRefiner:
                 fallback = str(getattr(cfg, 'get_model', lambda: '')() or '')
             except Exception:
                 fallback = ''
-            prov_id = 'huggingface' if provider in ('huggingface','hf') else 'openrouter'
+            prov_id = canon_pid
             models = []
             # Load provider-specific model candidates up-front so fallback can work
             # even when a configured default model is invalid for the active provider.
             try:
-                if provider in ('huggingface', 'hf'):
+                if canon_pid == 'huggingface':
                     if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
                         models, _meta = pr.get_huggingface_models_cached(force_refresh=False)
                     if (not models) and pr is not None and hasattr(pr, 'get_huggingface_models_from_config'):
@@ -8328,7 +8526,7 @@ class CSCRefiner:
                 except Exception:
                     model = ''
             if not model:
-                model = 'zai-org/GLM-4.7:cerebras' if provider in ('huggingface','hf') else 'openai/gpt-4.1-mini'
+                model = 'zai-org/GLM-4.7:cerebras' if canon_pid == 'huggingface' else 'openai/gpt-4.1-mini'
 
             # IMPORTANT: OpenAI-compatible providers are stateless and do not automatically
             # retain our runtime governance state. Therefore we MUST prefix each user turn
@@ -13117,6 +13315,10 @@ class Api(CSCRefiner):
             self.panel_bridge = PanelBridge(self)
         except Exception:
             self.panel_bridge = None
+        try:
+            self.main_bridge = MainBridge(self)
+        except Exception:
+            self.main_bridge = None
 
 
         # Closing guard (prevents double-exit)
@@ -13443,6 +13645,52 @@ class PanelBridge:
     def panel_action(self, action, payload=None):
         return self._api.panel_action(action, payload)
 
+
+class MainBridge:
+    """Slim JS-API bridge for the main chat window.
+
+    Purpose:
+    - Expose only methods used by HTML_CHAT.
+    - Avoid pywebview scanning the full Api object graph (which can include
+      unsupported callables from third-party clients).
+    """
+
+    def __init__(self, api):
+        self._api = api
+
+    def ask(self, txt):
+        return self._api.ask(txt)
+
+    def remote_cmd(self, txt):
+        return self._api.remote_cmd(txt)
+
+    def ui_qc_bar_enabled(self):
+        return self._api.ui_qc_bar_enabled()
+
+    def is_ready(self):
+        return self._api.is_ready()
+
+    def ping(self, _payload=None):
+        return self._api.ping(_payload)
+
+    def update_stats_ui(self):
+        return self._api.update_stats_ui()
+
+    def ensure_panel_visible(self):
+        return self._api.ensure_panel_visible()
+
+    def load_rule_file(self):
+        return self._api.load_rule_file()
+
+    def export(self):
+        return self._api.export()
+
+    def settings(self):
+        return self._api.settings()
+
+    def close_app(self):
+        return self._api.close_app()
+
 # ----------------------------
 
 def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
@@ -13616,7 +13864,7 @@ if __name__ == '__main__':
         raise SystemExit('google-genai is required. Install with: pip install google-genai')
     api = Api()
     api.main_win = webview.create_window(
-        MAIN_WINDOW_TITLE, html=HTML_CHAT, js_api=api, 
+        MAIN_WINDOW_TITLE, html=HTML_CHAT, js_api=(getattr(api, 'main_bridge', None) or api), 
         width=1100, height=1000,
         x=0, y=0
     )
