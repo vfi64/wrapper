@@ -39,6 +39,16 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 - Add a minimal observability hook: `log_event(kind, payload)` (or equivalent).
 - Add invariants/guards (visible provider switch; stable defaults; UI payload shape).
 
+#### S0 acceptance checklist
+- [ ] `GOLDEN_RUN_STUFE0` exists and contains startup/panel/provider/export/QC-relevant steps.
+- [ ] `Api.log_event(...)` is callable fail-safe and appends JSON-safe session events.
+- [ ] Provider switch emits a visible event trail (`provider_switch`) in observability data.
+- [ ] Smoke tests run locally without network calls (`pytest -q` from project root).
+
+#### S0 test focus (current repo)
+- `tests/test_stage0_baseline.py`
+- Existing baseline guards in `tests/test_app.py` (startup defaults, UI header/title invariants, no-network smoke).
+
 ### S1 — Clear internal boundaries (still single file)
 **Goal:** make later extraction safe by defining contracts first.
 - Introduce explicit “sections” and minimal contracts (inputs/outputs).
@@ -57,6 +67,11 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 - Centralize reset rules (profile switch, clear chat, comm stop).
 - Ensure **no UI logic** inside governance state.
 
+#### S3 acceptance checklist
+- [x] Raw output contract normalization is centralized via `GovernanceService`.
+- [x] Reset rules for profile switch / clear chat / comm stop are centralized via `GovernanceService`.
+- [x] Legacy governance command-state transitions (overlay/color/sci/comm/anchor/dynamic) are routed through `GovernanceService` (SCI recursion remains local by design).
+
 ### S4 — UI decoupling
 **Goal:** make UI interactions a thin, testable layer.
 - Introduce `UIController` with standardized actions/responses.
@@ -66,6 +81,34 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 **Goal:** deterministic persistence and schema enforcement.
 - Introduce `StorageService` for load/fork/export.
 - Enforce schema‑versioned audit logs (e.g., “audit v2+”) in exports.
+
+### S6 — Panel action routing split (UI action dispatcher extraction)
+**Goal:** reduce `panel_action(...)` monolith size/risk by moving stable panel routes into `UIController`.
+- Add a delegated `UIController` panel-action handler for stable panel routes.
+- Keep routing behavior identical (same response schema, same fail-soft semantics).
+- Remove duplicated wrapper branches only after tests/manual checks are green.
+
+#### S6 acceptance checklist
+- [x] `panel_action(...)` delegates a stable subset of routes to `UIController`.
+- [x] Manual-test monitor and report routes are handled via `UIController`.
+- [x] QC override panel routes are handled via `UIController`.
+- [x] Provider/model/language/refresh panel routes are handled via `UIController`.
+- [x] Chat log list/load/clear panel routes are handled via `UIController`.
+- [x] Redundant delegated wrapper branches are removed without panel regression.
+
+### S7 — UI / Panel assets decoupling (HTML/CSS/JS extraction)
+**Goal:** reduce wrapper file size and make UI assets versionable/testable without changing runtime behavior.
+- Extract large inline UI assets (chat/panel/manual-test monitor HTML/CSS/JS) into dedicated files under `src/ui_assets/` (or equivalent).
+- Keep a deterministic loader/fallback in the wrapper (no dynamic remote loading).
+- Preserve exact UI behavior and command bindings (`panel_action`, `ask`, monitor/report hooks).
+- Add tests for asset loading/fallback and key invariants (required JS functions, panel controls present).
+
+#### S7 acceptance checklist (planned)
+- [ ] Panel HTML/JS is loaded from local asset file(s) with deterministic fallback.
+- [ ] Chat HTML/JS/CSS is loaded from local asset file(s) with deterministic fallback.
+- [ ] No change in `panel_action` command names or payload schemas.
+- [ ] Existing panel/manual-test smoke checks remain green.
+- [ ] Wrapper file size is materially reduced (documented delta).
 
 ### Optional later
 - External templates (feature‑flagged)
@@ -79,4 +122,3 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 2. Write a failing test that captures the regression risk.
 3. Implement the smallest change to make the test pass.
 4. Keep PRs small and describable in one paragraph.
-

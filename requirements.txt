@@ -1,12 +1,17 @@
-# Core runtime dependencies (required)
+# Comm-SCI-Control-App v20.0.3
+
+# Runtime
 pywebview>=5.0
 requests>=2.31
 markdown>=3.5
 bleach>=6.1
+beautifulsoup4>=4.12
 
-# Optional provider/client dependencies (install only if you use them)
-# google-genai>=0.6   # Gemini client
-# cryptography>=42.0  # optional encrypted key storage (Fernet)
+# Provider
+google-genai>=0.6
 
-# Development / tests (optional)
-# pytest>=8.0
+# Optional security feature (encrypted local key storage)
+cryptography>=42.0
+
+# Tests
+pytest>=8.0

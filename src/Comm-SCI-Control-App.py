@@ -4,6 +4,7 @@ import re
 import html
 import sys
 import traceback
+import importlib
 import difflib
 import hashlib
 import base64
@@ -24,9 +25,103 @@ except Exception:
     markdown = _MarkdownShim()  # type: ignore
 
 try:
+    import Module.compliance_scan as _compliance_scan  # type: ignore
+except Exception:
+    _compliance_scan = None  # type: ignore
+
+try:
+    import Module.auditstream as _auditstream  # type: ignore
+except Exception:
+    _auditstream = None  # type: ignore
+
+try:
+    import Module.rendering_utils as _rendering_utils  # type: ignore
+except Exception:
+    _rendering_utils = None  # type: ignore
+
+try:
+    import Module.rendering_pipeline_v192 as _rendering_pipeline_v192  # type: ignore
+except Exception:
+    _rendering_pipeline_v192 = None  # type: ignore
+
+try:
+    from ui_panel_model import StateSnapshot as _PanelStateSnapshot, normalize_panel_ui as _panel_normalize_ui  # type: ignore
+except Exception:
+    _PanelStateSnapshot = None  # type: ignore
+    _panel_normalize_ui = None  # type: ignore
+
+try:
+    from intents import intent_from_command as _intent_from_command, ProcessModelResponse as _ProcessModelResponse, ComplianceViolation as _ComplianceViolation  # type: ignore
+    from state import state_from_runtime as _state_from_runtime, apply_state_to_runtime as _state_apply_to_runtime, init_state_from_ruleset as _state_init_from_ruleset  # type: ignore
+    from transitions import apply_intent as _apply_intent  # type: ignore
+except Exception:
+    _intent_from_command = None  # type: ignore
+    _ProcessModelResponse = None  # type: ignore
+    _ComplianceViolation = None  # type: ignore
+    _state_from_runtime = None  # type: ignore
+    _state_apply_to_runtime = None  # type: ignore
+    _state_init_from_ruleset = None  # type: ignore
+    _apply_intent = None  # type: ignore
+
+try:
+    from controller import dispatch as _controller_dispatch  # type: ignore
+except Exception:
+    _controller_dispatch = None  # type: ignore
+
+try:
+    from controller import dispatch_intent as _controller_dispatch_intent  # type: ignore
+except Exception:
+    _controller_dispatch_intent = None  # type: ignore
+
+try:
+    from governance_service import GovernanceService as _GovernanceService  # type: ignore
+except Exception:
+    _GovernanceService = None  # type: ignore
+
+try:
+    from ui_controller import UIController as _UIController  # type: ignore
+except Exception:
+    _UIController = None  # type: ignore
+
+try:
+    from storage_service import StorageService as _StorageService  # type: ignore
+except Exception:
+    _StorageService = None  # type: ignore
+
+# Stage 3e (CI): strict module mode. If enabled, missing extracted modules is a hard error.
+_STRICT_MODULES = (os.environ.get('WRAPPER_STRICT_MODULES', '') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+if _STRICT_MODULES:
+    missing = []
+    if _auditstream is None:
+        missing.append('Module.auditstream')
+    if _rendering_utils is None:
+        missing.append('Module.rendering_utils')
+    if _compliance_scan is None:
+        missing.append('Module.compliance_scan')
+    if missing:
+        raise SystemExit("WRAPPER_STRICT_MODULES=1: missing required modules: " + ", ".join(missing))
+
+try:
     import bleach  # type: ignore
 except Exception:
     bleach = None  # type: ignore
+
+_css_sanitizer_cached = None
+
+def _get_css_sanitizer():
+    """Return a Bleach CSSSanitizer allowing only the minimal inline styles we inject.
+
+    We keep this extremely narrow to avoid changing rendering semantics or expanding attack surface.
+    """
+    global _css_sanitizer_cached
+    if _css_sanitizer_cached is not None:
+        return _css_sanitizer_cached
+    try:
+        from bleach.css_sanitizer import CSSSanitizer  # type: ignore
+        _css_sanitizer_cached = CSSSanitizer(allowed_css_properties=['color','font-weight'])
+    except Exception:
+        _css_sanitizer_cached = None
+    return _css_sanitizer_cached
 
 def sanitize_html(html_text: str) -> str:
     # Defensive HTML sanitization for model outputs before injecting into pywebview.
@@ -37,7 +132,7 @@ def sanitize_html(html_text: str) -> str:
         return html_text
 
     allowed_tags = [
-        'p','br','b','strong','i','em','u','code','pre','blockquote',
+        'p','br','b','strong','i','em','u','code','pre','blockquote','details','summary',
         'ul','ol','li','table','thead','tbody','tr','th','td','hr',
         'div','span','img','a',
         'h1','h2','h3','h4','h5','h6'
@@ -48,41 +143,70 @@ def sanitize_html(html_text: str) -> str:
         'img': ['src','alt','title','style','loading','class'],
         'code': ['class'],
         'pre': ['class'],
+        'details': ['open','class','style'],
+        'summary': ['class','style'],
         'th': ['colspan','rowspan','class','style'],
         'td': ['colspan','rowspan','class','style'],
     }
     try:
+        css_sanitizer = _get_css_sanitizer()
+        _attrs = allowed_attrs
+        _kwargs = {}
+        if css_sanitizer is None:
+            # Avoid bleach NoCssSanitizerWarning by not allowing 'style' through bleach when no CSS sanitizer exists.
+            _attrs = {k: [a for a in v if a != 'style'] for k, v in allowed_attrs.items()}
+        else:
+            _kwargs['css_sanitizer'] = css_sanitizer
         cleaned = bleach.clean(
             html_text,
             tags=allowed_tags,
-            attributes=allowed_attrs,
+            attributes=_attrs,
             protocols=['http','https','mailto'],
             strip=True,
+            **_kwargs,
         )
+        if css_sanitizer is None:
+            cleaned = _reapply_color_styles_if_stripped(cleaned)
         return cleaned
     except Exception:
         return html_text
+
+# ============================================
+# STUFE 1 — IN-FILE BOUNDARY REFACTOR (v141)
+# ============================================
+# Goal: Introduce explicit boundary markers + minimal schema contracts
+# WITHOUT changing runtime behavior, UI rendering, provider handling,
+# or governance semantics. This is a "seams + contracts" step only.
+#
+# Boundaries (conceptual; still single-file by plan):
+#   A) Identity / Versioning
+#   B) Safety utilities (sanitization, hashing, previews)
+#   C) Routing / Parsing (standalone commands, SCI pending A–H, numeric code guard)
+#   D) Governance loading & token registry
+#   E) Rendering (HTML/CSS, QC/SCI blocks)
+#   F) Providers (Gemini/OpenRouter/HF) — untouched in this stage
+#   G) UI glue (pywebview API) + Panel wiring
+#   H) Main bootstrap
+#
+# Note: Contracts are fail-soft: they never raise, they only return bool
+# and optionally emit an internal log_event() on violation.
 
 # ----------------------------
 # WRAPPER IDENTITY (dynamic, derived from filename)
 # ----------------------------
 
 def _detect_wrapper_identity() -> tuple[str, str]:
-    """Return (WRAPPER_NAME, WRAPPER_VERSION) based on this file's name.
-
-    Expected filename: Wrapper-<NNN>.py. Falls back safely if pattern is missing.
-    """
+    """Return stable app identity independent of historical Wrapper-<NNN> filenames."""
     try:
-        stem = Path(__file__).stem  # e.g. 'Wrapper-115'
-        m = re.match(r'^(Wrapper)-(\d+)$', stem)
-        if m:
-            return f"Wrapper-{m.group(2)}", m.group(2)
+        stem = Path(__file__).stem
+        if stem:
+            return "Comm-SCI-Control-App", ""
     except Exception:
         pass
-    return "Wrapper", "000"
+    return "Comm-SCI-Control-App", ""
 
 WRAPPER_NAME, WRAPPER_VERSION = _detect_wrapper_identity()
-MAIN_WINDOW_TITLE = f"{WRAPPER_NAME} Comm-SCI-Control"
+MAIN_WINDOW_TITLE = WRAPPER_NAME
 PANEL_WINDOW_TITLE = f"{WRAPPER_NAME} Panel"
 
 
@@ -284,14 +408,15 @@ except Exception:
 # Project paths (relative to script directory)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PROJECT_DIR = SCRIPT_DIR  # backwards-compat alias
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
 
-JSON_DIR = os.path.join(SCRIPT_DIR, 'JSON')
-CONFIG_DIR = os.path.join(SCRIPT_DIR, 'Config')
+JSON_DIR = os.path.join(PROJECT_DIR, 'JSON')
+CONFIG_DIR = os.path.join(PROJECT_DIR, 'Config')
 
-LOGS_DIR = os.path.join(SCRIPT_DIR, 'Logs')
+LOGS_DIR = os.path.join(PROJECT_DIR, 'Logs')
 AUDIT_LOG_DIR = os.path.join(LOGS_DIR, 'Audit')
 CHAT_LOG_DIR = os.path.join(LOGS_DIR, 'Chats')
+SESSION_EVENTS_MAX = 2000  # cap in-memory session_events (JSONL is full history)
 USAGE_LOG_DIR = os.path.join(LOGS_DIR, 'Usage_statistics')
 
 # Create directories (idempotent)
@@ -315,6 +440,27 @@ GOLDEN_RUN_STUFE0 = [
     "Clear Chat resets runtime state (incl. QC overrides if present)",
 ]
 
+# === Stage 3d: Dependency health (soft-import visibility) ===
+# We keep soft-import fallbacks, but we also surface module availability deterministically
+# in Comm State / Comm Audit so missing modules never silently change behavior.
+def _check_optional_module(name: str, *, strict: bool = False):
+    """Return (ok: bool, err: str). If strict=True, raises on failure."""
+    try:
+        importlib.import_module(name)
+        return True, ""
+    except Exception as e:
+        if strict:
+            raise
+        return False, f"{type(e).__name__}: {e}"
+
+def _strict_modules_enabled() -> bool:
+    v = os.environ.get('WRAPPER_STRICT_MODULES', '')
+    v = (v or '').strip().lower()
+    return v in ('1', 'true', 'yes', 'on')
+
+
+
+
 
 def _safe_preview_text(s: str, limit: int = 160) -> str:
     try:
@@ -334,11 +480,11 @@ def _safe_sha256(s: str) -> str:
     except Exception:
         return ""
 
-# Default ruleset location: ./JSON/Comm-SCI-v19.6.9.json
-DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v19.6.9.json')
+# Default ruleset location: ./JSON/Comm-SCI-v20.0.3.json
+DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.0.3.json')
 
 # Fallback: if the ruleset is placed next to the script (legacy layout), use it.
-_alt_ruleset = os.path.join(SCRIPT_DIR, 'Comm-SCI-v19.6.9.json')
+_alt_ruleset = os.path.join(PROJECT_DIR, 'Comm-SCI-v20.0.3.json')
 if (not os.path.exists(DEFAULT_JSON)) and os.path.exists(_alt_ruleset):
     DEFAULT_JSON = _alt_ruleset
 
@@ -522,8 +668,29 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
     except Exception:
         pass
 
-    # SCI selection is treated as a chat input that triggers deterministic logic.
-    if sci_pending and re.match(r'^[A-Ha-h]$', txt):
+    # CGI feedback triplets (optional user feedback; should not trigger an LLM call).
+    # Canonical JSON (v19.6.9+): global_defaults.user_feedback_triplet and global_defaults.process_cgi_feedback
+    try:
+        gd = (getattr(gov_obj, 'data', {}) or {}).get('global_defaults', {}) or {}
+        # user_feedback_triplet: e.g., "3,3,3"
+        uft = (gd.get('user_feedback_triplet') or {}) if isinstance(gd, dict) else {}
+        if isinstance(uft, dict) and bool(uft.get('enabled', False)):
+            uft_pat = str(uft.get('regex') or uft.get('pattern') or '').strip() or r'^\s*([0-3])\s*,\s*([0-3])\s*,\s*([0-3])\s*$'
+            if re.fullmatch(uft_pat, txt):
+                return {"kind": "chat", "query_text": txt, "is_user_feedback_triplet": True}
+
+        # process_cgi_feedback: e.g., "SCI: 3,2,1"
+        pcf = (gd.get('process_cgi_feedback') or {}) if isinstance(gd, dict) else {}
+        if isinstance(pcf, dict) and bool(pcf.get('enabled', False)):
+            pcf_pat = str(pcf.get('regex') or pcf.get('pattern') or '').strip()
+            if pcf_pat and re.fullmatch(pcf_pat, txt):
+                return {"kind": "chat", "query_text": txt, "is_process_cgi_feedback": True}
+    except Exception:
+        pass
+
+    # SCI pending: single-letter variant selection (A–H).
+    # This must be detected deterministically so a standalone letter does NOT call the model.
+    if sci_pending and re.fullmatch(r'[A-Ha-h]', txt):
         return {"kind": "chat", "query_text": txt, "is_sci_selection": True}
 
 
@@ -597,6 +764,51 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
     return {"kind": "chat", "query_text": txt}
 
 
+
+# ----------------------------
+# STUFE 1: SCHEMA CONTRACTS (fail-soft; never raises)
+# ----------------------------
+_ALLOWED_ROUTE_KINDS = {"noop", "command", "chat", "error"}
+
+def contract_route_shape(route: dict) -> bool:
+    """Best-effort contract for route_input() outputs.
+
+    This is intentionally conservative to avoid false positives:
+    - only checks presence/type of the *core* fields for each route kind
+    - does NOT enforce optional keys
+    - never raises (returns False on exceptions)
+    """
+    try:
+        if not isinstance(route, dict):
+            return False
+        kind = route.get("kind")
+        if kind not in _ALLOWED_ROUTE_KINDS:
+            return False
+        if kind == "command":
+            return isinstance(route.get("canonical_cmd"), str) and bool(route.get("canonical_cmd"))
+        if kind == "chat":
+            return isinstance(route.get("query_text"), str) and bool(route.get("query_text"))
+        if kind == "error":
+            return isinstance(route.get("html"), str) and bool(route.get("html"))
+        return True
+    except Exception:
+        return False
+
+
+def contract_ask_output_shape(out) -> bool:
+    """Best-effort contract for Api.ask() outputs (permissive; never raises)."""
+    try:
+        if isinstance(out, str):
+            return True
+        if isinstance(out, dict):
+            if "html" in out:
+                return isinstance(out.get("html"), str) or out.get("html") is None
+            if "text" in out:
+                return isinstance(out.get("text"), str) or out.get("text") is None
+            return True
+        return False
+    except Exception:
+        return False
 
 def get_api_key():
     """Return Gemini API key.
@@ -1366,6 +1578,12 @@ _EVIDENCE_COLOR = {
     "RED": "#c62828",
     "GRAY": "#616161",
 }
+_EVIDENCE_ICON = {
+    "GREEN": "🟢",
+    "YELLOW": "🟡",
+    "RED": "🔴",
+    "GRAY": "⚪",
+}
 
 def dedupe_qc_lines(text: str) -> str:
     """Remove redundant QC header line if a QC-Matrix footer is present."""
@@ -1655,22 +1873,22 @@ def inject_minimal_self_debunking(text: str, *, title: str = "Self-Debunking", l
     if lang_norm.startswith("de"):
         block = (
             f"\n\n{title}:\n\n"
-            "1. Schwäche: Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen.\n"
-            "   Warum relevant: Vereinfachungen können Randfälle oder alternative Deutungen verdecken.\n"
-            "   Prüfen/Widerlegen (nächster Schritt): Die zentralen Annahmen explizit machen und gegen Primärquellen/Definitionen prüfen.\n\n"
-            "2. Schwäche: Die Antwort kann wichtige Gegenpositionen oder Unsicherheitsgrenzen auslassen.\n"
-            "   Warum relevant: Fehlende Einschränkungen können die Gültigkeit überdehnen oder Sicherheit vortäuschen.\n"
-            "   Prüfen/Widerlegen (nächster Schritt): Mindestens ein starkes Gegenbeispiel ergänzen und prüfen, ob die Kernaussagen bestehen bleiben.\n"
+            "1. **Schwäche**: Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen.\n"
+            "   **Warum relevant**: Vereinfachungen können Randfälle oder alternative Deutungen verdecken.\n"
+            "   **Prüfen/Widerlegen (nächster Schritt)**: Die zentralen Annahmen explizit machen und gegen Primärquellen/Definitionen prüfen.\n\n"
+            "2. **Schwäche**: Die Antwort kann wichtige Gegenpositionen oder Unsicherheitsgrenzen auslassen.\n"
+            "   **Warum relevant**: Fehlende Einschränkungen können die Gültigkeit überdehnen oder Sicherheit vortäuschen.\n"
+            "   **Prüfen/Widerlegen (nächster Schritt)**: Mindestens ein starkes Gegenbeispiel ergänzen und prüfen, ob die Kernaussagen bestehen bleiben.\n"
         )
     else:
         block = (
             f"\n\n{title}:\n\n"
-            "1. Weakness: The answer may rely on simplified framing or implicit assumptions.\n"
-            "   Why it matters: Simplifications can hide edge-cases or alternative interpretations.\n"
-            "   What would verify/falsify (next check): Identify key assumptions and test them against primary sources or formal definitions.\n\n"
-            "2. Weakness: The answer may omit important counter-perspectives or uncertainty boundaries.\n"
-            "   Why it matters: Missing caveats can overstate confidence or applicability.\n"
-            "   What would verify/falsify (next check): Add at least one strong counter-example and check whether conclusions still hold.\n"
+            "1. **Weakness**: The answer may rely on simplified framing or implicit assumptions.\n"
+            "   **Why it matters**: Simplifications can hide edge-cases or alternative interpretations.\n"
+            "   **What would verify/falsify (next check)**: Identify key assumptions and test them against primary sources or formal definitions.\n\n"
+            "2. **Weakness**: The answer may omit important counter-perspectives or uncertainty boundaries.\n"
+            "   **Why it matters**: Missing caveats can overstate confidence or applicability.\n"
+            "   **What would verify/falsify (next check)**: Add at least one strong counter-example and check whether conclusions still hold.\n"
         )
     # Place block BEFORE QC-Matrix if present, else append.
     m = re.search(r"(?im)^\s*QC-Matrix:\s*.*$", text)
@@ -1763,6 +1981,401 @@ def normalize_evidence_tags(text: str) -> str:
     return out
 
 
+def normalize_known_markdown_control_headings(text: str) -> str:
+    """Normalize leaked Markdown heading markers for control and common subheadings.
+
+    Deterministic scope:
+    - Keep code fences untouched.
+    - Normalize known control headings (SCI Trace, Self-Debunking, ...).
+    - Normalize common content subheadings with ##/###/#### into bold lines.
+    """
+    if not text:
+        return text
+
+    try:
+        parts = str(text).split("```")
+
+        # Normalize strict control-heading whitelist first.
+        pat_control = re.compile(
+            r"(?im)^\s{0,3}#{1,6}\s*(Final Answer|SCI Trace|Self-Debunking|Selbst[- ]?Debunking)\s*:?\s*$"
+        )
+
+        def _repl_control(m: re.Match) -> str:
+            title = (m.group(1) or "").strip()
+            return f"<strong>{html.escape(title)}:</strong>"
+
+        # Then normalize generic content subheadings (##/###/####) to bold text.
+        # Keep this conservative: no empty headings, no very long lines.
+        # Accept optional evidence/linker prefixes and bullets before hashes.
+        pat_sub = re.compile(
+            r"(?im)^\s{0,3}"
+            r"(?:\[(?:GREEN|YELLOW|RED|GRAY)(?:-[A-Z0-9]+)*\]\s*)?"
+            r"(?:[🟢🟡🔴⚪⚪️]\s*)?"
+            r"(?:[•*\-]\s*)?"
+            r"#{2,4}\s*([^\n#][^\n]{0,120}?)\s*$"
+        )
+
+        def _repl_sub(m: re.Match) -> str:
+            title = (m.group(1) or "").strip()
+            if not title:
+                return m.group(0)
+            # Avoid double conversion if a control heading already matched.
+            if re.fullmatch(r"(?i)(Final Answer|SCI Trace|Self-Debunking|Selbst[- ]?Debunking)\s*:?", title):
+                return f"<strong>{html.escape(title.rstrip(':'))}:</strong>"
+            return f"<strong>{html.escape(title.rstrip(':'))}:</strong>"
+
+        for i in range(0, len(parts), 2):
+            parts[i] = pat_control.sub(_repl_control, parts[i])
+            parts[i] = pat_sub.sub(_repl_sub, parts[i])
+
+        return "```".join(parts)
+    except Exception:
+        return text
+
+
+def strip_verification_route_display_lines(text: str) -> str:
+    """Hide noisy verification-route marker lines from UI display.
+
+    Contract markers may be useful for validation/audit but reduce readability in chat.
+    This function is display-only and deterministic.
+    """
+    try:
+        if not text:
+            return text
+        out_lines = []
+        pats = [
+            # Header variants
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Verification\s+Route(?:\s+Gate)?\s*:?.*$"),
+            # Marker lines (EN/DE, with/without bullets)
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Source\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Measurement\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Contrast\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Web[\s\-]*Check\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Quelle\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Messung\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Kontrast\s*:.*$"),
+            re.compile(r"(?im)^\s*(?:[-*•]\s*)?Web[\s\-]*Prüfung\s*:.*$"),
+        ]
+        for ln in str(text).splitlines():
+            if any(p.match(ln or "") for p in pats):
+                continue
+            out_lines.append(ln)
+        return "\n".join(out_lines)
+    except Exception:
+        return text
+
+
+def strip_internal_scaffolding_status_lines(text: str) -> str:
+    """Remove leaked internal status scaffold lines from model output (display-only).
+
+    Deterministic and conservative:
+    - only full lines starting with "Profile:" (or "Comm:")
+    - only if they clearly look like wrapper status scaffolding
+      (contains separators plus multiple control tokens)
+    - code fences remain untouched
+    """
+    try:
+        if not text:
+            return text
+
+        out_lines = []
+        in_code = False
+        for ln in str(text).splitlines():
+            s = (ln or "").strip()
+            if s.startswith("```"):
+                in_code = not in_code
+                out_lines.append(ln)
+                continue
+            if in_code:
+                out_lines.append(ln)
+                continue
+
+            low = s.lower()
+            starts_status = low.startswith("profile:")
+            starts_comm = low.startswith("comm:")
+            has_sep = any(ch in s for ch in ("·", "•", "|"))
+            token_count = sum(
+                1
+                for t in ("overlay", "sci", "color", "control layer", "qc", "cgi")
+                if t in low
+            )
+            has_active_profile = "active profile" in low
+
+            if starts_status and has_sep and token_count >= 3:
+                continue
+            if starts_comm and has_sep and has_active_profile and token_count >= 4:
+                continue
+
+            out_lines.append(ln)
+
+        return "\n".join(out_lines)
+    except Exception:
+        return text
+
+
+def strip_sci_trace_line_when_inactive(
+    text: str,
+    *,
+    sci_active: bool = False,
+    sci_variant: str = "",
+    sci_pending: bool = False,
+) -> str:
+    """Remove leaked plain-text 'SCI Trace:' lines when SCI is inactive.
+
+    This is display cleanup only and intentionally conservative:
+    - Runs only when SCI is effectively OFF (no active variant, not pending).
+    - Keeps code fences untouched.
+    """
+    try:
+        if not text:
+            return text
+        if bool(sci_active) or bool((sci_variant or "").strip()) or bool(sci_pending):
+            return text
+
+        out_lines = []
+        in_code = False
+        for ln in str(text).splitlines():
+            s = (ln or "").strip()
+            if s.startswith("```"):
+                in_code = not in_code
+                out_lines.append(ln)
+                continue
+            if in_code:
+                out_lines.append(ln)
+                continue
+
+            if re.match(r"(?im)^\s*SCI\s*Trace\s*:\s*.*$", s):
+                continue
+            out_lines.append(ln)
+
+        return "\n".join(out_lines)
+    except Exception:
+        return text
+
+
+def strip_internal_scaffolding_status_html(html_text: str) -> str:
+    """Fallback cleanup: remove leaked scaffold status lines from rendered HTML blocks.
+
+    This runs post-render and only removes full block nodes (<p>/<div>/<li>) that
+    look like internal status scaffolding.
+    """
+    try:
+        if not html_text:
+            return html_text
+
+        block_pat = re.compile(r"(?is)<(p|div|li)\b[^>]*>(.*?)</\1>")
+
+        def _is_scaffold(inner_html: str) -> bool:
+            txt = re.sub(r"(?is)<[^>]+>", " ", inner_html or "")
+            txt = html.unescape(txt or "")
+            txt = re.sub(r"\s+", " ", txt).strip()
+            low = txt.lower()
+            starts_status = low.startswith("profile:")
+            starts_comm = low.startswith("comm:")
+            has_sep = any(ch in txt for ch in ("·", "•", "|"))
+            token_count = sum(
+                1
+                for t in ("overlay", "sci", "color", "control layer", "qc", "cgi")
+                if t in low
+            )
+            has_active_profile = "active profile" in low
+            if starts_status and has_sep and token_count >= 3:
+                return True
+            if starts_comm and has_sep and has_active_profile and token_count >= 4:
+                return True
+            return False
+
+        def _repl(m: re.Match) -> str:
+            inner = m.group(2) or ""
+            return "" if _is_scaffold(inner) else m.group(0)
+
+        out = block_pat.sub(_repl, str(html_text))
+        return out
+    except Exception:
+        return html_text
+
+
+def strip_exact_status_header_line(text: str, header_line: str) -> str:
+    """Remove exact copies of the canonical header line from model output.
+
+    This ensures the wrapper can prepend exactly one authoritative header line.
+    """
+    try:
+        if not text or not header_line:
+            return text
+        out = []
+        target = str(header_line).strip()
+        for ln in str(text).splitlines():
+            if (ln or "").strip() == target:
+                continue
+            out.append(ln)
+        return "\n".join(out)
+    except Exception:
+        return text
+
+
+def sanitize_self_debunking_markdown_in_html(html_text: str) -> str:
+    """Normalize leaked markdown emphasis inside already-rendered Self-Debunking HTML blocks.
+
+    Deterministic scope:
+    - only runs if a self-debunking block exists
+    - converts `**label**` / `__label__` to `<strong>label</strong>`
+    - formatting only (no semantic rewrites)
+    """
+    try:
+        if not html_text:
+            return html_text
+        if re.search(r"(?is)class=(?:\"|')[^\"']*self-debunking[^\"']*(?:\"|')", html_text) is None:
+            return html_text
+        out = re.sub(r"\*\*([^*\n][^*\n]*?)\*\*", r"<strong>\1</strong>", html_text)
+        out = re.sub(r"__([^_\n][^_\n]*?)__", r"<strong>\1</strong>", out)
+        return out
+    except Exception:
+        return html_text
+
+
+def qc_override_runtime_violations(text: str, overrides: dict | None) -> list[str]:
+    """Deterministic best-effort checks for active QC overrides against runtime output."""
+    try:
+        ov = overrides if isinstance(overrides, dict) else {}
+        if not ov:
+            return []
+
+        canon = {
+            "clarity": "clarity",
+            "brevity": "brevity",
+            "evidence": "evidence",
+            "empathy": "empathy",
+            "consistency": "consistency",
+            "neutrality": "neutrality",
+            "klarheit": "clarity",
+            "kürze": "brevity",
+            "kuerze": "brevity",
+            "evidenz": "evidence",
+            "empathie": "empathy",
+            "konsistenz": "consistency",
+            "neutralität": "neutrality",
+            "neutralitaet": "neutrality",
+        }
+        ov_clean = {}
+        for k, v in ov.items():
+            kk = canon.get(str(k or "").strip().lower())
+            if not kk:
+                continue
+            try:
+                iv = int(v)
+            except Exception:
+                continue
+            ov_clean[kk] = max(0, min(3, iv))
+        if not ov_clean:
+            return []
+
+        raw = str(text or "")
+        plain = re.sub(r"<[^>]+>", " ", raw)
+        plain = re.sub(r"[ \t]+", " ", plain)
+        filtered = []
+        for ln in plain.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            if re.match(r"(?i)^(QC(?:-Matrix)?|Self-?Debunking|Selbst-?Debunking|SCI Trace)\b", s):
+                continue
+            if re.match(r"(?i)^(Plan|Solution|Check|Critic|Linguist|Logician|Adversary|Learn|Dialectic_[A-Za-z0-9_]+)\s*:?\s*$", s):
+                continue
+            filtered.append(s)
+        probe = " ".join(filtered).strip() or plain.strip()
+
+        words = re.findall(r"[A-Za-zÄÖÜäöüß0-9]+", probe)
+        wc = len(words)
+        sc = max(1, len(re.findall(r"[.!?](?:\s|$)", probe)))
+        avg_sent = (float(wc) / float(sc)) if sc else float(wc)
+
+        def _obs_brevity() -> int:
+            if wc >= 260:
+                return 0
+            if wc >= 170:
+                return 1
+            if wc >= 90:
+                return 2
+            return 3
+
+        def _obs_clarity() -> int:
+            has_structure = bool(re.search(r"(?im)^\s*(?:[-*•]|\d+\.)\s+", raw))
+            if has_structure and 8 <= avg_sent <= 24 and wc >= 80:
+                return 3
+            if wc >= 60 and 7 <= avg_sent <= 28:
+                return 2
+            if wc >= 30:
+                return 1
+            return 0
+
+        def _obs_evidence() -> int:
+            c = 0
+            c += len(re.findall(r"(?i)\b(Source|Measurement|Contrast|Web-?Check)\s*:", raw))
+            c += len(re.findall(r"\[(?:GREEN|YELLOW|RED|GRAY)(?:-(?:TRAIN|WEB|DOC))?\]", raw))
+            c += len(re.findall(r"https?://", raw))
+            if c >= 6:
+                return 3
+            if c >= 3:
+                return 2
+            if c >= 1:
+                return 1
+            return 0
+
+        def _obs_empathy() -> int:
+            c = len(re.findall(r"(?i)\b(Ich verstehe|I understand|gerne|helpful|hilfreich|danke|thanks)\b", probe))
+            if c >= 3:
+                return 3
+            if c >= 1:
+                return 2
+            return 1
+
+        def _obs_consistency() -> int:
+            contradictions = [
+                r"(?i)\b(always|immer)\b.*\b(never|niemals)\b",
+                r"(?i)\bist\b.*\bist nicht\b",
+                r"(?i)\bis\b.*\bis not\b",
+            ]
+            return 1 if any(re.search(p, probe) for p in contradictions) else 3
+
+        def _obs_neutrality() -> int:
+            loaded = len(re.findall(r"(?i)\b(unglaublich|katastrophal|lächerlich|idiotisch|ridiculous|disaster|obviously|clearly)\b", probe))
+            if loaded == 0:
+                return 3
+            if loaded <= 2:
+                return 2
+            if loaded <= 4:
+                return 1
+            return 0
+
+        obs_map = {
+            "brevity": _obs_brevity(),
+            "clarity": _obs_clarity(),
+            "evidence": _obs_evidence(),
+            "empathy": _obs_empathy(),
+            "consistency": _obs_consistency(),
+            "neutrality": _obs_neutrality(),
+        }
+        labels = {
+            "brevity": "Brevity",
+            "clarity": "Clarity",
+            "evidence": "Evidence",
+            "empathy": "Empathy",
+            "consistency": "Consistency",
+            "neutrality": "Neutrality",
+        }
+        out = []
+        for k, target in ov_clean.items():
+            observed = int(obs_map.get(k, target))
+            if observed != target:
+                out.append(
+                    f"QC-Override mismatch ({labels.get(k,k)}): target={target}, observed={observed} (deterministic runtime check)."
+                )
+        return out
+    except Exception:
+        return []
+
+
 def normalize_self_debunking_language(text: str, lang: str) -> str:
     """Translate Self-Debunking label tokens into the target language (currently DE),
     without changing the required header 'Self-Debunking' or adding new factual claims.
@@ -1779,7 +2392,7 @@ def normalize_self_debunking_language(text: str, lang: str) -> str:
 
         # Isolate the Self-Debunking block up to the QC footer (or end of text).
         # We keep the section header unchanged but translate common label tokens inside.
-        m = re.search(r"(?is)(\bSelf-Debunking\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
         if not m:
             return text
 
@@ -1790,9 +2403,9 @@ def normalize_self_debunking_language(text: str, lang: str) -> str:
         repl = [
             (r"(?i)\bWeakness\b\s*:", "Schwäche:"),
             (r"(?i)\bWhy\s+it\s+matters\b\s*:", "Warum das wichtig ist:"),
-            (r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\b\s*:",
+            (r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\s*:",
              "Was würde verifizieren/falsifizieren (nächster Check):"),
-            (r"(?i)\bWhat\s+would\s+verify\s+or\s+falsify\s*\(next\s+check\)\b\s*:",
+            (r"(?i)\bWhat\s+would\s+verify\s+or\s+falsify\s*\(next\s+check\)\s*:",
              "Was würde verifizieren oder falsifizieren (nächster Check):"),
             (r"(?i)\bNext\s+check\b\s*:", "Nächster Check:"),
         ]
@@ -1805,10 +2418,518 @@ def normalize_self_debunking_language(text: str, lang: str) -> str:
     except Exception:
         return text
 
+
+def bold_self_debunking_labels(text: str, lang: str) -> str:
+    """Bold the label token before the first colon inside Self-Debunking points.
+
+    Deterministic post-processing. Formatting only.
+    """
+    try:
+        if not text:
+            return text
+        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        if not m:
+            return text
+        block = m.group(1)
+
+        # 1) Numbered point heads: "1. Weakness:" -> "1. **Weakness**:"
+        def _bold_head(m2):
+            lead = m2.group(1)
+            label = (m2.group(2) or "").strip()
+            if not label:
+                return m2.group(0)
+            if label.startswith("**") and label.endswith("**"):
+                return m2.group(0)
+            return f"{lead}**{label}**:"
+        block = re.sub(r"(?m)^(\s*\d+\.\s*)([^\n:<]{1,80}?)(\s*):", lambda m2: _bold_head(m2), block)
+
+        # 2) Field labels (possibly indented): "Why it matters:" -> "**Why it matters**:"
+        labels = [
+            "Weakness", "Schwäche",
+            "Why it matters", "Warum relevant", "Warum das wichtig ist",
+            "What would verify/falsify (next check)", "What would verify or falsify (next check)",
+            "Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)",
+            "Next check", "Nächster Check",
+            "Prüfen/Widerlegen (nächster Schritt)",
+        ]
+        for lab in labels:
+            block = re.sub(
+                rf"(?m)^(\s*)(?!\*\*){re.escape(lab)}\s*:(?!\*)",
+                rf"\1**{lab}**:",
+                block
+            )
+
+        start, end = m.span(1)
+        return text[:start] + block + text[end:]
+    except Exception:
+        return text
+
+
+def normalize_self_debunking_field_linebreaks(text: str, *, lang: str = "en") -> str:
+    """Ensure secondary Self-Debunking field labels start on a new line (no extra numbering).
+
+    This keeps formatting stable when weaker models place
+    "Warum das wichtig ist:" / "What would verify..." inline behind the Weakness sentence.
+    """
+    try:
+        if not text:
+            return text
+        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        if not m:
+            return text
+        block = m.group(1)
+
+        labels = [
+            "Why it matters", "Warum relevant", "Warum das wichtig ist",
+            "What would verify/falsify (next check)", "What would verify or falsify (next check)",
+            "Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)",
+            "Next check", "Nächster Check", "Nächste Prüfung",
+            "Prüfen/Widerlegen (nächster Schritt)",
+        ]
+        labels_rx = "|".join(re.escape(x) for x in labels)
+        # Insert a line break before secondary field labels if they leak inline.
+        block = re.sub(
+            rf"(?i)([^\n])\s+(?=(?:\*\*|__)?(?:{labels_rx})(?:\*\*|__)?\s*:)",
+            r"\1\n   ",
+            block,
+        )
+
+        start, end = m.span(1)
+        return text[:start] + block + text[end:]
+    except Exception:
+        return text
+
+
+def normalize_self_debunking_numbering_text(text: str, *, lang: str = "en") -> str:
+    """Ensure stable numbered Self-Debunking points in plain text before HTML rendering."""
+    try:
+        if not text:
+            return text
+        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
+        if not m:
+            return text
+
+        block = m.group(1)
+        lines = block.splitlines()
+        if not lines:
+            return text
+
+        out = []
+        n = 0
+        # Keep title line unchanged
+        out.append(lines[0])
+        for ln in lines[1:]:
+            s = (ln or "").strip()
+            # Remove orphan marker lines that cause visible double numbering.
+            if re.fullmatch(r"\d+\.", s or ""):
+                continue
+
+            # Strip leaked list prefixes in front of known Self-Debunking labels.
+            # Weakness/Schwäche lines get renumbered deterministically below.
+            ln = re.sub(
+                r"(?im)^\s*\d+\.\s*(?=(?:\*\*|__)?(?:Weakness|Schwäche|Why it matters|Warum relevant|Warum das wichtig ist|What would verify/falsify \(next check\)|What would verify or falsify \(next check\)|Was würde verifizieren/falsifizieren \(nächster Check\)|Was würde verifizieren oder falsifizieren \(nächster Check\)|Next check|Nächster Check|Prüfen/Widerlegen \(nächster Schritt\))(?:\*\*|__)?\s*:)",
+                "",
+                ln,
+                count=1,
+            )
+
+            if lang.lower().startswith("de"):
+                ln = re.sub(r"(?i)\bWeakness\b\s*:", "Schwäche:", ln)
+                ln = re.sub(r"(?i)\bWhy\s+it\s+matters\b\s*:", "Warum das wichtig ist:", ln)
+                ln = re.sub(
+                    r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\s*:",
+                    "Was würde verifizieren/falsifizieren (nächster Check):",
+                    ln,
+                )
+
+            # Number only the Weakness/Schwäche lead lines.
+            if re.match(
+                r"(?im)^\s*(?:\d+\.\s*)?(?:\*\*|__)?(?:Weakness|Schwäche)(?:\*\*|__)?\s*:",
+                ln or "",
+            ):
+                n += 1
+                ln = re.sub(r"(?im)^\s*\d+\.\s*", "", ln, count=1)
+                ln = f"{n}. {ln.lstrip()}"
+            out.append(ln)
+
+        start, end = m.span(1)
+        return text[:start] + "\n".join(out) + text[end:]
+    except Exception:
+        return text
+
+
+def normalize_inline_self_debunking_header(text: str) -> str:
+    """Ensure Self-Debunking header starts on its own line for deterministic boxing."""
+    try:
+        if not text:
+            return text
+        out = str(text)
+        # If title leaks inline after a sentence, split into a new block.
+        out = re.sub(
+            r"([^\n])\s+((?:SCI\s*Trace\s*:\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:)",
+            r"\1\n\n\2",
+            out,
+            flags=re.IGNORECASE,
+        )
+        # If title line has immediate inline body, push the body to the next line.
+        out = re.sub(
+            r"(?im)^(\s*(?:SCI\s*Trace\s*:\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:)\s+(?=\S)",
+            r"\1\n",
+            out,
+        )
+        return out
+    except Exception:
+        return text
+
+
+def dedupe_self_debunking_sections(text: str) -> str:
+    """Keep exactly one Self-Debunking section when duplicates leak from weaker models.
+
+    Rules (deterministic):
+    - Detect section headers:
+      - "Self-Debunking:" / "Selbst-Debunking:"
+      - "SCI Trace: Self-Debunking:" / "SCI Trace: Selbst-Debunking:"
+    - If multiple are present, keep the last *pure* Self-Debunking section.
+      If none is pure, keep the last detected section.
+    - Section ends at next SD header, QC-Matrix header, or end of text.
+    """
+    try:
+        if not text:
+            return text
+
+        lines = str(text).splitlines()
+        if not lines:
+            return text
+
+        re_sd_header = re.compile(
+            r"(?i)^\s*(?:(?P<sci>SCI\s*Trace)\s*:\s*)?(?P<sd>Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:\s*$"
+        )
+        re_qc = re.compile(r"(?i)^\s*QC(?:-Matrix)?\s*:")
+
+        starts = []
+        for i, ln in enumerate(lines):
+            m = re_sd_header.match((ln or "").strip())
+            if m:
+                starts.append((i, bool(m.group("sci"))))
+
+        if len(starts) <= 1:
+            return text
+
+        # Build section ranges [start, end)
+        ranges = []
+        for idx, (start_i, is_sci_prefixed) in enumerate(starts):
+            end_i = len(lines)
+            for j in range(start_i + 1, len(lines)):
+                s = (lines[j] or "").strip()
+                if re_sd_header.match(s) or re_qc.match(s):
+                    end_i = j
+                    break
+            ranges.append((start_i, end_i, is_sci_prefixed))
+
+        # Keep last pure SD section if available; else last section.
+        keep = None
+        for r in ranges:
+            if not r[2]:
+                keep = r
+        if keep is None:
+            keep = ranges[-1]
+
+        # Remove all non-kept SD ranges.
+        remove_mask = [False] * len(lines)
+        for r in ranges:
+            if r is keep:
+                continue
+            for k in range(r[0], r[1]):
+                remove_mask[k] = True
+
+        out_lines = [ln for i, ln in enumerate(lines) if not remove_mask[i]]
+        return "\n".join(out_lines)
+    except Exception:
+        return text
+
+
+def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
+    """Best-effort: add stable 1./2./3. numbering to Self-Debunking in rendered HTML.
+
+    Safety goals:
+    - Never inject numbering inside existing <ol> lists.
+    - Remove orphan list-marker lines like "1." that can appear after Markdown conversion.
+    - Keep exactly one numeric prefix on each Weakness/Schwäche line.
+    """
+    try:
+        if not html_text:
+            return html_text
+        # Normalize compact one-line HTML so line-wise processing can see block rows.
+        html_text = str(html_text).replace("><", ">\n<")
+        if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", html_text) is None:
+            return html_text
+
+        def _normalize_block(body: str) -> str:
+            if '<ol' in body.lower():
+                # Keep ordered lists intact, but clean known leak artifacts:
+                # - orphan marker rows like "<p>1.</p>"
+                # - accidental numbering on non-Weakness field labels
+                cleaned = body
+                cleaned = re.sub(r"(?is)<p>\s*\d+\.\s*</p>", "", cleaned)
+                cleaned = re.sub(r"(?is)<li>\s*\d+\.\s*</li>", "", cleaned)
+                non_weak_labels = (
+                    "Why it matters",
+                    "Warum relevant",
+                    "Warum das wichtig ist",
+                    "What would verify/falsify (next check)",
+                    "What would verify or falsify (next check)",
+                    "Was würde verifizieren/falsifizieren (nächster Check)",
+                    "Was würde verifizieren oder falsifizieren (nächster Check)",
+                    "Next check",
+                    "Nächster Check",
+                    "Nächste Prüfung",
+                    "Prüfen/Widerlegen (nächster Schritt)",
+                )
+                labels_rx = "|".join(re.escape(x) for x in non_weak_labels)
+                cleaned = re.sub(
+                    rf"(?is)(<li[^>]*>\s*)(\d+\.\s*)(?=(?:<strong>\s*)?(?:{labels_rx})\s*:)",
+                    r"\1",
+                    cleaned,
+                )
+                # Keep secondary field labels on a new visual line inside list items.
+                secondary_labels = (
+                    "Why it matters", "Warum relevant", "Warum das wichtig ist",
+                    "What would verify/falsify (next check)", "What would verify or falsify (next check)",
+                    "Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)",
+                    "Next check", "Nächster Check", "Nächste Prüfung",
+                    "Prüfen/Widerlegen (nächster Schritt)",
+                )
+                sec_rx = "|".join(re.escape(x) for x in secondary_labels)
+                cleaned = re.sub(
+                    rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:)",
+                    r"\1<br>",
+                    cleaned,
+                    flags=re.IGNORECASE,
+                )
+                # Canonicalize + bold secondary labels even when models emit lowercase variants.
+                canonical_sec = [
+                    ("Why it matters", "Why it matters"),
+                    ("Warum relevant", "Warum relevant"),
+                    ("Warum das wichtig ist", "Warum das wichtig ist"),
+                    ("What would verify/falsify (next check)", "What would verify/falsify (next check)"),
+                    ("What would verify or falsify (next check)", "What would verify or falsify (next check)"),
+                    ("Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren/falsifizieren (nächster Check)"),
+                    ("Was würde verifizieren oder falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)"),
+                    ("Next check", "Next check"),
+                    ("Nächster Check", "Nächster Check"),
+                    ("Nächste Prüfung", "Nächste Prüfung"),
+                    ("Prüfen/Widerlegen (nächster Schritt)", "Prüfen/Widerlegen (nächster Schritt)"),
+                ]
+                for _pat, _canon in canonical_sec:
+                    cleaned = re.sub(
+                        rf"(?is)(?:<strong>\s*)?{re.escape(_pat)}(?:\s*</strong>)?\s*:",
+                        f"<strong>{_canon}</strong>:",
+                        cleaned,
+                        flags=re.IGNORECASE,
+                    )
+                return cleaned
+
+            # Drop standalone marker lines ("1.", "2.") that cause visible double numbering.
+            body = re.sub(
+                r'(?im)^\s*<div[^>]*>\s*\d+\.\s*</div>\s*$',
+                '',
+                body,
+            )
+            body = re.sub(
+                r'(?im)^\s*\d+\.\s*(?:<br\s*/?>\s*)?$',
+                '',
+                body,
+            )
+
+            n = 0
+            out_lines = []
+            for ln in body.splitlines():
+                # Localize the three canonical labels inside the block.
+                if lang.lower().startswith('de'):
+                    ln = ln.replace('Weakness:', 'Schwäche:')
+                    ln = ln.replace('Why it matters:', 'Warum das wichtig ist:')
+                    ln = ln.replace('What would verify/falsify (next check):', 'Was würde verifizieren/falsifizieren (nächster Check):')
+                    ln = ln.replace('<strong>Weakness</strong>:', '<strong>Schwäche</strong>:')
+                    ln = ln.replace('<strong>Why it matters</strong>:', '<strong>Warum das wichtig ist</strong>:')
+                    ln = ln.replace(
+                        '<strong>What would verify/falsify (next check)</strong>:',
+                        '<strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:'
+                    )
+                else:
+                    ln = ln.replace('Schwäche:', 'Weakness:')
+                    ln = ln.replace('Warum das wichtig ist:', 'Why it matters:')
+                    ln = ln.replace('Was würde verifizieren/falsifizieren (nächster Check):', 'What would verify/falsify (next check):')
+
+                # Bold known labels (formatting only).
+                for lab in (
+                    'Weakness', 'Schwäche',
+                    'Why it matters', 'Warum relevant', 'Warum das wichtig ist',
+                    'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
+                    'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
+                    'Next check', 'Nächster Check',
+                ):
+                    ln = re.sub(
+                        rf"(?i)\b{re.escape(lab)}\s*:",
+                        rf"<strong>{lab}</strong>:",
+                        ln,
+                    )
+
+                # Force secondary field labels onto a new visual line if they leaked inline after
+                # the Weakness sentence (common with weaker models / compact HTML rendering).
+                secondary_labels = (
+                    'Why it matters', 'Warum relevant', 'Warum das wichtig ist',
+                    'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
+                    'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
+                    'Next check', 'Nächster Check', 'Nächste Prüfung',
+                    'Prüfen/Widerlegen (nächster Schritt)',
+                )
+                _sec_rx = "|".join(re.escape(x) for x in secondary_labels)
+                ln = re.sub(
+                    rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{_sec_rx})(?:\s*</strong>)?\s*:)",
+                    r"\1<br>",
+                    ln,
+                    flags=re.IGNORECASE,
+                )
+
+                # Count/number only Weakness lines.
+                plain = re.sub(r'<[^>]+>', '', ln).strip()
+                # Non-Weakness field labels must not carry list numbering.
+                if re.match(
+                    r"(?i)^(?:\d+\.\s*)(Why it matters|Warum relevant|Warum das wichtig ist|What would verify/falsify \(next check\)|What would verify or falsify \(next check\)|Was würde verifizieren/falsifizieren \(nächster Check\)|Was würde verifizieren oder falsifizieren \(nächster Check\)|Next check|Nächster Check|Nächste Prüfung|Prüfen/Widerlegen \(nächster Schritt\))\s*:",
+                    plain,
+                ):
+                    ln = re.sub(r'(?i)(<div[^>]*>\s*)\d+\.\s*', r'\1', ln, count=1)
+                    ln = re.sub(r'(?i)^\s*\d+\.\s*', '', ln, count=1)
+                    plain = re.sub(r'<[^>]+>', '', ln).strip()
+                if re.match(r'(?i)^(?:\d+\.\s*)?(Weakness|Schwäche)\b\s*:', plain):
+                    n += 1
+                    # Remove any existing numeric prefix immediately after opening div/start.
+                    ln = re.sub(r'(?i)(<div[^>]*>\s*)\d+\.\s*', r'\1', ln, count=1)
+                    ln = re.sub(r'(?i)^\s*\d+\.\s*', '', ln, count=1)
+                    if '<div' in ln:
+                        ln = re.sub(r'(<div[^>]*>\s*)', lambda m: f"{m.group(1)}{n}. ", ln, count=1)
+                    else:
+                        ln = f'{n}. ' + ln
+
+                out_lines.append(ln)
+
+            return '\n'.join([x for x in out_lines if x is not None])
+
+        # Primary path: normalize explicit self-debunking boxes.
+        block_re = re.compile(
+            r'(?is)(<div[^>]*class=(?:"|\')[^"\']*self-debunking[^"\']*(?:"|\')[^>]*>)(.*?)(</div>)'
+        )
+
+        def _block_sub(mb: re.Match) -> str:
+            return mb.group(1) + _normalize_block(mb.group(2)) + mb.group(3)
+
+        out_text = block_re.sub(_block_sub, html_text)
+
+        # Fallback path: line-wise region between Self-Debunking header and QC footer.
+        lines = out_text.splitlines()
+        out = []
+        in_sd = False
+        chunk = []
+
+        def _flush_chunk() -> None:
+            nonlocal chunk
+            if chunk:
+                out.extend(_normalize_block('\n'.join(chunk)).splitlines())
+                chunk = []
+
+        for ln in lines:
+            plain = re.sub(r'<[^>]+>', '', ln)
+            if (not in_sd) and re.search(r'(?i)Self-Debunking|Selbst[- ]?Debunking', plain):
+                in_sd = True
+                out.append(ln)
+                continue
+            if in_sd and re.search(r'(?im)^\s*QC(?:-Matrix)?\s*:', plain):
+                _flush_chunk()
+                in_sd = False
+                out.append(ln)
+                continue
+            if in_sd:
+                chunk.append(ln)
+            else:
+                out.append(ln)
+
+        _flush_chunk()
+        return '\n'.join(out)
+    except Exception:
+        return html_text
+
+
+def normalize_hash_subheadings_in_html(html_text: str) -> str:
+    """Final safety net: convert leaked ##/###/#### headings in rendered HTML to bold lines."""
+    try:
+        if not html_text:
+            return html_text
+        out = str(html_text)
+        out = out.replace("><", ">\n<")
+        pat = re.compile(
+            r"(?im)^(\s*(?:\[(?:GREEN|YELLOW|RED|GRAY)(?:-[A-Z0-9]+)*\]\s*)?(?:[🟢🟡🔴⚪⚪️]\s*)?(?:[•*\-]\s*)?)#{2,4}\s*([^\n<]{1,120})\s*$"
+        )
+        pat_tag = re.compile(
+            r"(?is)^(\s*<(?P<tag>div|p|li)\b[^>]*>\s*)"
+            r"((?:\[(?:GREEN|YELLOW|RED|GRAY)(?:-[A-Z0-9]+)*\]\s*)?(?:[🟢🟡🔴⚪⚪️]\s*)?(?:[•*\-]\s*)?)"
+            r"#{2,4}\s*([^\n<]{1,120})\s*"
+            r"(</(?P=tag)>\s*)$"
+        )
+        lines = []
+        for ln in out.splitlines():
+            mt = pat_tag.match(ln or "")
+            if mt:
+                pre = mt.group(1) or ""
+                lead = mt.group(3) or ""
+                title = (mt.group(4) or "").strip().rstrip(":")
+                post = mt.group(5) or ""
+                if title:
+                    lines.append(f"{pre}{lead}<strong>{html.escape(title)}:</strong>{post}")
+                    continue
+            m = pat.match(ln or "")
+            if m:
+                lead = m.group(1) or ""
+                title = (m.group(2) or "").strip().rstrip(":")
+                if title:
+                    lines.append(f"{lead}<strong>{html.escape(title)}:</strong>")
+                    continue
+            lines.append(ln)
+        return "\n".join(lines)
+    except Exception:
+        return html_text
+
+
+def detect_self_debunking_numbered_html(html_text: str) -> bool:
+    """Audit helper: detect numbered Self-Debunking points in rendered HTML."""
+    try:
+        if not html_text:
+            return False
+        raw = str(html_text)
+        if re.search(r"(?i)self[- ]?debunking|selbst[- ]?debunking", raw) is None:
+            return False
+        plain = re.sub(r"<[^>]+>", "\n", raw)
+        m = re.search(
+            r"(?is)(Self[- ]?Debunking|Selbst[- ]?Debunking).*?(?:\n\s*QC(?:-Matrix)?\s*:|\Z)",
+            plain,
+        )
+        block = m.group(0) if m else plain
+        if re.search(r"(?im)^\s*\d+\.\s*(Schwäche|Weakness)\b", block):
+            return True
+        # HTML <ol>/<li> numbering is visual and may not appear as text prefixes.
+        if re.search(
+            r"(?is)<ol[^>]*>.*?<li[^>]*>.*?(?:<strong>\s*)?(Schwäche|Weakness)(?:\s*</strong>)?\s*:.*?</li>",
+            raw,
+        ):
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is_command: bool = False, lang: str = "en") -> str:
     """Deterministically enforce the Self-Debunking contract (2–3 numbered points) when required.
 
-    Note: is_command is accepted for API compatibility and does not change behavior here.
+    Note: is_command disables enforcement for command-only responses.
 
     - If missing: inject a minimal compliant block (no new factual claims).
     - If too many points: keep the first 3.
@@ -1816,6 +2937,9 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
     - Ensure placement BEFORE the QC footer.
     """
     try:
+        # Commands must NEVER trigger Self-Debunking enforcement/injection.
+        if is_command:
+            return text
         if not text or not gov_mgr or not getattr(gov_mgr, 'loaded', False):
             return text
 
@@ -1840,6 +2964,14 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
         min_p = 2 if min_p < 2 else min_p
         max_p = 3 if max_p > 6 else max_p  # safety cap
 
+        def _finalize_sd(t: str) -> str:
+            # Apply language normalization first (for DE) then bold labels (formatting only).
+            t2 = normalize_self_debunking_language(t, lang)
+            t2 = normalize_self_debunking_field_linebreaks(t2, lang=lang)
+            t2 = bold_self_debunking_labels(t2, lang)
+            t2 = normalize_self_debunking_numbering_text(t2, lang=lang)
+            return t2
+
         # Locate QC footer (insertion anchor)
         qc_m = re.search(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$", text)
         qc_pos = qc_m.start() if qc_m else None
@@ -1850,12 +2982,12 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
         if not m:
             # Missing entirely -> inject minimal
             out = inject_minimal_self_debunking(text, title=title, lang=lang)
-            return normalize_self_debunking_language(out, lang)
+            return _finalize_sd(out)
         # If title occurs after QC, remove that trailing block and inject at the correct place.
         if qc_pos is not None and m.start() > qc_pos:
             trimmed = text[:m.start()].rstrip()
             out = inject_minimal_self_debunking(trimmed, title=title, lang=lang)
-            return out
+            return _finalize_sd(out)
 
         # Extract the block region: from title line to QC footer (or end)
         end = qc_pos if qc_pos is not None else len(text)
@@ -1872,10 +3004,78 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
             p_end = point_iter[i + 1].start() if i + 1 < len(point_iter) else len(block)
             points.append(block[p_start:p_end].rstrip())
 
-        # If there are no numbered points at all, treat as missing.
+        # If there are no numbered points at all, attempt to convert common unnumbered formats
+        # (e.g., repeated 'Weakness:' blocks) into a numbered list without inventing new facts.
         if not points:
-            injected = inject_minimal_self_debunking(before.rstrip() + "\n\n" + after.lstrip(), title=title)
-            return normalize_self_debunking_language(injected, lang)
+            # Try to extract unnumbered points from repeated label blocks inside this Self-Debunking section.
+            extracted = []
+            try:
+                # Accept both plain labels and already-bolded markdown/HTML labels.
+                # This avoids a failure mode where an earlier pass bolded labels (e.g. "**Schwäche**:")
+                # and this extractor would no longer recognize unnumbered point starts.
+                label_iter = list(
+                    re.finditer(
+                        r"(?im)^\s*(?:\*\*|<strong>)?\s*(Weakness|Schwäche)\b\s*(?:\*\*|</strong>)?\s*:\s*",
+                        block,
+                    )
+                )
+                if label_iter:
+                    for i, lm in enumerate(label_iter):
+                        p_start = lm.start()
+                        p_end = label_iter[i + 1].start() if i + 1 < len(label_iter) else len(block)
+                        chunk = block[p_start:p_end].strip()
+                        if chunk:
+                            extracted.append(chunk)
+            except Exception:
+                extracted = []
+
+            if extracted:
+                # Trim to contract max and normalize to 1..k numbering.
+                extracted = extracted[:max_p]
+                normalized = []
+                for i, chunk in enumerate(extracted, 1):
+                    lines = chunk.splitlines()
+                    if not lines:
+                        continue
+                    # Ensure the first line contains the label (Weakness/Schwäche) as in the model output.
+                    first = lines[0].strip()
+                    rest = [ln.rstrip() for ln in lines[1:]]
+                    body = first
+                    if rest:
+                        body += "\n" + "\n".join("   " + ln.lstrip() for ln in rest if ln.strip() != "")
+                    normalized.append(f"{i}. {body.strip()}")
+                if normalized:
+                    new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
+                    out = before.rstrip() + new_block + after.lstrip()
+                    return _finalize_sd(out)
+
+            # If the model used bullet points, convert the first 2–3 bullets into numbered points
+            # without inventing content.
+            try:
+                bullet_lines = [ln.rstrip() for ln in block.splitlines()]
+                bullets = []
+                for ln in bullet_lines:
+                    m_b = re.match(r"^\s*(?:[-*+]|•)\s+(.+?)\s*$", ln)
+                    if m_b:
+                        b = m_b.group(1).strip()
+                        if b:
+                            bullets.append(b)
+                if bullets:
+                    bullets = bullets[:max_p]
+                    normalized = [f"{i}. {b}" for i, b in enumerate(bullets, 1)]
+                    new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
+                    out = before.rstrip() + new_block + after.lstrip()
+                    return _finalize_sd(out)
+            except Exception:
+                pass
+
+            # Fallback: remove the broken/empty block and inject a minimal compliant numbered block.
+            try:
+                base = text[:m.start()].rstrip() + "\n\n" + text[end:].lstrip()
+            except Exception:
+                base = before.rstrip() + "\n\n" + after.lstrip()
+            injected = inject_minimal_self_debunking(base, title=title, lang=lang)
+            return _finalize_sd(injected)
         # Normalize number of points to the contract window.
         if len(points) > max_p:
             points = points[:max_p]
@@ -1890,43 +3090,129 @@ def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is
             else:
                 points.append(
                     f"{n}. Weakness: The answer may omit important limitations or boundary conditions.\n"
-                    f"   Why it matters: Missing caveats can overstate confidence or applicability.\n"
-                    f"   What would verify/falsify (next check): Identify a concrete counterexample and test whether the conclusion still holds."
+                    f"   **Why it matters**: Missing caveats can overstate confidence or applicability.\n"
+                    f"   **What would verify/falsify (next check)**: Identify a concrete counterexample and test whether the conclusion still holds."
                 )
         # Re-number points sequentially (1..k)
         normalized = []
         for i, p in enumerate(points, 1):
-            p = re.sub(r"(?m)^\s*\d+\s*[\.)]\s+", f"{i}. ", p, count=1)
-            normalized.append(p.strip())
+            # Keep continuation lines inside the numbered item for stable Markdown rendering.
+            lines = [ln.rstrip() for ln in str(p).splitlines()]
+            if not lines:
+                continue
+            first = re.sub(r"^\s*\d+\s*[\.)]\s+", f"{i}. ", lines[0].strip(), count=1)
+            rest = []
+            for ln in lines[1:]:
+                if ln.strip():
+                    rest.append("   " + ln.lstrip())
+            item = first if not rest else (first + "\n" + "\n".join(rest))
+            normalized.append(item.strip())
 
         new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
 
         # Reassemble
         out = before.rstrip() + new_block + after.lstrip()
+        out = normalize_self_debunking_language(out, lang)
+        out = normalize_self_debunking_field_linebreaks(out, lang=lang)
+        out = bold_self_debunking_labels(out, lang)
         return out
 
     except Exception:
         return text
 
+
+# === ROUTE CONTEXT / CONTRACTS (Stage 1) =====================================
+
+def _build_route_ctx(api, user_raw: str, is_command: bool) -> dict:
+    """Build a minimal, stable route context dict (pure, deterministic).
+
+    Stage 1: Internal contract used to avoid scattered gov_state reads.
+    Must not change runtime behavior; it only centralizes already-used flags.
+    """
+    try:
+        gs = getattr(api, 'gov_state', None)
+        ui_lang = (getattr(gs, 'ui_lang', None) or 'en')
+        answer_lang = (getattr(gs, 'answer_lang', None) or ui_lang or 'en')
+        color = (getattr(gs, 'color', None) or 'off')
+        sci_variant = (getattr(gs, 'sci_variant', None) or 'A')
+        sci_pending = bool(getattr(gs, 'sci_pending', False))
+        comm_active = bool(getattr(gs, 'comm_active', False))
+    except Exception:
+        ui_lang = 'en'
+        answer_lang = 'en'
+        color = 'off'
+        sci_variant = 'A'
+        sci_pending = False
+        comm_active = False
+
+    return {
+        'is_command': bool(is_command),
+        'comm_active': bool(comm_active),
+        'ui_lang': ui_lang,
+        'answer_lang': answer_lang,
+        'color': color,
+        'sci_variant': sci_variant,
+        'sci_pending': bool(sci_pending),
+        'user_raw': user_raw or '',
+    }
+
+
+def contract_command_response(html_text: str) -> bool:
+    """Best-effort contract: command responses must not be required to have SD/QC.
+
+    Used in tests only (Stage 1). Must stay non-blocking in runtime.
+    """
+    txt = str(html_text or '')
+    # Self-Debunking is not required for command-only responses.
+    if re.search(r"\bSelf-?Debunking\b", txt, flags=re.IGNORECASE):
+        return False
+    return True
+
+
+def contract_answer_response(html_text: str) -> bool:
+    """Best-effort contract for a normal answer response: QC footer is expected."""
+    txt = str(html_text or '')
+    return ('QC-Matrix:' in txt) or ('QC:' in txt)
 def apply_color_spans(text: str, enabled: bool = True) -> str:
     """Render Evidence-Linker tags with actual HTML colors (does not invent tags)."""
     if not enabled or not text:
         return text
 
     def repl(m: re.Match) -> str:
-        tag = m.group("tag")
-        suffix = m.group("suffix") or ""
+        tag = (m.group("tag") or "").upper()
         emoji = m.group("emoji") or ""
         color = _EVIDENCE_COLOR.get(tag, "#616161")
-        token = f"[{tag}{suffix}]"
-        if emoji:
-            token = f"{token} {emoji}"
-        return f"<span style=\"color:{color}; font-weight:600;\">{token}</span>"
+        icon = emoji or _EVIDENCE_ICON.get(tag, "⚪")
+        return f"<span style=\"color:{color}; font-weight:600;\">{icon}</span>"
 
     # Patterns like: [GREEN] 🟢  or [GREEN-WEB] 🟢
-    pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z]+)?)\]\s*(?P<emoji>[🟢🟡🔴⚪️])?")
+    pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?")
     return pat.sub(repl, text)
 
+
+def _reapply_color_styles_if_stripped(html_text: str) -> str:
+    """If Bleach stripped inline CSS (style=""), re-apply our own safe color styles.
+
+    This is a defensive fallback for environments where Bleach cannot load CSSSanitizer (e.g., missing tinycss2).
+    We only touch spans that contain our Evidence-Linker tokens, and we only inject the fixed palette colors.
+    """
+    if not html_text:
+        return html_text
+
+    # Replace empty style="" on our evidence spans.
+    def repl(m: re.Match) -> str:
+        tag = (m.group("tag") or "").upper()
+        emoji = m.group("emoji") or ""
+        color = _EVIDENCE_COLOR.get(tag, "#616161")
+        icon = emoji or _EVIDENCE_ICON.get(tag, "⚪")
+        return f"<span style=\"color:{color}; font-weight:600;\">{icon}</span>"
+
+    # Match: <span style="">[GREEN-WEB-CHECK] 🟢</span>  (or without emoji)
+    pat = re.compile(
+        r"<span\s+style=\"\"\s*>\s*\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?\s*</span>",
+        flags=re.IGNORECASE,
+    )
+    return pat.sub(repl, html_text)
 
 @dataclass
 class GovernanceRuntimeState:
@@ -1940,7 +3226,18 @@ class GovernanceRuntimeState:
     sci_variant: str = ""
     sci_active: bool = False
 
+    # Anchor snapshot automation (session-level)
+    user_turns: int = 0
+    anchor_auto: bool = True
+    anchor_force_next: bool = False
+    last_anchor: str = ""
+    anchor_auto_user_override: bool = False
+
     qc_overrides: dict = field(default_factory=dict)
+    # CGI feedback (optional): last captured feedback strings (not a code change)
+    last_user_feedback_triplet: str = ""
+    last_process_cgi_feedback: str = ""
+    cgi_feedback_pending_for_model: bool = False
 def try_enter_sci_recursion(state, *, max_depth: int = 2) -> bool:
     """Deterministically enter SCI recursion if depth allows."""
     try:
@@ -2000,6 +3297,192 @@ def try_enter_sci_recursion(state, *, max_depth: int = 2) -> bool:
 # This normalizer rewrites the SCI Trace section so that ONLY the required SCI steps are numbered
 # (1..len(required_steps)), while step contents remain unnumbered paragraphs.
 
+
+def _strip_basic_html_for_enforcement(t: str) -> str:
+    """Convert simple HTML-ish outputs into plain text so regex-based contracts can be enforced."""
+    if not t:
+        return t
+    if '<' not in t or '>' not in t:
+        return t
+    # Replace common block/line breaks with newlines
+    t2 = re.sub(r'(?i)<\s*br\s*/?\s*>', '\n', t)
+    t2 = re.sub(r'(?i)</\s*p\s*>', '\n', t2)
+    t2 = re.sub(r'(?i)<\s*p[^>]*>', '', t2)
+    t2 = re.sub(r'(?i)</\s*div\s*>', '\n', t2)
+    t2 = re.sub(r'(?i)<\s*div[^>]*>', '', t2)
+    t2 = re.sub(r'(?i)</\s*li\s*>', '\n', t2)
+    t2 = re.sub(r'(?i)<\s*li[^>]*>', '', t2)
+    t2 = re.sub(r'(?i)</\s*h[1-6]\s*>', '\n', t2)
+    t2 = re.sub(r'(?i)<\s*h[1-6][^>]*>', '', t2)
+    # Strip any remaining tags
+    t2 = re.sub(r'<[^>]+>', '', t2)
+    # Unescape a few common entities
+    t2 = (t2.replace('&nbsp;', ' ')
+              .replace('&amp;', '&')
+              .replace('&lt;', '<')
+              .replace('&gt;', '>')
+              .replace('&#39;', "'")
+              .replace('&quot;', '"'))
+    return t2
+
+def ensure_qc_footer_present(text: str, gov_mgr, profile_name: str, overrides: dict | None = None) -> str:
+    """If QC is enabled and no QC-Matrix footer exists, append a canonical QC-Matrix line.
+    Uses effective QC values (upper bounds) and Δ computed against effective corridor (thus usually Δ0).
+    """
+    try:
+        if not text or not gov_mgr or not getattr(gov_mgr, 'loaded', False):
+            return text
+        gd = (gov_mgr.data.get('global_defaults', {}) or {})
+        oc = (gd.get('output_contract', {}) or {})
+        if not (oc.get('require_qc_footer', False) or (gd.get('qc', {}) or {}).get('enabled', False)):
+            return text
+        if re.search(r'(?im)^\s*QC(?:-Matrix)?\s*:\s*', text):
+            qc_matches = list(re.finditer(r'(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$', text))
+            qc_line = qc_matches[-1].group(0) if qc_matches else ""
+            qc_probe = qc_line or text
+            labels = [
+                "Clarity", "Brevity", "Evidence", "Empathy", "Consistency", "Neutrality",
+                "Klarheit", "Kürze", "Kuerze", "Evidenz", "Empathie", "Konsistenz", "Neutralität", "Neutralitaet",
+            ]
+            found_metric_labels = 0
+            for lbl in labels:
+                if re.search(rf'(?i)\b{re.escape(lbl)}\b\s+\d+\s*\(\s*Δ', qc_probe):
+                    found_metric_labels += 1
+            # EN or DE complete footer => 6 dimensions
+            if found_metric_labels >= 6:
+                return text
+            # Remove malformed/empty QC lines and rebuild canonical footer below.
+            text = re.sub(r'(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$', '', text)
+            text = re.sub(r'\n{3,}', '\n\n', text).strip()
+
+        vals = {}
+        try:
+            vals = gov_mgr.get_effective_qc_values(profile_name, overrides or {})
+        except Exception:
+            vals = {}
+        # Need the full canonical set; otherwise do not invent.
+        canon_order = [
+            ('clarity', 'Klarheit'),
+            ('brevity', 'Kürze'),
+            ('evidence', 'Evidenz'),
+            ('empathy', 'Empathie'),
+            ('consistency', 'Konsistenz'),
+            ('neutrality', 'Neutralität'),
+        ]
+        if not all(k in vals for k, _ in canon_order):
+            return text
+
+        parts = []
+        for k, disp in canon_order:
+            iv = int(vals.get(k))
+            # expected delta relative to corridor
+            d = 0
+            try:
+                corr = gov_mgr.get_effective_qc_corridor(profile_name, overrides or {})
+                if corr and k in corr:
+                    lo, hi = corr[k]
+                    if iv < lo: d = iv - lo
+                    elif iv > hi: d = iv - hi
+                    else: d = 0
+            except Exception:
+                d = 0
+            sign = '+' if d > 0 else ''
+            parts.append(f"{disp} {iv} (Δ{sign}{d})")
+        qc_line = "QC-Matrix: " + " · ".join(parts)
+
+        return (text.rstrip() + "\n\n" + qc_line + "\n")
+    except Exception:
+        return text
+
+
+def strip_sci_menu_from_answer(text: str) -> str:
+    """Remove an erroneously echoed SCI variant menu from a normal answer.
+
+    The SCI menu must only appear on: 'Profile Expert', 'Profile Sparring', 'SCI menu', 'SCI on' command outputs.
+    Some models echo the menu at the beginning of a content answer; we strip it deterministically.
+    """
+    try:
+        if not text:
+            return text
+        # Work on plain text (not HTML); if HTML is already present, strip tags first for detection only.
+        probe = re.sub(r"<[^>]+>", "", text)
+        if ("SCI variants" not in probe) and ("SCI-Varianten" not in probe):
+            return text
+
+        # Identify the menu region heuristically: from the first menu title to the first of:
+        # - 'SCI Trace' line
+        # - 'Final Answer' line
+        # - 'Self-Debunking' line
+        # - QC footer line
+        # We remove only if it looks like the standard A–H listing.
+        start_m = re.search(r"(?im)^\s*(?:Profile\s*:\s*\w+\s*)?(SCI variants \(selection\)|SCI-Varianten(?:menü)? \(Auswahl\))\s*:?\s*$", probe)
+        if not start_m:
+            # Sometimes the title is on the same line as 'Profile: ...'
+            start_m = re.search(r"(?im)\b(SCI variants \(selection\)|SCI-Varianten(?:menü)? \(Auswahl\))\b", probe)
+        if not start_m:
+            return text
+        start = start_m.start()
+
+        end_m = re.search(r"(?im)^\s*(SCI Trace|Final Answer|Self-Debunking|QC(?:-Matrix)?)\b", probe[start:])
+        if end_m:
+            end = start + end_m.start()
+        else:
+            # Fallback: cut at first blank line after H: entry
+            h_m = re.search(r"(?im)^\s*H\s*:\s+.*$", probe[start:])
+            if h_m:
+                tail = probe[start + h_m.end():]
+                blank = re.search(r"\n\s*\n", tail)
+                end = start + h_m.end() + (blank.start() if blank else 0)
+            else:
+                return text
+
+        # If the region doesn't contain at least A..H option markers, don't touch.
+        # Accept both "A: ..." style and "a) ..." style menus.
+        region = probe[start:end]
+        has_AH_colon = bool(re.search(r"(?im)^\s*A\s*:\s+", region) and re.search(r"(?im)^\s*H\s*:\s+", region))
+        has_ah_paren = bool(re.search(r"(?im)^\s*a\s*[\)\.]\s+", region) and re.search(r"(?im)^\s*h\s*[\)\.]\s+", region))
+        if not (has_AH_colon or has_ah_paren):
+            return text
+
+        # Now remove corresponding slice from original text by mapping via length in probe.
+        # Best-effort: remove by finding the same region in the original (possibly with HTML tags).
+        # We try two strategies: exact probe substring, then a regex-based removal.
+        if probe[start:end] in re.sub(r"<[^>]+>", "", text):
+            # Remove on probe basis: use regex over original to delete menu block.
+            text = re.sub(r"(?is)(?:^|\n)\s*(?:Profile\s*:\s*[^\n]*\n)?\s*(SCI variants \(selection\)|SCI-Varianten(?:menü)? \(Auswahl\))\s*:?.*?(?=\n\s*(SCI Trace|Final Answer|Self-Debunking|QC(?:-Matrix)?)\b)", "\n", text, count=1)
+        return text
+    except Exception:
+        return text
+
+def match_required_sci_step_header(line: str, required_steps: list[str]):
+    """Return (step, rest) when line starts with a required SCI step header.
+
+    Supports optional bullet markers/list numbering and bold wrappers around the step label.
+    Step labels are matched against ruleset labels as-is (including spaces, '/', '+', ':', '-').
+    """
+    try:
+        s = str(line or "")
+        if not s or not isinstance(required_steps, list):
+            return None, None
+        prefix = r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*"
+        steps = sorted(
+            [str(x).strip() for x in required_steps if str(x or "").strip()],
+            key=len,
+            reverse=True,
+        )
+        for step in steps:
+            esc = re.escape(step)
+            pat = re.compile(
+                prefix + rf"(?:\*\*|__)?{esc}(?:\*\*|__)?\s*:\s*(?P<rest>.*)$",
+                flags=re.IGNORECASE,
+            )
+            m = pat.match(s)
+            if m:
+                return step, (m.group("rest") or "").strip()
+        return None, None
+    except Exception:
+        return None, None
+
 def normalize_sci_trace_numbering(text: str, gov) -> str:
     try:
         if not text or 'SCI Trace' not in text:
@@ -2037,10 +3520,6 @@ def normalize_sci_trace_numbering(text: str, gov) -> str:
         sci_header = lines[sci_idx].strip()
         body = lines[sci_idx + 1:end_idx]
         post = lines[end_idx:]
-
-        # Helper: detect step header lines (allow optional leading ordered-list prefix)
-        step_set = {str(s) for s in required_steps}
-        hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)(\s*:)\s*$")
 
         # Parse step blocks
         blocks = {}
@@ -2081,14 +3560,14 @@ def normalize_sci_trace_numbering(text: str, gov) -> str:
         # Count how many headers we actually recognize; if none -> do nothing
         recognized = 0
         for ln in body:
-            m = hdr_re.match(ln)
-            if m:
-                name = m.group(1)
-                if name in step_set:
-                    flush()
-                    cur = name
-                    recognized += 1
-                    continue
+            step_name, rest = match_required_sci_step_header(ln, required_steps)
+            if step_name:
+                flush()
+                cur = step_name
+                recognized += 1
+                if rest:
+                    buf.append(rest)
+                continue
             if cur is not None:
                 buf.append(ln)
         flush()
@@ -2157,10 +3636,6 @@ def render_sci_trace_as_html(text: str, gov) -> str:
         body = lines[sci_idx + 1:end_idx]
         post = lines[end_idx:]
 
-        step_set = {str(s) for s in required_steps}
-        # Accept optional leading numbering + colon
-        hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$" )
-
         blocks: dict[str, list[str]] = {}
         cur = None
         buf: list[str] = []
@@ -2183,14 +3658,14 @@ def render_sci_trace_as_html(text: str, gov) -> str:
 
         recognized = 0
         for ln in body:
-            m = hdr_re.match(ln)
-            if m:
-                name = m.group(1)
-                if name in step_set:
-                    flush()
-                    cur = name
-                    recognized += 1
-                    continue
+            step_name, rest = match_required_sci_step_header(ln, required_steps)
+            if step_name:
+                flush()
+                cur = step_name
+                recognized += 1
+                if rest:
+                    buf.append(rest)
+                continue
             if cur is not None:
                 buf.append(ln)
         flush()
@@ -2200,6 +3675,7 @@ def render_sci_trace_as_html(text: str, gov) -> str:
         # Build deterministic HTML
         # Keep styling minimal and consistent with existing CSS; rely on browser defaults.
         html_parts = [
+            "<!-- SCI Trace: -->",
             "<div class='sci-trace' style='margin:10px 0; padding:10px; border:1px solid #ddd; border-radius:12px;'>",
             "<div style='font-weight:700; margin-bottom:6px;'>SCI Trace</div>",
             "<ol style='margin:0 0 0 22px; padding:0;'>"
@@ -2231,7 +3707,6 @@ def render_sci_trace_as_html(text: str, gov) -> str:
         # Replace SCI trace section with HTML block. Keep a plain 'SCI Trace:' marker line for logs if needed.
         out_lines = []
         out_lines.extend(pre)
-        out_lines.append("SCI Trace:")
         out_lines.append("\n".join(html_parts))
         out_lines.extend(post)
         return "\n".join(out_lines)
@@ -2242,6 +3717,26 @@ def render_sci_trace_as_html(text: str, gov) -> str:
 def _init_state_from_rules():
     if not gov.loaded:
         return GovernanceRuntimeState()
+    try:
+        if _state_init_from_ruleset is not None:
+            dom = _state_init_from_ruleset(
+                getattr(gov, "data", {}) or {},
+                answer_language=(getattr(cfg, "get_answer_language", lambda: "de")() or "de"),
+                conversation_language=(UI_LANG or "").lower() or "de",
+            )
+            return GovernanceRuntimeState(
+                comm_active=dom.comm_active,
+                active_profile=dom.active_profile,
+                overlay=dom.overlay,
+                color=dom.color,
+                conversation_language=dom.conversation_language,
+                answer_language=dom.answer_language,
+                sci_pending=dom.sci_pending,
+                sci_variant=dom.sci_variant,
+                sci_active=dom.sci_active,
+            )
+    except Exception:
+        pass
     ui = gov.get_ui_data()
     prof = ui.get("defaults", {}).get("profile", "Standard") or "Standard"
     ov = ui.get("defaults", {}).get("overlay", "") or ""
@@ -2294,6 +3789,10 @@ HTML_CHAT_TEMPLATE = """
   .msg:hover .copy-btn { opacity: 1.0; }
 
   .ts-footer { display: block; width: 100%; border-top: 1px solid #eee; margin-top: 8px; padding-top: 4px; font-size: 10px; color: #888; text-align: right; }
+
+  .raw-output-pre { background: #f8f9fa; padding: 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  details.raw-output { margin: 8px 0; }
+  .note-box { background: #fff7ed; border-left: 4px solid #fb923c; padding: 8px 10px; border-radius: 6px; margin: 8px 0; }
 
   ul, ol { margin: 5px 0 5px 20px; padding: 0; }
   li { margin-bottom: 5px; }
@@ -2366,7 +3865,7 @@ HTML_CHAT_TEMPLATE = """
   .comm-help .state-table { border-collapse: collapse; width: 100%; font-size: 12px; }
   .comm-help .state-table th, .comm-help .state-table td { border: 1px solid #e0e0e0; padding: 6px 8px; vertical-align: top; }
   .comm-help .state-table th { text-align: left; background: #fafafa; width: 220px; }
-  .comm-help pre.raw-json { white-space: pre; overflow-x: auto; background: #f6f8fa; padding: 10px; border-radius: 10px; font-size: 11px; border: 1px solid #e0e0e0; }
+  .comm-help pre.raw-json { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; box-sizing: border-box; overflow-x: auto; background: #f6f8fa; padding: 10px; border-radius: 10px; font-size: 11px; border: 1px solid #e0e0e0; }
   .comm-help details.config-details > summary { cursor: pointer; font-weight: 600; margin: 8px 0; }
   .comm-help .minor { color:#666; font-size: 12px; }
 
@@ -2610,6 +4109,7 @@ HTML_PANEL = """
   .setting-select { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #999; margin-bottom: 5px; font-weight: bold; font-size: 12px;}
   .card { background: white; padding: 8px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #ddd; }
   .log-box { font-family: monospace; font-size: 9px; color: #333; margin-bottom: 8px; max-height: 70px; overflow-y: auto; background: #eee; padding: 6px; border-radius: 6px; border: 1px solid #ddd; }
+  .test-log-box { font-family: monospace; font-size: 10px; color: #222; margin-top: 6px; max-height: 160px; overflow-y: auto; background: #f4f6f8; padding: 6px; border-radius: 6px; border: 1px solid #ddd; white-space: pre-wrap; }
   .status-box { font-family: monospace; font-size: 10px; color: #111; margin-bottom: 8px; background: #fff; padding: 6px; border-radius: 6px; border: 1px solid #ddd; }
   .hint { font-size: 9px; color: #666; margin-bottom: 8px; text-align: center; }
   .row { display:flex; gap:6px; }
@@ -2617,6 +4117,7 @@ HTML_PANEL = """
   .smallbtn { padding: 7px 6px; font-size: 10px; }
   .err { color: #b00020; }
   .ok { color: #0b6b0b; }
+  .warn { color: #a05a00; }
 </style>
 </head>
 <body>
@@ -2628,7 +4129,7 @@ HTML_PANEL = """
       <option value="openrouter">Provider: OpenRouter</option>
       <option value="huggingface">Provider: Hugging Face</option>
     </select>
-    <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch /models and refresh cache (OpenRouter/HF)">Refresh Models</button>
+    <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch provider models and refresh cache (Gemini/OpenRouter/HF)">Refresh Models</button>
     <button class="smallbtn" id="qcOverrideBtn" onclick="run('QC Override')" title="QC Override">⚙ QC</button>
 </div>
 
@@ -2636,7 +4137,7 @@ HTML_PANEL = """
     <select id="hfProviderFilter" class="setting-select" onchange="onHFProviderFilterChange()">
       <option value="all">HF Provider: all</option>
     </select>
-    <input id="hfTopN" class="setting-select" type="number" min="1" max="1000" value="200" />
+    <input id="hfTopN" class="setting-select" type="number" min="1" max="10000" value="200" />
     <button id="hfCatalogBtn" class="smallbtn" onclick="fetchHFCatalog()" title="Fetch Hugging Face Hub catalog (Top N) and cache it">HF Catalog (Top N)</button>
   </div>
 
@@ -2673,6 +4174,27 @@ HTML_PANEL = """
     <button class="smallbtn" onclick="clearChat()">Clear</button>
   </div>
   <div class="hint" id="logHint" style="margin-top:6px; display:none;"></div>
+</div>
+
+<div class="card" id="manualTestCard" style="margin-top:8px;">
+  <h4>Manual Test</h4>
+  <select id="manualTestMonitorMode" class="setting-select" onchange="setManualTestMonitorMode()" title="Manual-Test-Monitor Fenster">
+    <option value="show">Monitorfenster: anzeigen</option>
+    <option value="hide">Monitorfenster: ausblenden</option>
+  </select>
+  <select id="manualTestScenario" class="setting-select">
+    <option value="smoke_short">Kurztest (A+C+D+F ohne HF)</option>
+    <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
+    <option value="sci_format">SCI-Format (A/B)</option>
+    <option value="qc_override_footer">QC-Override + Footer (SCI B)</option>
+    <option value="full_regression_light">A-F (leicht, HF optional)</option>
+  </select>
+  <div class="row" style="margin-top:6px;">
+    <button class="smallbtn" id="manualTestStartBtn" onclick="startManualTestRunner()">Start Test</button>
+    <button class="smallbtn" id="manualTestStopBtn" onclick="stopManualTestRunner()">Stop</button>
+  </div>
+  <div class="hint" id="manualTestHint" style="margin-top:6px;">Fuehrt einen blockierenden GUI-Testablauf ueber `api.ask(...)` aus und prueft Basis-Formatregeln.</div>
+  <div id="manualTestLog" class="test-log-box" style="display:none;"></div>
 </div>
 
 <div id="status" class="status-box">Panel boot…</div>
@@ -2760,6 +4282,26 @@ function _storageKeyForModelQuery(provider){
   return `model_query_${provider||'unknown'}`;
 }
 
+function _safeLsGet(key, fallback){
+  try {
+    if(typeof window !== 'undefined' && window.localStorage){
+      const v = window.localStorage.getItem(String(key || ''));
+      return (v === null || v === undefined) ? fallback : v;
+    }
+  } catch(e) {}
+  return fallback;
+}
+
+function _safeLsSet(key, value){
+  try {
+    if(typeof window !== 'undefined' && window.localStorage){
+      window.localStorage.setItem(String(key || ''), String(value || ''));
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
 function buildUIFromData(raw){
   const base = _fallbackData();
   const data = Object.assign({}, base, (raw || {}));
@@ -2777,7 +4319,7 @@ function buildUIFromData(raw){
 
   const p = (data.current_provider || 'gemini');
   const btn = document.getElementById('refreshModelsBtn');
-  if(btn) btn.style.display = (p === 'openrouter' || p === 'huggingface') ? 'block' : 'none';
+  if(btn) btn.style.display = 'block';
 
   // HF catalog controls
   const hfRow = document.getElementById('hfCatalogRow');
@@ -2785,13 +4327,19 @@ function buildUIFromData(raw){
   if(p === 'huggingface'){
     const opts = (data.hf_provider_filter_options || ['all']);
     let savedPF = (data.hf_catalog_default_provider_filter || 'all');
-    let savedTopN = String(data.hf_catalog_default_top_n || 200);
-    try {
-      savedPF = (localStorage.getItem('hf_provider_filter') || savedPF);
-      savedTopN = (localStorage.getItem('hf_catalog_topn') || savedTopN);
-    } catch(e) {}
-    _setSelectOptions('hfProviderFilter', opts.map(x => ({value:x, label:`HF Provider: ${x}`})), savedPF);
+    let savedTopN = String(_safeLsGet('hfTopN', (data.hf_catalog_default_top_n || 200)));
     const topInp = document.getElementById('hfTopN');
+    savedPF = (_safeLsGet('hf_provider_filter', savedPF) || savedPF);
+    savedTopN = (_safeLsGet('hf_catalog_topn', savedTopN) || savedTopN);
+    _setSelectOptions('hfProviderFilter', opts.map(x => ({value:x, label:`HF Provider: ${x}`})), savedPF);
+    try {
+      if(topInp && !topInp.dataset.bound){
+        topInp.addEventListener('input', ()=>{
+          _safeLsSet('hfTopN', String(topInp.value||''));
+        });
+        topInp.dataset.bound = '1';
+      }
+    } catch(e) {}
     if(topInp) topInp.value = savedTopN;
   }
 
@@ -2807,14 +4355,14 @@ function buildUIFromData(raw){
   // Restore free-only (OpenRouter)
   let freeOnly = false;
   try {
-    freeOnly = isOpenRouter && (localStorage.getItem('openrouter_free_only') === '1');
+    freeOnly = isOpenRouter && (_safeLsGet('openrouter_free_only', '0') === '1');
     if(freeCb) freeCb.checked = freeOnly;
   } catch(e) {}
 
   // Restore model search query per provider
   try {
     const key = _storageKeyForModelQuery(p);
-    const savedQ = localStorage.getItem(key) || '';
+    const savedQ = _safeLsGet(key, '') || '';
     const inp = document.getElementById('modelSearch');
     if(inp) inp.value = savedQ;
   } catch(e) {}
@@ -2941,6 +4489,14 @@ function initPanelFailOpen(){
 }
 
 document.addEventListener('DOMContentLoaded', initPanelFailOpen);
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = _safeLsGet('manual_test_monitor_mode', 'show');
+    const el = document.getElementById('manualTestMonitorMode');
+    if(el) el.value = (saved === 'hide' ? 'hide' : 'show');
+    setManualTestMonitorMode();
+  } catch(e) {}
+});
 window.addEventListener('pywebviewready', () => {
   _log('pywebviewready');
   // If still offline, kick retry loop.
@@ -2973,6 +4529,8 @@ async function run(c) {
     }
     // Refresh panel UI after commands that change state-dependent labels (e.g., Comm Anchor on/off)
     try { await buildUI(); } catch(e) {}
+    try { setTimeout(() => { try { buildUI(); } catch(e) {} }, 200); } catch(e) {}
+    try { setTimeout(() => { try { buildUI(); } catch(e) {} }, 800); } catch(e) {}
   } catch(e) {
     _setStatus('cmd failed: ' + (e && e.message ? e.message : String(e)), 'err');
   }
@@ -2980,6 +4538,16 @@ async function run(c) {
 
 async function changeProvider() {
   const provider = document.getElementById('provider').value;
+  // Immediately align provider-specific controls to avoid stale UI states.
+  try {
+    const freeRow = document.getElementById('freeOnlyRow');
+    const freeCb = document.getElementById('freeOnly');
+    const isOpenRouter = (provider === 'openrouter');
+    if(freeRow) freeRow.style.display = isOpenRouter ? 'block' : 'none';
+    if(!isOpenRouter && freeCb) freeCb.checked = false;
+    const hfRow = document.getElementById('hfCatalogRow');
+    if(hfRow) hfRow.style.display = (provider === 'huggingface') ? 'flex' : 'none';
+  } catch(e) {}
   try {
     await _apiCall('panel_action', ['set_provider', {provider: provider}], 8000);
     await _apiCall('panel_action', ['refresh_models', {provider: provider}], 15000);
@@ -2988,6 +4556,7 @@ async function changeProvider() {
     return;
   }
   await buildUI();
+  try { setTimeout(() => { try { buildUI(); } catch(e) {} }, 250); } catch(e) {}
 }
 
 function changeModel() {
@@ -3100,7 +4669,7 @@ function clearChat(){
 function onModelSearch(){
   const p = (document.getElementById('provider') || {}).value || 'gemini';
   const q = (document.getElementById('modelSearch') || {}).value || '';
-  try { localStorage.setItem(_storageKeyForModelQuery(p), q); } catch(e) {}
+  _safeLsSet(_storageKeyForModelQuery(p), q);
   applyModelFilters();
 }
 
@@ -3149,7 +4718,7 @@ function toggleFreeOnly() {
   const cb = document.getElementById('freeOnly');
   if(p !== 'openrouter') return;
   const v = cb && cb.checked;
-  try { localStorage.setItem('openrouter_free_only', v ? '1' : '0'); } catch(e) {}
+  _safeLsSet('openrouter_free_only', (v ? '1' : '0'));
   applyModelFilters();
 }
 
@@ -3165,10 +4734,8 @@ async function refreshModels() {
 
 /* ---------- HF catalog hooks (optional; backend may ignore) ---------- */
 function onHFProviderFilterChange(){
-  try {
-    const v = (document.getElementById('hfProviderFilter') || {}).value || 'all';
-    localStorage.setItem('hf_provider_filter', v);
-  } catch(e) {}
+  const v = (document.getElementById('hfProviderFilter') || {}).value || 'all';
+  _safeLsSet('hf_provider_filter', v);
 }
 
 async function fetchHFCatalog(){
@@ -3179,8 +4746,9 @@ async function fetchHFCatalog(){
   try {
     topN = parseInt((document.getElementById('hfTopN') || {}).value || '200', 10);
     if(!isFinite(topN) || topN < 1) topN = 200;
+    _safeLsSet('hfTopN', String(topN));
     pf = (document.getElementById('hfProviderFilter') || {}).value || 'all';
-    localStorage.setItem('hf_catalog_topn', String(topN));
+    _safeLsSet('hf_catalog_topn', String(topN));
   } catch(e) {}
   try {
     await _apiCall('panel_action', ['hf_catalog', {top_n: topN, provider_filter: pf, force_refresh: true}], 20000);
@@ -3188,6 +4756,467 @@ async function fetchHFCatalog(){
     _setStatus('hf_catalog failed: ' + (e && e.message ? e.message : String(e)), 'err');
   }
   await buildUI();
+}
+
+/* ---------- Manual test runner (blocking on answers) ---------- */
+window.__manualTestRunner = window.__manualTestRunner || { running:false, stop:false, runId:0, events:[], summary:null, scenario:'', askFallbackNoted:false };
+
+function _mtMonitorEnabled(){
+  try {
+    const el = document.getElementById('manualTestMonitorMode');
+    return !!(el && el.value === 'show');
+  } catch(e) { return true; }
+}
+
+async function setManualTestMonitorMode(){
+  try {
+    const mode = _mtMonitorEnabled() ? 'show' : 'hide';
+    _safeLsSet('manual_test_monitor_mode', mode);
+    if(mode === 'show'){
+      await _apiCall('panel_action', ['manual_test_monitor_show', {}], 8000);
+    } else {
+      await _apiCall('panel_action', ['manual_test_monitor_hide', {}], 8000);
+    }
+  } catch(e) {
+    _mtWarn('Monitor-Umschaltung fehlgeschlagen: ' + String(e && e.message ? e.message : e));
+  }
+}
+
+function _mtLog(msg, cls){
+  const el = document.getElementById('manualTestLog');
+  if(!el) return;
+  let stamp = '';
+  try { stamp = _now() || ''; } catch(e) { stamp = ''; }
+  const line = document.createElement('div');
+  if(cls) line.className = cls;
+  line.textContent = (stamp ? (stamp + ' · ') : '') + String(msg || '');
+  el.appendChild(line);
+  while(el.children.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+  try {
+    const mt = window.__manualTestRunner;
+    if(mt && mt.running){
+      if(!Array.isArray(mt.events)) mt.events = [];
+      const entry = {
+        ts: stamp || null,
+        level: cls || 'info',
+        message: String(msg || ''),
+      };
+      mt.events.push(entry);
+      try {
+        if(mt.monitorEnabled){
+          _apiCall('panel_action', ['manual_test_monitor_append', {entry: entry}], 4000).catch(()=>{});
+        }
+      } catch(e) {}
+    }
+  } catch(e) {}
+}
+
+function _mtClearLog(){
+  const el = document.getElementById('manualTestLog');
+  if(el) el.innerHTML = '';
+}
+
+async function _mtSaveReport(extra){
+  try {
+    const mt = window.__manualTestRunner || {};
+    const report = {
+      kind: 'manual_test_runner_report',
+      version: 1,
+      scenario: String(mt.scenario || ''),
+      started_at: mt.startedAt || null,
+      finished_at: (extra && extra.finished_at) || (_now ? _now() : null),
+      duration_ms: (extra && extra.duration_ms) || null,
+      summary: Object.assign({}, (mt.summary || {}), (extra && extra.summary ? extra.summary : {})),
+      events: Array.isArray(mt.events) ? mt.events.slice() : [],
+      ui_state: {
+        provider: ((document.getElementById('provider') || {}).value || ''),
+        model: ((document.getElementById('model') || {}).value || ''),
+        answer_language: ((document.getElementById('anslang') || {}).value || ''),
+      }
+    };
+    const res = await _apiCall('panel_action', ['save_manual_test_report', {report: report}], 20000);
+    if(res && res.ok !== false){
+      const path = (res.path || (res.result && res.result.path) || '');
+      if(path) _mtLog('REPORT saved: ' + path, 'ok');
+      else _mtLog('REPORT saved.', 'ok');
+      return res;
+    }
+    _mtWarn('REPORT save failed: ' + String((res && res.error) || 'unknown'));
+    return res;
+  } catch(e) {
+    _mtWarn('REPORT save failed: ' + String(e && e.message ? e.message : e));
+    return null;
+  }
+}
+
+function _mtSetButtons(running){
+  const a = document.getElementById('manualTestStartBtn');
+  const b = document.getElementById('manualTestStopBtn');
+  if(a) a.disabled = !!running;
+  if(b) b.disabled = !running;
+}
+
+function _mtStripHtml(html){
+  try{
+    const d = document.createElement('div');
+    d.innerHTML = String(html || '');
+    return (d.textContent || d.innerText || '').replace(/\\u00a0/g, ' ');
+  }catch(e){ return String(html || ''); }
+}
+
+function _mtHasCompleteQcFooter(html){
+  const txt = _mtStripHtml(html);
+  const idxMatrix = txt.lastIndexOf('QC-Matrix:');
+  const idxQC = txt.lastIndexOf('QC:');
+  const idx = Math.max(idxMatrix, idxQC);
+  if(idx < 0) return false;
+  let qc = txt.slice(idx);
+  const tsIdx = qc.search(/\\bResponse at\\b/i);
+  if(tsIdx >= 0) qc = qc.slice(0, tsIdx);
+  qc = qc.replace(/\\s+/g, ' ').trim();
+  const en = ['Clarity','Brevity','Evidence','Empathy','Consistency','Neutrality'];
+  const de = ['Klarheit','Evidenz','Empathie','Konsistenz'];
+  const hasEN = en.every(k => qc.includes(k + ' '));
+  const hasDE = de.every(k => qc.includes(k + ' ')) &&
+                (qc.includes('Kürze ') || qc.includes('Kuerze ')) &&
+                (qc.includes('Neutralität ') || qc.includes('Neutralitaet '));
+  return !!(hasEN || hasDE);
+}
+
+function _mtHasSelfDebunkingBox(html){
+  const h = String(html || '').toLowerCase();
+  return h.includes('self-debunking') && (h.includes('class=\"self-debunk') || h.includes(\"class='self-debunk\") || h.includes('selbst-debunking') && h.includes('background'));
+}
+
+function _mtHasSciTraceStructure(html){
+  const txt = _mtStripHtml(html);
+  if(!/SCI Trace/i.test(txt)) return false;
+  // Accept numbered or bullet-style step labels (models/renderers vary).
+  const hasNumbered = /\\b1\\.\\s*(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic)/i.test(txt);
+  const hasBulletLabels = /(?:^|\\n)\\s*(?:[-•*]\\s*)?(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic(?:_[0-9]+_[A-Za-z]+)?)\\s*:/im.test(txt);
+  return !!(hasNumbered || hasBulletLabels);
+}
+
+function _mtIncludesProviderLimitLabel(htmlOrText, providerLabel){
+  const t = _mtStripHtml(htmlOrText);
+  return t.toLowerCase().includes(String(providerLabel || '').toLowerCase()) &&
+         /(limit|guthaben|credits|rate)/i.test(t);
+}
+
+function _mtEnsureRunning(){
+  if(!window.__manualTestRunner || !window.__manualTestRunner.running) throw new Error('manual_test_not_running');
+  if(window.__manualTestRunner.stop) throw new Error('manual_test_stopped');
+}
+
+async function _mtSleep(ms){
+  await new Promise(r => setTimeout(r, ms||0));
+}
+
+function _mtAskTimeoutForCurrentProvider(timeoutMs){
+  const base = Number(timeoutMs || 180000) || 180000;
+  // In manual GUI regression runs, even command-like asks (profile/SCI menu selections)
+  // may trigger provider roundtrips and exceed 60s on OpenRouter/HF. Use a robust floor.
+  if(base < 180000){
+    return Math.max(base, 180000);
+  }
+  return base;
+}
+
+async function _mtAsk(text, timeoutMs){
+  _mtEnsureRunning();
+  const t = String(text || '').trim();
+  if(!t) return {html:'', csc:null};
+  const askTimeout = _mtAskTimeoutForCurrentProvider(timeoutMs);
+  _mtLog('ASK > ' + t);
+  let res = null;
+  try {
+    res = await _apiCall('ask', [t], askTimeout);
+  } catch(e) {
+    const msg = String(e && e.message ? e.message : e);
+    if(/pywebview api method not available:\\s*ask/i.test(msg)){
+      try {
+        const mt = window.__manualTestRunner || {};
+        if(!mt.askFallbackNoted){
+          mt.askFallbackNoted = true;
+          _mtLog('INFO: api.ask nicht verfuegbar -> Fallback auf panel_action(ask)', 'info');
+        }
+      } catch(_e) {}
+      res = await _apiCall('panel_action', ['ask', {text: t}], askTimeout);
+      if(res && res.result && typeof res.result === 'object'){
+        res = res.result;
+      }
+    } else {
+      throw e;
+    }
+  }
+  _mtEnsureRunning();
+  const html = (res && res.html) ? String(res.html) : '';
+  _mtLog('ASK < done (' + (html.length||0) + ' html chars)');
+  await _mtSleep(150);
+  try { await buildUI(); } catch(e) {}
+  return res || {html:'', csc:null};
+}
+
+async function _mtPanelAction(action, payload, timeoutMs){
+  _mtEnsureRunning();
+  const res = await _apiCall('panel_action', [action, payload || {}], timeoutMs || 120000);
+  _mtEnsureRunning();
+  if(!res || res.ok === false){
+    throw new Error((res && res.error) ? res.error : ('panel_action failed: ' + action));
+  }
+  return res;
+}
+
+async function _mtSetProvider(provider){
+  const p = String(provider || '').trim().toLowerCase();
+  _mtLog('SET provider = ' + p);
+  // OpenRouter/Hugging Face can be slower due provider API latency / remote catalogs.
+  const _setProviderTimeout = (p === 'openrouter' || p === 'huggingface') ? 45000 : 30000;
+  const _refreshTimeout = (p === 'openrouter' || p === 'huggingface') ? 120000 : 60000;
+  await _mtPanelAction('set_provider', {provider:p}, _setProviderTimeout);
+  await _mtPanelAction('refresh_models', {provider:p}, _refreshTimeout);
+  await _mtSleep(250);
+  await buildUI();
+}
+
+async function _mtSetAnswerLanguage(lang){
+  const l = String(lang || 'de').trim().toLowerCase();
+  _mtLog('SET answer_language = ' + l);
+  await _mtPanelAction('set_answer_language', {lang:l}, 10000);
+  await _mtSleep(100);
+}
+
+async function _mtApplyQcOverride(values){
+  _mtEnsureRunning();
+  _mtLog('QC Override apply: ' + JSON.stringify(values || {}));
+  const api = _api();
+  if(api && typeof api.qc_override_apply === 'function'){
+    const res = await api.qc_override_apply(values || {});
+    if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_apply failed');
+    await _mtSleep(120);
+    return;
+  }
+  _mtWarn('qc_override_apply nicht direkt verfuegbar -> Fallback auf panel_action');
+  const res = await _apiCall('panel_action', ['qc_override_apply', {values: values || {}}], 10000);
+  if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_apply failed');
+  await _mtSleep(120);
+}
+
+async function _mtClearQcOverride(){
+  _mtEnsureRunning();
+  _mtLog('QC Override clear');
+  const api = _api();
+  if(api && typeof api.qc_override_clear === 'function'){
+    const res = await api.qc_override_clear({});
+    if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_clear failed');
+    await _mtSleep(120);
+    return;
+  }
+  _mtWarn('qc_override_clear nicht direkt verfuegbar -> Fallback auf panel_action');
+  const res = await _apiCall('panel_action', ['qc_override_clear', {}], 10000);
+  if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_clear failed');
+  await _mtSleep(120);
+}
+
+function _mtCheck(cond, okMsg, failMsg){
+  if(cond){
+    _mtLog('PASS: ' + okMsg, 'ok');
+    return true;
+  }
+  _mtLog('FAIL: ' + failMsg, 'err');
+  return false;
+}
+
+function _mtWarn(msg){
+  _mtLog('WARN: ' + msg, 'warn');
+}
+
+function _mtParseErrorTextFromAskResult(res){
+  try{
+    const txt = _mtStripHtml((res && res.html) || '');
+    if(/(error|limit|guthaben|credits|rate)/i.test(txt)) return txt;
+  }catch(e){}
+  return '';
+}
+
+async function _mtScenarioSmokeShort(){
+  let fails = 0;
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetAnswerLanguage('de');
+  await _mtAsk('Standard', 30000);
+  await _mtAsk('SCI off', 30000);
+  const r1 = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasCompleteQcFooter(r1.html), 'QC-Footer bei Basisantwort vollstaendig', 'QC-Footer bei Basisantwort fehlt/ist unvollstaendig')) fails++;
+  if(!_mtCheck(_mtStripHtml(r1.html).includes('Self-Debunking') || _mtStripHtml(r1.html).includes('Selbst-Debunking'),
+      'Self-Debunking vorhanden', 'Self-Debunking fehlt')) fails++;
+  return {fails};
+}
+
+async function _mtScenarioProviderSwitch(){
+  let fails = 0;
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetAnswerLanguage('de');
+  await _mtSetProvider('gemini');
+  await _mtAsk('Standard', 30000);
+  let rg = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasCompleteQcFooter(rg.html), 'Gemini: QC-Footer ok', 'Gemini: QC-Footer fehlt/unvollstaendig')) fails++;
+
+  await _mtSetProvider('openrouter');
+  let ro = await _mtAsk('Was ist Zeit?', 180000);
+  const txtOR = _mtStripHtml(ro.html);
+  if(/(insufficient credits|Nicht genügend Guthaben|rate limit|Limit erreicht)/i.test(txtOR)){
+    _mtWarn('OpenRouter lieferte Limit/Credit-Fehler (Test trotzdem ok, Providerpfad verifiziert).');
+    if(!_mtCheck(_mtIncludesProviderLimitLabel(ro.html, 'OpenRouter'), 'OpenRouter-Fehlerlabel korrekt', 'OpenRouter-Fehlerlabel unklar/falsch')) fails++;
+  } else {
+    if(!_mtCheck(_mtHasCompleteQcFooter(ro.html), 'OpenRouter: QC-Footer ok', 'OpenRouter: QC-Footer fehlt/unvollstaendig')) fails++;
+    if(!_mtCheck(_mtHasSelfDebunkingBox(ro.html), 'OpenRouter: Self-Debunking-Box erkannt', 'OpenRouter: Self-Debunking nicht als Box erkannt')) fails++;
+  }
+
+  await _mtSetProvider('huggingface');
+  let rhf = await _mtAsk('Was ist Zeit?', 180000);
+  const txtHF = _mtStripHtml(rhf.html);
+  if(/(insufficient credits|Nicht genügend Guthaben|rate limit|Limit erreicht|quota)/i.test(txtHF)){
+    _mtWarn('Hugging Face lieferte Limit/Credit-Fehler (optional).');
+    if(!_mtCheck(_mtIncludesProviderLimitLabel(rhf.html, 'Hugging Face'), 'HF-Fehlerlabel korrekt', 'HF-Fehler wurde nicht als Hugging Face gekennzeichnet')) fails++;
+  } else {
+    if(!_mtCheck(_mtHasCompleteQcFooter(rhf.html), 'HF: QC-Footer ok', 'HF: QC-Footer fehlt/unvollstaendig')) fails++;
+  }
+  return {fails};
+}
+
+async function _mtScenarioSciFormat(){
+  let fails = 0;
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetProvider('gemini');
+  await _mtAsk('Expert', 30000);
+  await _mtAsk('SCI menu', 30000);
+  await _mtAsk('A', 30000);
+  const rA = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasSciTraceStructure(rA.html), 'SCI A: SCI-Trace-Struktur erkannt', 'SCI A: SCI-Trace-Struktur fehlt/unsauber')) fails++;
+  if(!_mtCheck(_mtHasCompleteQcFooter(rA.html), 'SCI A: QC-Footer ok', 'SCI A: QC-Footer fehlt/unvollstaendig')) fails++;
+
+  await _mtAsk('SCI menu', 30000);
+  await _mtAsk('B', 30000);
+  const rB = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasSciTraceStructure(rB.html), 'SCI B: SCI-Trace-Struktur erkannt', 'SCI B: SCI-Trace-Struktur fehlt/unsauber')) fails++;
+  if(!_mtCheck(_mtHasCompleteQcFooter(rB.html), 'SCI B: QC-Footer ok', 'SCI B: QC-Footer fehlt/unvollstaendig')) fails++;
+  return {fails};
+}
+
+async function _mtScenarioQcOverrideFooter(){
+  let fails = 0;
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetProvider('openrouter');
+  await _mtAsk('Expert', 30000);
+  await _mtAsk('SCI menu', 30000);
+  await _mtAsk('B', 30000);
+  await _mtApplyQcOverride({Clarity:3,Brevity:0,Evidence:3,Empathy:3,Consistency:3,Neutrality:3});
+  const r = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasCompleteQcFooter(r.html), 'SCI B + QC-Override: QC-Footer vollstaendig', 'SCI B + QC-Override: QC-Footer fehlt/unvollstaendig')) fails++;
+  if(!_mtCheck(_mtHasSelfDebunkingBox(r.html), 'SCI B + QC-Override: Self-Debunking-Box erkannt', 'SCI B + QC-Override: Self-Debunking nicht als Box erkannt')) fails++;
+  try { await _mtClearQcOverride(); } catch(e) { _mtWarn('QC-Override clear fehlgeschlagen: ' + String(e && e.message ? e.message : e)); }
+  return {fails};
+}
+
+async function _mtScenarioFullRegressionLight(){
+  let fails = 0;
+  for(const fn of [_mtScenarioSmokeShort, _mtScenarioProviderSwitch, _mtScenarioSciFormat, _mtScenarioQcOverrideFooter]){
+    _mtEnsureRunning();
+    const r = await fn();
+    fails += (r && r.fails) ? r.fails : 0;
+  }
+  try {
+    _mtLog('EXPORT > Chat/Audit');
+    await _apiCall('export', [], 20000);
+    _mtLog('PASS: Export ausgefuehrt', 'ok');
+  } catch(e) {
+    _mtWarn('Export nicht ausgefuehrt: ' + String(e && e.message ? e.message : e));
+  }
+  return {fails};
+}
+
+function stopManualTestRunner(){
+  if(!window.__manualTestRunner) return;
+  window.__manualTestRunner.stop = true;
+  _mtLog('Stop angefordert.');
+}
+
+async function startManualTestRunner(){
+  const mt = window.__manualTestRunner || (window.__manualTestRunner = { running:false, stop:false, runId:0 });
+  if(mt.running){
+    _mtWarn('Ein Testlauf laeuft bereits.');
+    return;
+  }
+  mt.running = true;
+  mt.stop = false;
+  mt.runId = (mt.runId || 0) + 1;
+  mt.events = [];
+  mt.summary = null;
+  mt.monitorEnabled = _mtMonitorEnabled();
+  mt.askFallbackNoted = false;
+  const myRun = mt.runId;
+  _mtSetButtons(true);
+  _mtClearLog();
+  const sel = document.getElementById('manualTestScenario');
+  const scenario = (sel && sel.value) ? sel.value : 'smoke_short';
+  mt.scenario = scenario;
+  mt.startedAt = (_now ? _now() : null);
+  try {
+    if(mt.monitorEnabled){
+      await _apiCall('panel_action', ['manual_test_monitor_show', {}], 8000);
+      await _apiCall('panel_action', ['manual_test_monitor_reset', {scenario: scenario, status: 'running', summary: '-'}], 8000);
+    }
+  } catch(e) {
+    _mtWarn('Manual-Test-Monitor konnte nicht initialisiert werden: ' + String(e && e.message ? e.message : e));
+  }
+  _mtLog('Manual-Test gestartet: ' + scenario);
+  const t0 = Date.now();
+  try {
+    let result = {fails: 0};
+    if(scenario === 'smoke_short') result = await _mtScenarioSmokeShort();
+    else if(scenario === 'provider_switch') result = await _mtScenarioProviderSwitch();
+    else if(scenario === 'sci_format') result = await _mtScenarioSciFormat();
+    else if(scenario === 'qc_override_footer') result = await _mtScenarioQcOverrideFooter();
+    else if(scenario === 'full_regression_light') result = await _mtScenarioFullRegressionLight();
+    else throw new Error('unknown scenario: ' + scenario);
+    _mtEnsureRunning();
+    const ms = Date.now() - t0;
+    if((result && result.fails) > 0){
+      mt.summary = { status: 'FAIL', fails: Number(result.fails||0) };
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'FAIL', summary: mt.summary}], 4000); } catch(e) {}
+      _mtLog('SUMMARY: FAILS=' + result.fails + ' · Dauer=' + ms + 'ms', 'err');
+      _setStatus('Manual Test fertig: ' + result.fails + ' Fehler', 'err');
+    } else {
+      mt.summary = { status: 'PASS', fails: 0 };
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'PASS', summary: mt.summary}], 4000); } catch(e) {}
+      _mtLog('SUMMARY: PASS · Dauer=' + ms + 'ms', 'ok');
+      _setStatus('Manual Test fertig: PASS', 'ok');
+    }
+    await _mtSaveReport({ duration_ms: ms, summary: mt.summary, finished_at: (_now ? _now() : null) });
+  } catch(e) {
+    const stopped = (String(e && e.message ? e.message : e).indexOf('manual_test_stopped') >= 0);
+    if(stopped){
+      mt.summary = { status: 'STOPPED' };
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'STOPPED', summary: mt.summary}], 4000); } catch(e) {}
+      _mtLog('SUMMARY: STOPPED', 'warn');
+      _setStatus('Manual Test gestoppt', 'err');
+      await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
+    } else {
+      mt.summary = { status: 'ERROR', error: String(e && e.message ? e.message : e) };
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'ERROR', summary: mt.summary}], 4000); } catch(e) {}
+      _mtLog('ERROR: ' + String(e && e.message ? e.message : e), 'err');
+      _setStatus('Manual Test error: ' + String(e && e.message ? e.message : e), 'err');
+      await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
+    }
+  } finally {
+    if(window.__manualTestRunner && window.__manualTestRunner.runId === myRun){
+      window.__manualTestRunner.running = false;
+      window.__manualTestRunner.stop = false;
+    }
+    _mtSetButtons(false);
+    try { await buildUI(); } catch(e) {}
+  }
 }
 </script>
 </body>
@@ -3421,6 +5450,82 @@ HTML_QC_OVERRIDE = """
 </html>
 """
 
+HTML_MANUAL_TEST_MONITOR = """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Manual Test Monitor</title>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 10px; background:#f7f8fa; color:#222; }
+  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .pill { border:1px solid #ccc; border-radius: 10px; padding: 3px 8px; background:#fff; font-size: 12px; }
+  .ok { color: #0b6b0b; }
+  .warn { color: #a05a00; }
+  .err { color: #b00020; }
+  .box { background:#fff; border:1px solid #ddd; border-radius:6px; padding:8px; }
+  #log { height: 520px; overflow-y: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.35; }
+  .line { margin: 0 0 2px 0; }
+  .line.ok { color:#0b6b0b; }
+  .line.warn { color:#8a5a00; }
+  .line.err { color:#b00020; }
+  .muted { color:#666; }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <div id="scenario" class="pill">Scenario: -</div>
+    <div id="status" class="pill">Status: idle</div>
+    <div id="summary" class="pill muted">Summary: -</div>
+  </div>
+  <div class="box">
+    <div id="log"></div>
+  </div>
+<script>
+window.__mtm = window.__mtm || {events:[]};
+function mtmClear(){
+  const el = document.getElementById('log');
+  if(el) el.innerHTML = '';
+  window.__mtm.events = [];
+}
+function mtmSetHeader(data){
+  data = data || {};
+  try { document.getElementById('scenario').textContent = 'Scenario: ' + String(data.scenario || '-'); } catch(e) {}
+  try { document.getElementById('status').textContent = 'Status: ' + String(data.status || 'idle'); } catch(e) {}
+  try {
+    const s = data.summary || '-';
+    document.getElementById('summary').textContent = 'Summary: ' + (typeof s === 'string' ? s : JSON.stringify(s));
+  } catch(e) {}
+}
+function mtmAppend(entry){
+  try {
+    const el = document.getElementById('log');
+    if(!el) return false;
+    const d = document.createElement('div');
+    const lvl = String((entry && entry.level) || 'info');
+    d.className = 'line ' + lvl;
+    const ts = (entry && entry.ts) ? String(entry.ts) + ' · ' : '';
+    d.textContent = ts + String((entry && entry.message) || '');
+    el.appendChild(d);
+    while(el.children.length > 500) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
+    return true;
+  } catch(e) { return false; }
+}
+function mtmReplace(data){
+  try {
+    mtmClear();
+    mtmSetHeader(data || {});
+    const ev = (data && Array.isArray(data.events)) ? data.events : [];
+    for(const x of ev) mtmAppend(x);
+    return true;
+  } catch(e) { return false; }
+}
+</script>
+</body>
+</html>
+"""
+
 
 # --- API BACKEND ---
 
@@ -3529,19 +5634,31 @@ class OutputComplianceValidator:
         variants = self._get_path(self.gov.data, "sci.variant_menu.variants", {}) or {}
         vk = (variant_key or "").upper()
         vdef = variants.get(vk, {}) if isinstance(variants, dict) else {}
-        maps = (vdef.get("maps_to") or {})
-        mtype = maps.get("type")
-        mval = maps.get("value")
 
-        if mtype == "sci_mode" and isinstance(mval, str):
+        # Primary: variant-defined trace_steps (deterministic list)
+        try:
+            ts = vdef.get("trace_steps") if isinstance(vdef, dict) else None
+            if isinstance(ts, list) and ts:
+                return [str(s) for s in ts]
+        except Exception:
+            pass
+
+        # Secondary: maps_to sci_mode
+        maps = (vdef.get("maps_to") or {}) if isinstance(vdef, dict) else {}
+        mtype = maps.get("type") if isinstance(maps, dict) else None
+        mval = maps.get("value") if isinstance(maps, dict) else None
+
+        if mtype == "sci_mode" and isinstance(mval, str) and mval.strip():
             steps = self._get_path(self.gov.data, f"sci.modes.{mval}.steps", []) or []
             if isinstance(steps, list):
                 return [str(s) for s in steps]
 
+        # Fallback (method_tag or unknown): minimal SCI steps (Plan/Solution/Check)
         steps = self._get_path(self.gov.data, "sci.modes.SCI.steps", []) or []
         if isinstance(steps, list):
             return [str(s) for s in steps]
         return []
+
 
     def _label_regex(self, label: str):
         parts = re.split(r"[_\s]+", label.strip())
@@ -3576,6 +5693,42 @@ class OutputComplianceValidator:
                 positions.append(None)
             else:
                 positions.append(m.start())
+
+        # Content check: steps must not be empty (at least one substantive line)
+        try:
+            # Determine the SCI Trace section span (best-effort)
+            m_title = re.search(rf"(?im)^\s*{re.escape(block_title)}\s*:?\s*$", text)
+            section_text = text[m_title.start():] if m_title else text
+            for s in steps:
+                m = self._label_regex(s).search(section_text)
+                if not m:
+                    continue
+                start = m.end()
+                line_end = section_text.find("\n", m.start())
+                if line_end == -1:
+                    line_end = len(section_text)
+                header_line = section_text[m.start():line_end]
+                inline = re.sub(rf"(?im)^\s*(?:[-*]|\d+\.)?\s*\*{{0,2}}{re.escape(s)}\*{{0,2}}\s*[:\-–—]\s*", "", header_line).strip()
+                if inline:
+                    continue
+                nxt = len(section_text)
+                boundary = re.search(r"(?im)^\s*(Self-?Debunking\b|QC-?Matrix\b)", section_text[start:])
+                if boundary:
+                    nxt = start + boundary.start()
+                for s2 in steps:
+                    if s2 == s:
+                        continue
+                    m2 = self._label_regex(s2).search(section_text[start:nxt])
+                    if m2:
+                        nxt = start + m2.start()
+                        break
+                body = section_text[start:nxt]
+                body_clean = re.sub(r"(?im)^\s*(?:[*+-]|•|\d+\.)\s*", "", body)
+                body_clean = re.sub(r"\s+", " ", body_clean).strip()
+                if not re.search(r"[A-Za-z0-9ÄÖÜäöüß]", body_clean):
+                    vios.append(f"SCI Trace step '{s}' has no content.")
+        except Exception:
+            pass
 
         if all(p is not None for p in positions):
             if any(positions[i] >= positions[i+1] for i in range(len(positions)-1)):
@@ -3813,7 +5966,9 @@ class OutputComplianceValidator:
 
 
     def build_repair_prompt(self, *, user_prompt: str, raw_response: str, state, hard_violations: list, soft_violations: list):
-        lang = self._conversation_lang()
+        lang = (getattr(state, "answer_language", "") or "").strip().lower()
+        if lang not in ("de", "en"):
+            lang = self._conversation_lang()
         parts = []
         parts.append("CONTROL LAYER REPAIR REQUEST (one pass).")
         parts.append("You MUST output a corrected assistant message that complies with the active Comm-SCI ruleset.")
@@ -3845,7 +6000,9 @@ class OutputComplianceValidator:
         parts.append("- Do NOT rewrite the whole answer. Only add the missing protocol elements.")
         parts.append("- If you add blocks, place them at the required position (typically after the final answer and before QC).")
         parts.append("")
-        if any("Verification Route Gate" in v for v in hard_violations):
+
+        need_vrg = any("Verification Route Gate" in v for v in hard_violations)
+        if need_vrg:
             parts.append("Verification Route Gate repair guidance:")
             parts.append("- Add at least ONE verification route marker line.")
             parts.append("- Prefer safe/transparent markers (do NOT fabricate web checks):")
@@ -3856,13 +6013,29 @@ class OutputComplianceValidator:
             parts.append("- If you cannot support the strong claim, downgrade it and include an uncertainty label U1–U6.")
             parts.append("")
 
+        # SCI Trace guidance: required whenever SCI is active and the ruleset defines steps for the chosen variant.
+        try:
+            sci_active = bool(getattr(state, "sci_active", False))
+        except Exception:
+            sci_active = False
+
+        sci_vios = any(("SCI Trace" in v) or ("Missing SCI Trace" in v) or ("SCI Trace step" in v) for v in hard_violations)
+        if sci_active and steps:
             parts.append("SCI Trace requirements:")
             parts.append("- Include a visible block titled 'SCI Trace'.")
             parts.append("- Include ALL step labels exactly (underscores/spaces/hyphens allowed), in this order:")
             for s in steps:
                 parts.append(f"  - {s}")
+            parts.append("- Each step must contain at least one substantive sentence; do NOT output empty step headers.")
+            parts.append("- If content must be withheld, keep the step label and write: 'Redacted: <reason>'.")
+            try:
+                brev = int((getattr(state, "qc_overrides", {}) or {}).get("brevity", 2))
+            except Exception:
+                brev = 2
+            if brev <= 0:
+                parts.append("- Because Brevity=0 is active: each SCI Trace step must contain at least TWO substantive sentences.")
+            parts.append("")
 
-        parts.append("")
 
         parts.append("Original user prompt:")
         parts.append(user_prompt.strip())
@@ -4044,30 +6217,90 @@ class CSCRefiner:
 
         return min(candidates) if candidates else len(text)
     def _lang(self) -> str:
-        """English-only build."""
-        return UI_LANG
-
+        """Return UI language (de/en) for deterministic UI strings."""
+        try:
+            lang = getattr(self.gov_state, 'ui_lang', None) or UI_LANG
+        except Exception:
+            lang = UI_LANG
+        lang_s = str(lang or '').strip().lower()
+        if lang_s.startswith('de'):
+            return 'de'
+        return 'en'
 
     # ----------------------------
     # SCI prompt helpers (deterministic, zero-LLM)
     # ----------------------------
     def _sci_variant_def(self, letter: str):
-        """Return (variant_def, steps, mapped_mode). Safe on malformed JSON."""
-        L = (letter or "").strip().upper()
-        sci = self.gov.data.get("sci", {}) if getattr(self, "gov", None) else {}
-        variant_menu = sci.get("variant_menu", {}) if isinstance(sci, dict) else {}
-        variants = variant_menu.get("variants", {}) if isinstance(variant_menu, dict) else {}
+        '''Return (variant_def, required_steps, mapped_mode).
+
+        Canonical v19.6.9 semantics:
+        - If the active variant defines trace_steps: use them exactly.
+        - Else, if maps_to.type == 'sci_mode': use sci.modes.<value>.steps.
+        - Else (method_tag or unknown): fall back to sci.modes.SCI.steps (Plan/Solution/Check).
+
+        Returns fail-soft defaults on malformed rules.
+        '''
+        L = (letter or '').strip().upper()
+        sci = self.gov.data.get('sci', {}) if getattr(self, 'gov', None) else {}
+        variant_menu = sci.get('variant_menu', {}) if isinstance(sci, dict) else {}
+        variants = variant_menu.get('variants', {}) if isinstance(variant_menu, dict) else {}
         vdef = variants.get(L, {}) if isinstance(variants, dict) else {}
-        maps_to = "SCI"
-        if isinstance(vdef, dict):
-            maps_to = vdef.get("maps_to", "SCI") or "SCI"
-        modes = sci.get("modes", {}) if isinstance(sci, dict) else {}
-        mode_obj = modes.get(maps_to, {}) if isinstance(modes, dict) else {}
-        steps = mode_obj.get("steps", []) if isinstance(mode_obj, dict) else []
-        if not isinstance(steps, list):
+
+        # 1) Variant-provided trace_steps (takes precedence)
+        steps = []
+        try:
+            ts = vdef.get('trace_steps') if isinstance(vdef, dict) else None
+            if isinstance(ts, list) and ts:
+                steps = [str(s) for s in ts if s is not None]
+        except Exception:
             steps = []
-        steps = [str(s) for s in steps if s is not None]
+
+        # 2) maps_to (usually an object {type,value})
+        maps_to = 'SCI'
+        maps_type = None
+        maps_val = None
+        try:
+            maps = vdef.get('maps_to') if isinstance(vdef, dict) else None
+            if isinstance(maps, dict):
+                maps_type = maps.get('type')
+                maps_val = maps.get('value')
+            elif isinstance(maps, str):
+                # legacy/older rulesets
+                maps_val = maps
+                maps_type = 'sci_mode'
+        except Exception:
+            maps_type = None
+            maps_val = None
+
+        if maps_type == 'sci_mode' and isinstance(maps_val, str) and maps_val.strip():
+            maps_to = maps_val.strip()
+        else:
+            maps_to = 'SCI'
+
+        # 3) If no explicit trace_steps, resolve steps via mode
+        if not steps:
+            try:
+                modes = sci.get('modes', {}) if isinstance(sci, dict) else {}
+                mode_obj = modes.get(maps_to, {}) if isinstance(modes, dict) else {}
+                mode_steps = mode_obj.get('steps', []) if isinstance(mode_obj, dict) else []
+                if isinstance(mode_steps, list) and mode_steps:
+                    steps = [str(s) for s in mode_steps if s is not None]
+            except Exception:
+                steps = []
+
+        # 4) Ultimate fallback
+        if not steps:
+            try:
+                modes = sci.get('modes', {}) if isinstance(sci, dict) else {}
+                mode_obj = modes.get('SCI', {}) if isinstance(modes, dict) else {}
+                mode_steps = mode_obj.get('steps', []) if isinstance(mode_obj, dict) else []
+                if isinstance(mode_steps, list):
+                    steps = [str(s) for s in mode_steps if s is not None]
+            except Exception:
+                steps = []
+
         return vdef if isinstance(vdef, dict) else {}, steps, maps_to
+
 
     def _wrap_user_with_sci(self, user_text: str, *, variant: str) -> str:
         """Prefix the user message with SCI instructions so the model actually follows the selected variant."""
@@ -4091,10 +6324,12 @@ class CSCRefiner:
             "\nYou MUST follow the Comm-SCI SCI Trace protocol for this answer.\n"
             "Output requirements:\n"
             "1) Include a visible section titled exactly: 'SCI Trace'\n"
-            "2) In that section, list the required steps below in the same order, each as a short line/bullet.\n"
+            "2) For EACH required step, write ONE line in this exact format: '<Step>: <content>'\n"
+            "   - <content> must be at least one substantive sentence (no empty placeholders).\n"
+            "   - Keep steps in the same order as listed.\n"
             "3) After the SCI Trace section, provide the final answer.\n"
-            "4) Do not rename steps, do not invent extra steps.\n\n"
-            "Required SCI Trace steps:\n" + step_lines +
+            "4) Do not rename steps, do not invent extra steps, do not output empty step headers.\n\n"
+            "Required SCI Trace steps (use exactly these labels):\n" + step_lines +
             "\n\nUser request:\n" + (user_text or "")
         )
         return instr
@@ -4141,7 +6376,7 @@ class CSCRefiner:
         # IMPORTANT: avoid accidental shadowing by the imported `sys` module.
         # The status line must use the system name from the ruleset (sysname).
         return (
-            f"{sysname} v{ver} · Active profile: {profile} · SCI: {sci_out} · Overlay: {overlay} · "
+            f"Active profile: {profile} · SCI: {sci_out} · Overlay: {overlay} · "
             f"Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
         )
     def _qc_footer_for_profile(self, profile_name: str) -> str:
@@ -4565,7 +6800,17 @@ class CSCRefiner:
         dyn = getattr(self.gov_state, "dynamic_nudge", "") or ""
 
         out = []
-        out.append(f"{sysname} v{ver} · Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}")
+        out.append(f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}")
+        try:
+            ds = getattr(self, 'deps_status', {}) or {}
+            parts = []
+            for k in ('auditstream','rendering_utils','compliance_scan'):
+                ok, _err = ds.get(k, (False, ''))
+                parts.append(f"{k}={'ok' if ok else 'missing'}")
+            out.append('Modules: ' + ', '.join(parts))
+        except Exception:
+            pass
+
         out.append(f"Anchor auto: {anchor_auto} · User turns: {user_turns}")
         if dyn:
             out.append(f"Dynamic nudge: {dyn}")
@@ -4582,7 +6827,7 @@ class CSCRefiner:
         return "\n".join(out).strip()
 
 
-    def _render_comm_state_html(self) -> str:
+    def _render_comm_state_html(self, audit_line: str = "") -> str:
         """Deterministic, stable HTML renderer for 'Comm State' (no Markdown reflow)."""
         if not gov.loaded:
             return '<div class="comm-help comm-state">Comm State: No ruleset loaded.</div>'
@@ -4609,7 +6854,7 @@ class CSCRefiner:
         user_turns = int(getattr(self.gov_state, "user_turns", 0) or 0)
         dyn = getattr(self.gov_state, "dynamic_nudge", "") or ""
 
-        status = f"{sysname} v{ver} · Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
+        status = f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
 
         rows = [
             ("Comm active", comm),
@@ -4625,12 +6870,24 @@ class CSCRefiner:
         ]
         if dyn:
             rows.append(("Dynamic nudge", dyn))
+        # Module availability (Stage 3d)
+        try:
+            ds = getattr(self, 'deps_status', {}) or {}
+            parts = []
+            for k in ('auditstream','rendering_utils','compliance_scan'):
+                ok, _err = ds.get(k, (False, ''))
+                parts.append(f"{k}={'ok' if ok else 'missing'}")
+            rows.append(("Modules", ", ".join(parts)))
+        except Exception:
+            pass
 
         out = []
         out.append('<div class="comm-help comm-state">')
         if note_html:
             out.append(note_html)
         out.append(f'<div class="help-status">{html.escape(status)}</div>')
+        if audit_line:
+            out.append(f"<div style='margin-top:8px'>{html.escape(str(audit_line))}</div>")
         out.append('<table class="state-table">')
         out.append('<tbody>')
         for k, v in rows:
@@ -4661,7 +6918,7 @@ class CSCRefiner:
         prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
 
         out = []
-        out.append(f"{sysname} v{ver} · Loaded rules file: {fname}")
+        out.append(f"Loaded rules file: {fname}")
         out.append("")
         # Prefer raw_json (exact), fallback to pretty dump
         raw = getattr(gov, "raw_json", "") or ""
@@ -4687,7 +6944,7 @@ class CSCRefiner:
         fname = getattr(gov, "current_filename", "") or ""
         prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
 
-        status = f"{sysname} v{ver} · Loaded rules file: {fname}"
+        status = f"Loaded rules file: {fname}"
 
         # Prefer raw_json (exact), fallback to pretty dump
         raw = getattr(gov, "raw_json", "") or ""
@@ -4712,8 +6969,8 @@ class CSCRefiner:
         """SCI menu: renders in current conversation language (de/en), keeps styling,
         uses JSON as Source of Truth, optional I18N strings only if present.
         """
-        ui_lang = UI_LANG
-        ui_lang = UI_LANG
+        ui_lang = (lang or getattr(self.gov_state, 'ui_lang', None) or UI_LANG)
+        ui_lang = 'de' if str(ui_lang).strip().lower().startswith('de') else 'en'
 
         def tr(key: str, fallback: str = "") -> str:
             try:
@@ -4859,6 +7116,11 @@ class CSCRefiner:
         gov.load_file() # Lädt Standard-Datei
         self.gov_state = _init_state_from_rules()
 
+        # Session counters for renderer stability (structural-only diagnostics)
+        self.session_render_ok_count = int(getattr(self, "session_render_ok_count", 0) or 0)
+        self.session_render_fallback_count = int(getattr(self, "session_render_fallback_count", 0) or 0)
+
+
         
         
         
@@ -4866,6 +7128,7 @@ class CSCRefiner:
         try:
             _g = globals().get('gov')
             if _g is not None:
+                gov.runtime_state = self.gov_state
                 setattr(_g, 'runtime_state', self.gov_state)
         except Exception:
             pass
@@ -4991,9 +7254,14 @@ class CSCRefiner:
             # --- Stateless provider (OpenRouter) ---
             if provider in ('openrouter', 'huggingface', 'hf', 'openai', 'openai_compat'):
                 pr = getattr(self, 'provider_router', None)
+                psvc = getattr(self, 'provider_service', None)
+                if psvc is not None and hasattr(psvc, 'router') and pr is not None:
+                    psvc.router = pr
                 client = None
                 try:
-                    if pr is not None:
+                    if psvc is not None:
+                        client = psvc.get_openai_client(provider)
+                    elif pr is not None:
                         if provider in ('huggingface', 'hf') and hasattr(pr, 'build_huggingface_client'):
                             client = pr.build_huggingface_client()
                         elif hasattr(pr, 'build_openrouter_client'):
@@ -5010,7 +7278,11 @@ class CSCRefiner:
 
                 model = ''
                 try:
-                    model = (getattr(cfg, 'get_provider_model', lambda _p: '')(provider) or '').strip()
+                    model = (
+                        psvc.get_provider_model(provider, fallback_model='')
+                        if psvc is not None
+                        else (getattr(cfg, 'get_provider_model', lambda _p: '')(provider) or '')
+                    ).strip()
                 except Exception:
                     model = ''
                 if not model:
@@ -5154,29 +7426,20 @@ class CSCRefiner:
             base = os.path.basename(new_file)
 
             # Sichtbares Echo, damit klar ist, WAS wirklich ausgewählt wurde.
-            try:
-                self.main_win.evaluate_js(f"addMsg('sys', 'Selected: {html.escape(base)}')")
-            except Exception:
-                pass
+            self._ui_add_system_message(f"Selected: {base}")
 
             # Harte Sperre: Config-Datei ist KEIN Ruleset.
             if base.lower() == "comm-sci-config.json" or base.lower().endswith("-config.json") or base.lower().endswith("config.json"):
-                try:
-                    self.main_win.evaluate_js(
-                        "addMsg('sys', 'JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v19.6.9.json).')"
-                    )
-                except Exception:
-                    pass
+                self._ui_add_system_message(
+                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.0.3.json)."
+                )
                 start_dir = os.path.dirname(new_file)
                 continue  # retry once
 
             # Versuch laden (Schema-Guard im GovernanceManager)
             success = gov.load_file(new_file)
             if not success:
-                try:
-                    self.main_win.evaluate_js("addMsg('sys', 'Ruleset NOT loaded (invalid Comm-SCI ruleset).')")
-                except Exception:
-                    pass
+                self._ui_add_system_message("Ruleset NOT loaded (invalid Comm-SCI ruleset).")
                 start_dir = os.path.dirname(new_file)
                 if attempt == 0:
                     continue
@@ -5186,85 +7449,121 @@ class CSCRefiner:
             self.gov_state = _init_state_from_rules()
 
             # 1) API reconnecten (damit System Instructions neu gesetzt werden)
-            try:
-                self.main_win.evaluate_js(f"addMsg('sys', 'Loading new ruleset: {html.escape(os.path.basename(gov.current_filename))}...')")
-            except Exception:
-                pass
+            self._ui_add_system_message(f"Loading new ruleset: {os.path.basename(gov.current_filename)}...")
             self._connect_api()
             self._auto_comm_start('rules-reload')
 
             # 2) UI im Chatfenster updaten (Dateiname oben)
-            try:
-                self.main_win.evaluate_js(f"updateRuleFile('{html.escape(os.path.basename(gov.current_filename))}')")
-            except Exception:
-                pass
+            self._ui_update_rule_file(os.path.basename(gov.current_filename))
 
             # 3) Panel robust neu aufbauen: altes Panel zerstören & neu erzeugen
             self._rebuild_panel(reason='rules-reload')
 
-            try:
-                self.main_win.evaluate_js("addMsg('sys', 'Ruleset loaded and panel updated.')")
-            except Exception:
-                pass
+            self._ui_add_system_message("Ruleset loaded and panel updated.")
             return
 
 
-    def _render_sci_trace_as_html_runtime(self, text_in: str) -> str:
-        """Hard-render the SCI Trace section as HTML using the *active* SCI variant step list.
 
-        This is a renderer-only fix to avoid Markdown list runaway numbering and to ensure
-        SCI A/B produces a visibly structured block even when the ruleset doesn't expose
-        required_steps under global_defaults.
+    def _render_sci_trace_as_html_runtime(self, text_in: str) -> str:
+        """Repair + render SCI Trace deterministically for display.
+
+        Goals:
+        - If the model emits an empty 'SCI Trace' (only step names), rebuild it from step-labeled content
+          elsewhere in the response.
+        - Ensure all required steps for the active SCI variant are shown, and never as empty bullets.
+        - Avoid duplicate content: extracted step sections are removed from the final-answer body.
         """
         try:
             if not text_in or 'SCI Trace' not in text_in:
                 return text_in
 
-            # Determine required steps from selected SCI variant (A/B/...) -> mapped mode -> steps
             variant = (getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '').strip().upper()
             sci_active = bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False))
             if not sci_active or not variant:
                 return text_in
 
+            # Determine required steps from ruleset mapping
             try:
                 _vdef, steps, _maps_to = self._sci_variant_def(variant)
             except Exception:
                 steps = []
-
             required_steps = [str(s) for s in (steps or []) if str(s).strip()]
             if not required_steps:
                 return text_in
 
             lines = text_in.splitlines()
+
+            # Find SCI Trace marker line (plain text, tolerate minimal HTML tags)
             sci_idx = None
             for i, ln in enumerate(lines):
-                if re.match(r"^\s*SCI\s+Trace\s*:?\s*$", ln) or re.match(r"^\s*SCI\s+Trace\s*:.*$", ln):
+                ln_plain = re.sub(r"<[^>]+>", "", ln).strip()
+                ln_plain = ln_plain.strip().strip("*").strip();
+                if re.match(r"^(?:#+\s*)?SCI\s+Trace\s*:?$", ln_plain, flags=re.IGNORECASE):
                     sci_idx = i
                     break
             if sci_idx is None:
                 return text_in
 
-            end_idx = len(lines)
-            end_pat = re.compile(r"^\s*(Final\s+Answer\s*:|Self-?Debunking\s*:|QC-?Matrix\s*:)")
-            for j in range(sci_idx + 1, len(lines)):
-                if end_pat.match(lines[j]):
-                    end_idx = j
-                    break
+            # Identify the end of the immediate list after 'SCI Trace' (bullets/numbering only)
+            list_pat = re.compile(r"^\s*(?:[*+-]|•|\d+\.)\s+")
+            k = sci_idx + 1
+            while k < len(lines) and (not lines[k].strip() or list_pat.match(re.sub(r"<[^>]+>", "", lines[k]))):
+                k += 1
+            trace_list_end = k  # exclusive
 
+            # If this immediate list already contains SCI step headers (e.g. "• Plan: ..."),
+            # keep it as content; otherwise it is typically an empty placeholder list.
+            try:
+                _has_step_header = False
+                for _ln in lines[sci_idx + 1:trace_list_end]:
+                    _plain = re.sub(r"<[^>]+>", "", _ln or "")
+                    _step, _rest = match_required_sci_step_header(_plain, required_steps)
+                    if _step:
+                        _has_step_header = True
+                        break
+                if _has_step_header:
+                    trace_list_end = sci_idx + 1
+            except Exception:
+                pass
+
+            # Build a working copy without the original (often empty) trace list block
             pre = lines[:sci_idx]
-            body = lines[sci_idx + 1:end_idx]
-            post = lines[end_idx:]
+            rest = lines[trace_list_end:]
 
-            step_set = {s for s in required_steps}
-            hdr_re = re.compile(r"^\s*(?:\d+\.)?\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$")
+            # Split off trailing governance blocks we must keep in place (Self-Debunking, QC-Matrix)
+            boundary_pat = re.compile(r"^\s*(Self-?Debunking\s*:|QC-?Matrix\s*:)", re.IGNORECASE)
+            tail_start = None
+            for i, ln in enumerate(rest):
+                plain_ln = re.sub(r"<[^>]+>", "", ln or "")
+                if (
+                    boundary_pat.match(plain_ln)
+                    or re.search(r"(?i)\bself[- ]?debunking\b", plain_ln)
+                    or re.search(r"(?i)\bQC-?Matrix\s*:", plain_ln)
+                    or re.search(r"(?is)class=(?:\"|')[^\"']*self-debunking[^\"']*(?:\"|')", ln or "")
+                ):
+                    tail_start = i
+                    break
+            if tail_start is None:
+                main = rest
+                tail = []
+            else:
+                main = rest[:tail_start]
+                tail = rest[tail_start:]
+
+            # Normalize basic HTML bold headers that may leak into raw text
+            def _strip_basic_tags(s: str) -> str:
+                s = re.sub(r"</?(strong|b)>", "", s, flags=re.IGNORECASE)
+                s = re.sub(r"</?p>", "", s, flags=re.IGNORECASE)
+                return s
 
             blocks = {}
-            cur = None
+            out_main = []
+            cur_step = None
             buf = []
 
             def flush():
-                nonlocal cur, buf
-                if cur is None:
+                nonlocal cur_step, buf
+                if cur_step is None:
                     return
                 cleaned = []
                 for x in buf:
@@ -5273,43 +7572,65 @@ class CSCRefiner:
                     cleaned.pop(0)
                 while cleaned and not cleaned[-1].strip():
                     cleaned.pop()
-                blocks[cur] = cleaned
-                cur = None
+                blocks[cur_step] = cleaned
+                cur_step = None
                 buf = []
 
-            recognized = 0
-            for ln in body:
-                m = hdr_re.match(ln)
-                if m:
-                    name = m.group(1)
-                    if name in step_set:
-                        flush()
-                        cur = name
-                        recognized += 1
-                        inline = (m.group(2) or '').strip()
-                        if inline:
-                            buf.append(inline)
-                        continue
-                if cur is not None:
-                    buf.append(ln)
-            flush()
+            recognized_steps = 0
+            for ln in main:
+                ln2 = _strip_basic_tags(re.sub(r"<[^>]+>", "", ln))
+                step_name, rest = match_required_sci_step_header(ln2, required_steps)
+                if step_name:
+                    flush()
+                    cur_step = step_name
+                    recognized_steps += 1
+                    if rest:
+                        buf.append(rest)
+                    continue
+                if cur_step is not None:
+                    buf.append(ln2)
+                else:
+                    out_main.append(ln)
 
-            if recognized < 2:
+            flush()            # If we didn't recognize any step content, do not fabricate trace items.
+            if recognized_steps == 0:
                 return text_in
 
+            # Render only steps that have real content; never emit empty steps.
+            missing = []
+            for s in required_steps:
+                if s in missing:
+                    continue
+                if not blocks.get(s):
+                    missing.append(s)
+
+
+            # Optional deterministic alert if step content is missing
+            alert_html = ""
+            if missing:
+                safe = ", ".join([html.escape(x) for x in missing])
+                alert_html = (
+                    "<div style='border:1px solid #fca5a5; background:#fef2f2; padding:10px; "
+                    "border-radius:10px; margin:8px 0; color:#991b1b;'>"
+                    "<b>CONTROL LAYER ALERT (SCI)</b><br>"
+                    "Missing SCI Trace step content for: " + safe +
+                    "</div>"
+                )
+
+            # Render deterministic HTML trace block
             html_parts = [
+                "<!-- SCI Trace: -->",
                 "<div class='sci-trace' style='margin:10px 0; padding:10px; border:1px solid #ddd; border-radius:12px;'>",
                 "<div style='font-weight:700; margin-bottom:6px;'>SCI Trace</div>",
                 "<ol style='margin:0 0 0 22px; padding:0;'>",
             ]
-
-            for step in required_steps:
-                if step not in blocks:
+            for s in required_steps:
+                if s in missing:
                     continue
                 html_parts.append("<li style='margin:4px 0 10px 0;'>")
-                html_parts.append(f"<div style='font-weight:700; margin:0 0 4px 0;'>{html.escape(step)}:</div>")
-                for ln in (blocks.get(step) or []):
-                    t = (ln or '').rstrip('\n')
+                html_parts.append(f"<div style='font-weight:700; margin:0 0 4px 0;'>{html.escape(s)}:</div>")
+                for ln in (blocks.get(s) or []):
+                    t = (ln or "").rstrip("\n")
                     if not t.strip():
                         html_parts.append("<div style='height:6px'></div>")
                         continue
@@ -5319,23 +7640,26 @@ class CSCRefiner:
                     else:
                         html_parts.append(f"<div>{html.escape(t.strip())}</div>")
                 html_parts.append("</li>")
-
             html_parts.extend(["</ol>", "</div>"])
 
             out_lines = []
             out_lines.extend(pre)
-            out_lines.append('SCI Trace:')
+            if alert_html:
+                out_lines.append(alert_html)
             out_lines.append("\n".join(html_parts))
-            out_lines.extend(post)
+            out_lines.extend(out_main)
+            out_lines.extend(tail)
             return "\n".join(out_lines)
         except Exception:
             return text_in
 
+
     def _apply_csc_strict(self, raw_response: str, *, user_raw: str, is_command: bool):
         """Wrapper-enforced CSC (strict) with Full Rendering (Ported from Fix7c5-Plus)."""
         
+        ctx = _build_route_ctx(self, user_raw=user_raw, is_command=is_command)
         # --- Nested Helper: Color Spans (Logic from Fix7c5-Plus) ---
-        def apply_color_spans(text):
+        def _apply_color_spans_local(text):
             if not text: return text
             # Fallback falls global _EVIDENCE_COLOR fehlt
             ev_colors = globals().get('_EVIDENCE_COLOR', {
@@ -5351,7 +7675,7 @@ class CSCRefiner:
                 return f'<span style="color:{color}; font-weight:600;">{token}</span>'
             
             # Regex wie in der alten Version
-            pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z]+)?)\]\s*(?P<emoji>[🟢🟡🔴⚪️])?")
+            pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?")
             return pat.sub(repl, text)
 
         # --- Nested Helper: Image Embedding ---
@@ -5371,16 +7695,94 @@ class CSCRefiner:
             return '```'.join(parts)
 
         try:
-            # 1. Command? -> Nur Markdown Rendering
+            # 1. Command? -> Render via v192 pipeline if available (deterministic-ish), else legacy Markdown
             if is_command:
+                raw_response = normalize_known_markdown_control_headings(raw_response or "")
+                if _rendering_pipeline_v192 is not None:
+                    try:
+                        rctx = _rendering_pipeline_v192.RenderContext(
+                            ui_lang=(self._lang() or 'en'),
+                            color=str(ctx.get('color', 'off') or 'off'),
+                            is_command=True,
+                            comm_active=bool(getattr(self.gov_state, 'comm_active', False)),
+                            strict=False,
+                        )
+                        return _rendering_pipeline_v192.render_llm_text_to_html(raw_response or "", rctx), None
+                    except Exception:
+                        pass
+
+                # Legacy fallback (kept for safety)
+                if ctx.get('color', 'off') == 'on':
+                    raw_response = apply_color_spans(raw_response, enabled=True)
                 _h = markdown.markdown(raw_response, extensions=['extra', 'codehilite'])
                 return sanitize_html(_h), None
 
-            # 2. Comm Inactive? -> Nur Markdown
+            # 2. Comm Inactive? -> Render via v192 pipeline if available (comm-inactive Markdown render path), else legacy Markdown
             if not getattr(self.gov_state, 'comm_active', False):
-                _h = markdown.markdown(raw_response, extensions=['extra', 'codehilite'])
-                return sanitize_html(_h), None
+                html_out = ""
+                try:
+                    raw_response = normalize_known_markdown_control_headings(raw_response or "")
+                    if _rendering_pipeline_v192 is not None:
+                        try:
+                            rctx = _rendering_pipeline_v192.RenderContext(
+                                ui_lang=(self._lang() or 'en'),
+                                color=str(ctx.get('color', 'off') or 'off'),
+                                is_command=False,
+                                comm_active=False,
+                                strict=False,
+                            )
+                            html_out = _rendering_pipeline_v192.render_llm_text_to_html(raw_response or "", rctx)
+                        except Exception:
+                            html_out = ""
             
+                    if not html_out:
+                        # Legacy fallback (kept for safety)
+                        _raw = raw_response
+                        if ctx.get('color', 'off') == 'on':
+                            _raw = apply_color_spans(_raw, enabled=True)
+                        _h = markdown.markdown(_raw, extensions=['extra', 'codehilite'])
+                        html_out = sanitize_html(_h)
+                except Exception:
+                    # Ultimate fallback: show escaped raw in <pre> (never crash).
+                    try:
+                        html_out = "<pre>" + html.escape(str(raw_response or "")) + "</pre>"
+                    except Exception:
+                        html_out = "<pre></pre>"
+            
+                # Provide deterministic normalization meta even in comm-inactive path (tests rely on it).
+                try:
+                    _qc_pat = re.compile(r"(?im)^\s*QC(?:-Matrix)?\s*:")
+                    _raw_qc_count = len(_qc_pat.findall(str(raw_response or "")))
+                    _html_qc_count = len(_qc_pat.findall(re.sub(r"<[^>]+>", "", str(html_out or ""))))
+                    _sd_boxed = ("self-debunking" in str(html_out or "").lower()) or ("selbst-debunking" in str(html_out or "").lower())
+                    _sd_numbered = detect_self_debunking_numbered_html(str(html_out or ""))
+            
+                    def _looks_like_rendered_html(h: str) -> bool:
+                        if not h:
+                            return False
+                        hl = h.lstrip().lower()
+                        if hl.startswith("<pre") and "&lt;" in hl:
+                            return False
+                        if h.count("&lt;") > 10 and ("<p" not in hl and "<div" not in hl and "<ol" not in hl):
+                            return False
+                        return any(t in hl for t in ("<p", "<div", "<ol", "<ul", "<table", "<pre", "<blockquote"))
+            
+                    render_ok = _looks_like_rendered_html(str(html_out or ""))
+                    meta = {
+                        "normalization": {
+                            "qc_footer_raw_count": _raw_qc_count,
+                            "qc_footer_html_count": _html_qc_count,
+                            "qc_footer_deduped": (_raw_qc_count > 1 and _html_qc_count == 1),
+                            "self_debunking_boxed": bool(_sd_boxed),
+                            "self_debunking_numbered": bool(_sd_numbered),
+                            "render_ok": bool(render_ok),
+                            "render_fallback": (not bool(render_ok)),
+                        }
+                    }
+                except Exception:
+                    meta = {"normalization": {"render_ok": True, "render_fallback": False}}
+            
+                return html_out, meta
             # 3. Refiner Logic (Erhalten für csc_meta)
             refiner = getattr(gov, 'csc_refiner', None)
             csc_meta = None
@@ -5441,6 +7843,9 @@ class CSCRefiner:
                 _ovr_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
                 _ovr = gov.normalize_qc_overrides(_ovr_raw)
                 _corr = gov.get_effective_qc_corridor(_prof, _ovr)
+                
+                raw_response = _strip_basic_html_for_enforcement(raw_response)
+                raw_response = ensure_qc_footer_present(raw_response, gov, _prof, _ovr)
                 enforced_txt = enforce_qc_footer_deltas(raw_response, _corr, _prof)
                 enforced_txt = ensure_qc_footer_is_last(enforced_txt)
                 cur_qc, rep_delta = gov.parse_qc_footer(enforced_txt)
@@ -5486,7 +7891,7 @@ class CSCRefiner:
                 disp_color = "off" if prof in {"Sandbox", "Briefing"} else color
                 
                 header = (
-                    f"{sysname} v{ver} · Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
+                    f"Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
                     f"Control Layer: on · QC: on · CGI: on · Color: {disp_color}"
                 )
 
@@ -5505,6 +7910,9 @@ class CSCRefiner:
                 _ovr_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
                 _ovr = gov.normalize_qc_overrides(_ovr_raw)
                 corr = gov.get_effective_qc_corridor(prof, _ovr)
+                
+                raw_response = _strip_basic_html_for_enforcement(raw_response)
+                raw_response = ensure_qc_footer_present(raw_response, gov, prof, _ovr)
                 raw_for_render = enforce_qc_footer_deltas(raw_response, corr, prof)
                 raw_for_render = ensure_qc_footer_is_last(raw_for_render)
             except Exception:
@@ -5526,9 +7934,44 @@ class CSCRefiner:
             except Exception:
                 pass
 
+                        # Strip erroneous SCI menu echoes from normal answers (menu is command-only).
+            try:
+                if (not is_command) and (not bool(ctx.get('sci_pending'))):
+                    raw_for_render = strip_sci_menu_from_answer(raw_for_render)
+            except Exception:
+                pass
+
+            # If SCI is off, remove leaked inline "SCI Trace: ..." lines from model output.
+            try:
+                raw_for_render = strip_sci_trace_line_when_inactive(
+                    raw_for_render,
+                    sci_active=bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False)),
+                    sci_variant=(getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''),
+                    sci_pending=bool(getattr(getattr(self, 'gov_state', None), 'sci_pending', False)),
+                )
+            except Exception:
+                pass
+
+            # Normalize inline "Self-Debunking: ..." leaks so the block parser can box it deterministically.
+            try:
+                raw_for_render = normalize_inline_self_debunking_header(raw_for_render)
+            except Exception:
+                pass
+
             # Enforce Self-Debunking contract deterministically (when required by JSON).
             try:
                 raw_for_render = enforce_self_debunking_contract(raw_for_render, gov, prof, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
+            except Exception:
+                pass
+            try:
+                raw_for_render = normalize_self_debunking_numbering_text(
+                    raw_for_render,
+                    lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
+                )
+            except Exception:
+                pass
+            try:
+                raw_for_render = dedupe_self_debunking_sections(raw_for_render)
             except Exception:
                 pass
 
@@ -5543,6 +7986,26 @@ class CSCRefiner:
                 raw_for_render = self._render_sci_trace_as_html_runtime(raw_for_render)
             except Exception:
                 pass
+
+            # Deterministic QC-override runtime checks (best-effort): detect obvious target/output mismatches.
+            override_vios = []
+            try:
+                _ovr_runtime = getattr(self.gov_state, 'qc_overrides', {}) or {}
+                override_vios = qc_override_runtime_violations(raw_for_render, _ovr_runtime)
+                if override_vios:
+                    alerts.append(("QC-Override", "; ".join(override_vios)))
+            except Exception:
+                override_vios = []
+
+            # Remove internal status scaffolding leaked by weaker models.
+            try:
+                raw_for_render = strip_internal_scaffolding_status_lines(raw_for_render or "")
+            except Exception:
+                pass
+            try:
+                raw_for_render = strip_exact_status_header_line(raw_for_render or "", header or "")
+            except Exception:
+                pass
             
             # A: Header voranstellen
             if header:
@@ -5550,10 +8013,15 @@ class CSCRefiner:
             # Strict enforcement gate (optional): validate final text (pre-render) and optionally warn/block.
             strict_banner_html = ""
             try:
-                pol = self._get_enforcement_policy()
+                _ens = self._get_enforcement_settings()
+                pol = str((_ens or {}).get("policy") or "audit_only")
+                ens_enabled = bool((_ens or {}).get("enabled", True))
+                ens_blocked = list((_ens or {}).get("blocked_severities") or ["critical", "major"])
             except Exception:
                 pol = "audit_only"
-            if pol in ("strict_warn", "strict_block"):
+                ens_enabled = True
+                ens_blocked = ["critical", "major"]
+            if ens_enabled and pol in ("strict_warn", "strict_block"):
                 try:
                     hv2, sv2 = self.validator.validate(
                         raw_for_render,
@@ -5565,6 +8033,8 @@ class CSCRefiner:
                         user_prompt=user_raw,
                         raw_response=raw_for_render,
                     )
+                    if override_vios:
+                        hv2 = list(hv2 or []) + list(override_vios)
                 except Exception as e:
                     hv2, sv2 = [], []
                     # Fail-soft: show a warning in chat, but never crash.
@@ -5573,68 +8043,429 @@ class CSCRefiner:
                     except Exception:
                         pass
                 if hv2:
-                    if pol == "strict_block":
+                    # Build structured violations (code/message/severity) for incremental policy handling.
+                    vios_struct = []
+                    try:
+                        if _compliance_scan is not None and hasattr(_compliance_scan, "classify_violation_messages_best_effort"):
+                            vios_struct = _compliance_scan.classify_violation_messages_best_effort(
+                                [str(x) for x in (hv2 or [])],
+                                default_severity="critical",  # keep strict_block backward-compatible for current hard-validator path
+                            ) or []
+                    except Exception:
+                        vios_struct = []
+
+                    # New incremental path: evaluate strict action via modular transition intent.
+                    # Fallback to legacy behavior if modules are unavailable.
+                    strict_action = None
+                    try:
+                        if (
+                            _state_from_runtime is not None
+                            and _apply_intent is not None
+                            and _ProcessModelResponse is not None
+                            and _ComplianceViolation is not None
+                        ):
+                            dom_state = _state_from_runtime(self.gov_state)
+                            try:
+                                dom_state.enforcement_policy = pol
+                            except Exception:
+                                pass
+                            try:
+                                dom_state.enforcement_enabled = bool(ens_enabled)
+                            except Exception:
+                                dom_state.enforcement_enabled = True
+                            try:
+                                _bsl = [str(x).strip().lower() for x in (ens_blocked or []) if str(x).strip()]
+                                dom_state.blocked_severities = _bsl or ["critical", "major"]
+                            except Exception:
+                                dom_state.blocked_severities = ["critical", "major"]
+
+                            vio_objs = []
+                            if isinstance(vios_struct, list) and vios_struct:
+                                for vv in vios_struct:
+                                    if not isinstance(vv, dict):
+                                        continue
+                                    vio_objs.append(
+                                        _ComplianceViolation(
+                                            rule=str(vv.get("code") or "hard_violation"),
+                                            severity=str(vv.get("severity") or "critical"),
+                                            message=str(vv.get("message") or ""),
+                                        )
+                                    )
+                            else:
+                                for msg in hv2 or []:
+                                    vio_objs.append(
+                                        _ComplianceViolation(
+                                            rule="hard_violation",
+                                            severity="critical",
+                                            message=str(msg),
+                                        )
+                                    )
+
+                            tr = _apply_intent(
+                                dom_state,
+                                _ProcessModelResponse(raw_text=raw_for_render, violations=tuple(vio_objs)),
+                                {},
+                            )
+                            evs = list(getattr(tr, "audit_events", []) or [])
+                            if evs:
+                                strict_action = str((evs[-1] or {}).get("action") or "").strip().lower() or None
+                    except Exception:
+                        strict_action = None
+
+                    if strict_action is None:
+                        strict_action = "blocked" if pol == "strict_block" else "warned"
+
+                    if strict_action == "blocked":
+                        vio_lines = []
+                        if isinstance(vios_struct, list) and vios_struct:
+                            for vv in vios_struct:
+                                sev = str((vv or {}).get("severity") or "").strip().upper()
+                                msg = str((vv or {}).get("message") or "").strip()
+                                code = str((vv or {}).get("code") or "").strip()
+                                if msg:
+                                    vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(msg)}</li>")
+                                else:
+                                    vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(code)}</li>")
+                        else:
+                            vio_lines = [f"<li>{html.escape(str(x))}</li>" for x in hv2]
                         blocked_html = (
                             "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
                             "<summary>⛔ STRICT BLOCK (hard violations)</summary>"
                             "<div class='csc-details'>"
                             "<p>The model response was blocked by the wrapper because hard rule violations remained after repair/enforcement.</p>"
                             "<ul>"
-                            + "".join(f"<li>{html.escape(str(x))}</li>" for x in hv2)
+                            + "".join(vio_lines)
                             + "</ul>"
                             "<p><i>(Content withheld by wrapper)</i></p>"
                             "</div></details>"
                         )
                         try:
-                            return ({"html": sanitize_html(blocked_html), "text": "", "csc": None}, {"strict_enforcement": "blocked", "hard_violations": hv2})
+                            return (
+                                {"html": sanitize_html(blocked_html), "text": "", "csc": None},
+                                {"strict_enforcement": "blocked", "hard_violations": hv2, "violations_struct": vios_struct},
+                            )
                         except Exception:
-                            return ({"html": blocked_html, "text": "", "csc": None}, {"strict_enforcement": "blocked", "hard_violations": hv2})
+                            return (
+                                {"html": blocked_html, "text": "", "csc": None},
+                                {"strict_enforcement": "blocked", "hard_violations": hv2, "violations_struct": vios_struct},
+                            )
                     else:
-                        # strict_warn
-                        strict_banner_html = (
-                            "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
-                            "<summary>⚠️ RULE VIOLATION DETECTED (strict_warn)</summary>"
-                            "<div class='csc-details'>"
-                            "<p>The following response still contains hard rule violations after repair/enforcement:</p>"
-                            "<ul>"
-                            + "".join(f"<li>{html.escape(str(x))}</li>" for x in hv2)
-                            + "</ul>"
-                            "</div></details><hr>"
-                        )
+                        if strict_action == "warned":
+                            # strict_warn
+                            vio_lines = []
+                            if isinstance(vios_struct, list) and vios_struct:
+                                for vv in vios_struct:
+                                    sev = str((vv or {}).get("severity") or "").strip().upper()
+                                    msg = str((vv or {}).get("message") or "").strip()
+                                    code = str((vv or {}).get("code") or "").strip()
+                                    if msg:
+                                        vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(msg)}</li>")
+                                    else:
+                                        vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(code)}</li>")
+                            else:
+                                vio_lines = [f"<li>{html.escape(str(x))}</li>" for x in hv2]
+
+                            strict_banner_html = (
+                                "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
+                                "<summary>⚠️ RULE VIOLATION DETECTED (strict_warn)</summary>"
+                                "<div class='csc-details'>"
+                                "<p>The following response still contains hard rule violations after repair/enforcement:</p>"
+                                "<ul>"
+                                + "".join(vio_lines)
+                                + "</ul>"
+                                "</div></details><hr>"
+                            )
             # Strict warn: show banner above the normal alerts/content
             if strict_banner_html:
                 alert_html = strict_banner_html + alert_html
+
+            # Display-only cleanup: hide VRG fallback marker lines in chat output.
+            # Validation already ran on raw_for_render above.
+            try:
+                raw_for_render = strip_verification_route_display_lines(raw_for_render or "")
+            except Exception:
+                pass
 
             
             # B: Bilder einbetten
             raw_for_render = _auto_embed_image_urls(raw_for_render)
             
             # C: Farben anwenden
-            if getattr(self.gov_state, 'color', 'off') == 'on':
-                raw_for_render = apply_color_spans(raw_for_render)
+            if ctx.get('color', 'off') == 'on':
+                raw_for_render = apply_color_spans(raw_for_render, enabled=True)
             
             # D: Markdown Cleanup (Abstände)
             raw_for_render = re.sub(r'(?<!\n)\n([*-]|\d+\.) ', r'\n\n\1 ', raw_for_render)
             raw_for_render = re.sub(r'(?<!\n)\nQC-Matrix:', r'\n\nQC-Matrix:', raw_for_render)
             
-            # E: Markdown Render
+            # E: Render (prefer v192 pipeline if available, else legacy Markdown+Sanitize+SD numbering)
+            raw_for_render = normalize_known_markdown_control_headings(raw_for_render or "")
+            if _rendering_pipeline_v192 is not None:
+                try:
+                    # For SD/labels we follow Answer Language (not UI language) because SD must be in Answer Language.
+                    ans_lang = getattr(getattr(self, 'gov_state', None), 'answer_language', None) or self._lang() or 'en'
+                    ans_lang = 'de' if str(ans_lang).lower().startswith('de') else 'en'
+                    rctx = _rendering_pipeline_v192.RenderContext(
+                        ui_lang=ans_lang,
+                        color=str(ctx.get('color', 'off') or 'off'),
+                        is_command=False,
+                        comm_active=True,
+                        strict=True,
+                    )
+                    final_html_body = _rendering_pipeline_v192.render_llm_text_to_html(raw_for_render or "", rctx)
+                except Exception:
+                    final_html_body = ""
+            else:
+                # Legacy path (kept as fallback)
+                try:
+                    final_html_body = markdown.markdown(raw_for_render, extensions=['extra', 'codehilite'])
+                except Exception:
+                    final_html_body = markdown.markdown(raw_for_render, extensions=['fenced_code', 'tables'])
+                final_html_body = sanitize_html(final_html_body)
+                try:
+                    final_html_body = html_number_self_debunking(final_html_body, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
+                except Exception:
+                    pass
+
+            # After HTML rendering, normalize leaked markdown emphasis inside self-debunking blocks.
             try:
-                # Versuch 'extra' (Tabellen etc.), Fallback auf Standard
-                final_html_body = markdown.markdown(raw_for_render, extensions=['extra', 'codehilite'])
-                final_html_body = sanitize_html(final_html_body)
-            except:
-                final_html_body = markdown.markdown(raw_for_render, extensions=['fenced_code', 'tables'])
-                final_html_body = sanitize_html(final_html_body)
+                final_html_body = sanitize_self_debunking_markdown_in_html(final_html_body or "")
+            except Exception:
+                pass
+            try:
+                final_html_body = normalize_hash_subheadings_in_html(final_html_body or "")
+            except Exception:
+                pass
+            try:
+                final_html_body = strip_internal_scaffolding_status_html(final_html_body or "")
+            except Exception:
+                pass
+
+            # Ensure Self-Debunking points are visibly numbered in HTML on all render paths (v192 + legacy).
+            try:
+                final_html_body = html_number_self_debunking(
+                    final_html_body or "",
+                    lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
+                )
+            except Exception:
+                pass
+
+            # HTML-stage QC footer guard:
+            # If a canonical QC footer exists in raw text but is missing or truncated after HTML rendering,
+            # restore the raw canonical line at the end of the HTML body.
+            try:
+                _raw_qc_match = None
+                for _m in re.finditer(r"(?im)^\s*QC-Matrix:\s*.*$", str(raw_for_render or "")):
+                    _raw_qc_match = _m
+                _raw_qc_line = (_raw_qc_match.group(0).strip() if _raw_qc_match else "")
+                # Fallback: rebuild a canonical footer from parsed raw text if line extraction failed.
+                if not _raw_qc_line:
+                    try:
+                        _ovr2_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
+                        _ovr2 = gov.normalize_qc_overrides(_ovr2_raw)
+                        _corr2 = gov.get_effective_qc_corridor(prof, _ovr2)
+                        _seed = ensure_qc_footer_present(str(raw_for_render or ""), gov, prof, _ovr2)
+                        _rebuilt = enforce_qc_footer_deltas(str(_seed or ""), _corr2, prof)
+                        _rebuilt = ensure_qc_footer_is_last(_rebuilt or "")
+                        for _m2 in re.finditer(r"(?im)^\s*QC-Matrix:\s*.*$", str(_rebuilt or "")):
+                            _raw_qc_match = _m2
+                        _raw_qc_line = (_raw_qc_match.group(0).strip() if _raw_qc_match else "")
+                    except Exception:
+                        pass
+                # If a raw footer line exists but is itself incomplete/truncated, replace it with a
+                # deterministic canonical footer based on the active profile + current overrides.
+                try:
+                    _raw_probe = re.sub(r"\s+", " ", str(_raw_qc_line or "")).strip()
+                    _raw_complete = (
+                        ("Clarity " in _raw_probe and "Brevity " in _raw_probe and "Evidence " in _raw_probe and
+                         "Empathy " in _raw_probe and "Consistency " in _raw_probe and "Neutrality " in _raw_probe)
+                        or
+                        ("Klarheit " in _raw_probe and ("Kürze " in _raw_probe or "Kuerze " in _raw_probe) and "Evidenz " in _raw_probe and
+                         "Empathie " in _raw_probe and "Konsistenz " in _raw_probe and ("Neutralität " in _raw_probe or "Neutralitaet " in _raw_probe))
+                    )
+                    if (not _raw_complete):
+                        try:
+                            _raw_qc_line = str(self._qc_footer_for_profile(prof) or "").strip()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                if _raw_qc_line:
+                    _plain_html = re.sub(r"<[^>]+>", "", str(final_html_body or ""))
+                    _html_qc_lines = re.findall(r"(?im)^\s*QC-Matrix:\s*.*$", _plain_html)
+                    _html_qc_last = (_html_qc_lines[-1].strip() if _html_qc_lines else "")
+                    # Use the whole suffix from the last footer marker because renderers can fragment
+                    # the QC footer across wrappers/newlines.
+                    _qc_probe = _html_qc_last
+                    try:
+                        _idx = _plain_html.rfind("QC-Matrix:")
+                        if _idx >= 0:
+                            _qc_probe = _plain_html[_idx:]
+                    except Exception:
+                        pass
+                    try:
+                        _ts_idx = str(_qc_probe or "").lower().find("response at")
+                        if _ts_idx >= 0:
+                            _qc_probe = str(_qc_probe or "")[:_ts_idx]
+                    except Exception:
+                        pass
+                    _qc_probe = re.sub(r"\s+", " ", str(_qc_probe or "")).strip()
+                    _qc_complete = (
+                        ("Clarity " in _qc_probe and "Brevity " in _qc_probe and "Evidence " in _qc_probe and
+                         "Empathy " in _qc_probe and "Consistency " in _qc_probe and "Neutrality " in _qc_probe)
+                        or
+                        ("Klarheit " in _qc_probe and ("Kürze " in _qc_probe or "Kuerze " in _qc_probe) and "Evidenz " in _qc_probe and
+                         "Empathie " in _qc_probe and "Konsistenz " in _qc_probe and ("Neutralität " in _qc_probe or "Neutralitaet " in _qc_probe))
+                    )
+                    if not _qc_complete:
+                        final_html_body = re.sub(
+                            r"(?is)<p>\s*QC-Matrix:\s*.*?</p>\s*",
+                            "",
+                            str(final_html_body or ""),
+                        ).rstrip()
+                        # Also remove common fragmented QC footer wrappers if present.
+                        final_html_body = re.sub(
+                            r"(?is)<div[^>]*>\s*QC-Matrix:\s*.*?</div>\s*",
+                            "",
+                            str(final_html_body or ""),
+                        ).rstrip()
+                        final_html_body += "<p>" + html.escape(_raw_qc_line) + "</p>"
+            except Exception:
+                pass
             
             # F: Alerts + Body + Timestamp zusammenbauen
-            timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-            final_html = alert_html + final_html_body + f'<div class="ts-footer">Response at {timestamp}</div>'
+            # Render-failure behavior (Variant D = Auto):
+            # - If the rendered HTML looks valid, show it and include raw provider output in a collapsible <details>.
+            # - If rendering looks broken/escaped, show the raw output (escaped) instead (no double output).
+            def _looks_like_rendered_html(h: str) -> bool:
+                if not h:
+                    return False
+                hl = h.lstrip().lower()
+                # Common failure: escaped HTML inside <pre> or heavy entity-escaping.
+                if hl.startswith("<pre") and "&lt;" in hl:
+                    return False
+                if h.count("&lt;") > 10 and ("<p" not in hl and "<div" not in hl and "<ol" not in hl):
+                    return False
+                # Must contain at least one typical HTML block tag.
+                return any(t in hl for t in ("<p", "<div", "<ol", "<ul", "<table", "<pre", "<blockquote"))
 
-            return final_html, csc_meta
+            
+            # --- Normalization / rendering summary (structural-only; used for audits & debugging) ---
+            try:
+                _qc_pat = re.compile(r"(?im)^\s*QC(?:-Matrix)?\s*:")
+                _raw_qc_count = len(_qc_pat.findall(str(raw_for_render or "")))
+                _html_qc_count = len(_qc_pat.findall(re.sub(r"<[^>]+>", "", str(final_html_body or ""))))
+                _sd_boxed = ("self-debunking" in str(final_html_body or "").lower()) or ("selbst-debunking" in str(final_html_body or "").lower())
+                _sd_numbered = detect_self_debunking_numbered_html(str(final_html_body or ""))
+                _norm_summary = {
+                    "qc_footer_raw_count": _raw_qc_count,
+                    "qc_footer_html_count": _html_qc_count,
+                    "qc_footer_deduped": (_raw_qc_count > 1 and _html_qc_count == 1),
+                    "self_debunking_boxed": bool(_sd_boxed),
+                    "self_debunking_numbered": bool(_sd_numbered),
+                }
+                if csc_meta is None:
+                    csc_meta = {}
+                if isinstance(csc_meta, dict):
+                    csc_meta["normalization"] = _norm_summary
+            except Exception:
+                pass
+
+            render_ok = _looks_like_rendered_html(final_html_body or "")
+
+            # Record render outcome in normalization summary (if present)
+            try:
+                if csc_meta is None:
+                    csc_meta = {}
+                if isinstance(csc_meta, dict):
+                    ns = csc_meta.get("normalization")
+                    if isinstance(ns, dict):
+                        ns["render_ok"] = bool(render_ok)
+                        ns["render_fallback"] = (not bool(render_ok))
+            except Exception:
+                pass
+
+            timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+
+            if render_ok:
+                raw_details = ""
+                try:
+                    _raw = (raw_original or raw_response or "")
+                    # Keep it readable but safe.
+                    _raw_esc = html.escape(str(_raw))
+                    raw_details = (
+                        '<details class="raw-output"><summary>Raw model output</summary>'
+                        '<pre class="raw-output-pre">' + _raw_esc + '</pre></details>'
+                    )
+                except Exception:
+                    raw_details = ""
+
+                final_html = alert_html + final_html_body + raw_details + f'<div class="ts-footer">Response at {timestamp}</div>'
+                return final_html, csc_meta
+
+            # Render looks broken: show raw (escaped) as a last-resort, but do not duplicate it.
+            try:
+                _raw = (raw_original or raw_response or "")
+                _raw_esc = html.escape(str(_raw))
+                fallback_note = '<div class="note-box"><b>Render fallback</b>: showing raw model output.</div>'
+                final_html = alert_html + fallback_note + '<pre class="raw-output-pre">' + _raw_esc + '</pre>' + f'<div class="ts-footer">Response at {timestamp}</div>'
+                return final_html, csc_meta
+            except Exception:
+                final_html = alert_html + f'<div class="ts-footer">Response at {timestamp}</div>'
+                return final_html, csc_meta
+
 
         except Exception as e:
             # Fallback bei schwerem Error
             return f"<span style='color:red'>Runtime Error in Renderer: {e}</span>", None
+
+    def _normalize_raw_output_contracts(self, text: str, *, governance_enabled: bool, is_command: bool = False) -> str:
+        """Apply raw governance/output contract normalizations in deterministic order."""
+        repaired = text
+        lang = getattr(getattr(self, 'gov_state', None), 'answer_language', 'de')
+        profile_name = getattr(getattr(self, 'gov_state', None), 'active_profile', 'Standard') or 'Standard'
+
+        svc = getattr(self, 'governance_service', None)
+        if svc is not None and hasattr(svc, 'normalize_output_contracts'):
+            try:
+                return svc.normalize_output_contracts(
+                    repaired,
+                    gov_mgr=gov,
+                    profile_name=profile_name,
+                    governance_enabled=bool(governance_enabled),
+                    is_command=bool(is_command),
+                    lang=lang,
+                )
+            except Exception:
+                pass
+
+        try:
+            if not governance_enabled:
+                raise RuntimeError('governance disabled')
+            repaired = enforce_qc_footer_deltas(repaired, gov, profile_name)
+        except Exception:
+            pass
+        try:
+            repaired = normalize_evidence_tags(repaired)
+        except Exception:
+            pass
+        try:
+            if not governance_enabled:
+                raise RuntimeError('governance disabled')
+            repaired = enforce_self_debunking_contract(
+                repaired,
+                gov,
+                profile_name,
+                is_command=is_command,
+                lang=lang,
+            )
+        except Exception:
+            pass
+        try:
+            repaired = normalize_sci_trace_numbering(repaired, gov)
+        except Exception:
+            pass
+        return repaired
 
     def _apply_output_prefs_to_user_message(self, user_raw: str) -> str:
         """Apply wrapper-level preferences to the USER message only.
@@ -5670,7 +8501,10 @@ class CSCRefiner:
 
             # Small, explicit wrapper directives.
             lines = []
-            lines.append(f"[OUTPUT LANGUAGE] Final answer content in {lang_name} ({lang}). Keep ALL headings/labels/scaffolding in English.")
+            lines.append(
+                f"[OUTPUT LANGUAGE] Final answer and SCI Trace content in {lang_name} ({lang}). "
+                "Keep fixed protocol tokens/step labels unchanged."
+            )
             lines.append("[ANSWER LENGTH] Be slightly more detailed than minimal (+10-20%). Avoid one-liners.")
 
             # QC overrides (session-local): these should influence BOTH
@@ -5773,6 +8607,12 @@ class CSCRefiner:
 
                     if hints:
                         lines.append("[QC BEHAVIOR] " + " ".join(hints))
+                    try:
+                        sci_now = bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False))
+                    except Exception:
+                        sci_now = False
+                    if sci_now and isinstance(b, int) and b <= 0:
+                        lines.append("[SCI TRACE DETAIL] Brevity=0 is active: write at least two substantive sentences per SCI Trace step.")
             lines.append("")
             return "\n".join(lines) + raw
         except Exception:
@@ -5782,7 +8622,7 @@ class CSCRefiner:
         """Deterministic CSC enforcement on the prompt side.
 
         Returns (text_to_send, pre_csc_meta or None).
-        We only use strings/configs from Comm-SCI-v19.6.9.json.
+        We only use strings/configs from the active Comm-SCI ruleset.
         """
         try:
             # Guard rails
@@ -5908,6 +8748,55 @@ class CSCRefiner:
         gov_obj = getattr(self, 'gov', None) or globals().get('gov')
         data = getattr(gov_obj, 'data', {}) if gov_obj is not None else {}
 
+        # Phase 3: controller dispatch path (application layer). Legacy path stays as fallback.
+        try:
+            if _controller_dispatch is not None:
+                def _mirror():
+                    gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
+                    if gov_obj2 is not None:
+                        if hasattr(self.gov_state, 'qc_overrides'):
+                            setattr(gov_obj2, 'qc_overrides', dict(getattr(self.gov_state, 'qc_overrides', {}) or {}))
+                        gov.runtime_state = self.gov_state
+                        setattr(gov_obj2, 'runtime_state', self.gov_state)
+                outcome = _controller_dispatch(
+                    cmd=cmd,
+                    runtime_state=self.gov_state,
+                    ruleset_data=data if isinstance(data, dict) else {},
+                    mirror_callback=_mirror,
+                )
+                if outcome.applied:
+                    return
+        except Exception:
+            pass
+
+        # Phase 2 fallback: central state transition path (intents + reducer).
+        try:
+            if (
+                _intent_from_command is not None
+                and _state_from_runtime is not None
+                and _state_apply_to_runtime is not None
+                and _apply_intent is not None
+            ):
+                intent = _intent_from_command(cmd)
+                if intent is not None:
+                    dom_state = _state_from_runtime(self.gov_state)
+                    result = _apply_intent(dom_state, intent, data if isinstance(data, dict) else {})
+                    _state_apply_to_runtime(result.state, self.gov_state)
+
+                    # Keep manager mirrors aligned for deterministic QC/state behavior.
+                    try:
+                        gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
+                        if gov_obj2 is not None:
+                            if hasattr(self.gov_state, 'qc_overrides'):
+                                setattr(gov_obj2, 'qc_overrides', dict(getattr(self.gov_state, 'qc_overrides', {}) or {}))
+                            gov.runtime_state = self.gov_state
+                            setattr(gov_obj2, 'runtime_state', self.gov_state)
+                    except Exception:
+                        pass
+                    return
+        except Exception:
+            pass
+
         # 1) Profile switching
         if cmd.startswith("Profile "):
             pname = cmd.split(" ", 1)[1].strip()
@@ -5923,6 +8812,7 @@ class CSCRefiner:
                     gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
                     if gov_obj2 is not None:
                         setattr(gov_obj2, 'qc_overrides', {})
+                        gov.runtime_state = self.gov_state
                         setattr(gov_obj2, 'runtime_state', self.gov_state)
                 except Exception:
                     pass
@@ -6012,6 +8902,7 @@ class CSCRefiner:
             try:
                 self.gov_state.anchor_auto = False
                 self.gov_state.anchor_force_next = False
+                self.gov_state.anchor_auto_user_override = True
             except Exception:
                 pass
 
@@ -6019,6 +8910,7 @@ class CSCRefiner:
             # Enable periodic Anchor Snapshot automation for this session
             try:
                 self.gov_state.anchor_auto = True
+                self.gov_state.anchor_auto_user_override = True
             except Exception:
                 pass
             # Do not force an immediate anchor unless explicitly requested; keep previous behavior conservative.
@@ -6286,6 +9178,17 @@ class CSCRefiner:
 
     def _active_provider(self) -> str:
         try:
+            psvc = getattr(self, 'provider_service', None)
+            if psvc is not None and hasattr(psvc, 'router') and getattr(self, 'provider_router', None) is not None:
+                # Keep service/router references in sync for tests and hot-swaps.
+                psvc.router = getattr(self, 'provider_router', None)
+            if psvc is not None:
+                pr = getattr(psvc, 'router', None)
+                if pr is not None and hasattr(pr, 'get_active_provider'):
+                    return str(pr.get_active_provider() or 'gemini').strip().lower()
+        except Exception:
+            pass
+        try:
             pr = getattr(self, 'provider_router', None)
             if pr is not None and hasattr(pr, 'get_active_provider'):
                 return pr.get_active_provider()
@@ -6298,6 +9201,14 @@ class CSCRefiner:
             return 'gemini'
 
     def _provider_model(self, provider: str = '', fallback_model: str = '') -> str:
+        try:
+            psvc = getattr(self, 'provider_service', None)
+            if psvc is not None and hasattr(psvc, 'router') and getattr(self, 'provider_router', None) is not None:
+                psvc.router = getattr(self, 'provider_router', None)
+            if psvc is not None:
+                return psvc.get_provider_model(provider, fallback_model=fallback_model)
+        except Exception:
+            pass
         try:
             pr = getattr(self, 'provider_router', None)
             if pr is not None and hasattr(pr, 'get_provider_model'):
@@ -6568,9 +9479,16 @@ class CSCRefiner:
         # OpenAI-compatible providers path (OpenRouter / Hugging Face router)
         if provider in ('openrouter', 'openai', 'openai_compat', 'huggingface', 'hf'):
             pr = getattr(self, 'provider_router', None)
+            psvc = getattr(self, 'provider_service', None)
+            try:
+                canon_pid = psvc.canonical_provider_id(provider) if psvc is not None else ('huggingface' if provider in ('huggingface', 'hf') else 'openrouter')
+            except Exception:
+                canon_pid = 'huggingface' if provider in ('huggingface', 'hf') else 'openrouter'
             client = None
             try:
-                if provider in ('huggingface', 'hf'):
+                if psvc is not None:
+                    client = psvc.get_openai_client(canon_pid)
+                elif canon_pid == 'huggingface':
                     if pr is not None and hasattr(pr, 'build_huggingface_client'):
                         client = pr.build_huggingface_client()
                 else:
@@ -6580,7 +9498,7 @@ class CSCRefiner:
                 client = None
             if client is None or not getattr(client, 'api_key', ''):
                 # Provider configured but no key found
-                pname = 'Hugging Face' if provider in ('huggingface', 'hf') else 'OpenRouter'
+                pname = 'Hugging Face' if canon_pid == 'huggingface' else 'OpenRouter'
                 raise RuntimeError(f"{pname} client not configured (missing API key?)")
 
             # Choose model
@@ -6588,23 +9506,44 @@ class CSCRefiner:
                 fallback = str(getattr(cfg, 'get_model', lambda: '')() or '')
             except Exception:
                 fallback = ''
-            prov_id = 'huggingface' if provider in ('huggingface','hf') else 'openrouter'
-            model = (model_override or self._provider_model(prov_id, fallback_model=fallback) or '').strip()
+            prov_id = canon_pid
+            models = []
+            # Load provider-specific model candidates up-front so fallback can work
+            # even when a configured default model is invalid for the active provider.
+            try:
+                if psvc is not None:
+                    models, _meta = psvc.get_cached_models(canon_pid, force_refresh=False)
+                elif canon_pid == 'huggingface':
+                    if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
+                        models, _meta = pr.get_huggingface_models_cached(force_refresh=False)
+                    if (not models) and pr is not None and hasattr(pr, 'get_huggingface_models_from_config'):
+                        models = pr.get_huggingface_models_from_config() or []
+                else:
+                    if pr is not None and hasattr(pr, 'get_openrouter_models_cached'):
+                        models, _meta = pr.get_openrouter_models_cached(force_refresh=False)
+            except Exception:
+                models = []
+            try:
+                model = (
+                    model_override
+                    or (
+                        psvc.get_provider_model(prov_id, fallback_model=fallback)
+                        if psvc is not None
+                        else self._provider_model(prov_id, fallback_model=fallback)
+                    )
+                    or ''
+                ).strip()
+            except Exception:
+                model = (model_override or self._provider_model(prov_id, fallback_model=fallback) or '').strip()
             if not model:
                 # Optional: auto-pick first model from cached /models list (best-effort)
                 try:
-                    models, _meta = (pr.get_openrouter_models_cached(force_refresh=False) if pr is not None and hasattr(pr,'get_openrouter_models_cached') else ([], {}))
-                    if provider in ('huggingface','hf') and (not models):
-                        try:
-                            models = pr.get_huggingface_models_from_config() if pr is not None and hasattr(pr,'get_huggingface_models_from_config') else []
-                        except Exception:
-                            models = []
                     if models:
                         model = str(models[0]).strip()
                 except Exception:
                     model = ''
             if not model:
-                model = 'zai-org/GLM-4.7:cerebras' if provider in ('huggingface','hf') else 'openai/gpt-4.1-mini'
+                model = 'zai-org/GLM-4.7:cerebras' if canon_pid == 'huggingface' else 'openai/gpt-4.1-mini'
 
             # IMPORTANT: OpenAI-compatible providers are stateless and do not automatically
             # retain our runtime governance state. Therefore we MUST prefix each user turn
@@ -6641,9 +9580,11 @@ class CSCRefiner:
             try:
                 cand.append(model)
                 # Optional explicit fallback list from config
-                provs = (self.cfg_mgr.config or {}).get('providers') or {}
-                pconf = provs.get(provider) if isinstance(provs, dict) else {}
-                fb = (pconf or {}).get('fallback_models') if isinstance(pconf, dict) else None
+                fb = psvc.get_config_fallback_models(prov_id) if psvc is not None else None
+                if not isinstance(fb, list):
+                    provs = (self.cfg_mgr.config or {}).get('providers') or {}
+                    pconf = provs.get(prov_id) if isinstance(provs, dict) else {}
+                    fb = (pconf or {}).get('fallback_models') if isinstance(pconf, dict) else None
                 if isinstance(fb, list):
                     for x in fb:
                         sx = str(x or '').strip()
@@ -6667,7 +9608,10 @@ class CSCRefiner:
                 pass
 
             # Keep attempts bounded.
-            cand = cand[:5] if isinstance(cand, list) else [model]
+            # Hugging Face catalogs can contain many provider-specific entries where early
+            # candidates may fail with 4xx; allow a slightly wider search window there.
+            _max_cand = 12 if provider in ('huggingface', 'hf') else 5
+            cand = cand[:_max_cand] if isinstance(cand, list) else [model]
 
             last_err = None
             for mi, mname in enumerate(cand):
@@ -6716,7 +9660,7 @@ class CSCRefiner:
         raise RuntimeError(f'Unknown provider: {provider}')
 
 
-    def _render_profile_switch_control_html(self, timestamp: str) -> str:
+    def _render_profile_switch_control_html(self, timestamp: str, audit_line: str = "") -> str:
 
 
         """Minimal deterministic control output for Profile switches.
@@ -6743,7 +9687,7 @@ class CSCRefiner:
         disp_color = 'off' if prof in {'Sandbox', 'Briefing'} else color
 
         header = (
-            f"{sysname} v{ver} · Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
+            f"Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
             f"Control Layer: on · QC: on · CGI: on · Color: {disp_color}"
         )
 
@@ -6756,6 +9700,8 @@ class CSCRefiner:
         out = []
         out.append('<div class="comm-help comm-state">')
         out.append(f'<div class="help-status">{html.escape(header)}</div>')
+        if audit_line:
+            out.append(f"<div style='margin-top:8px'>{html.escape(str(audit_line))}</div>")
         out.append(f"<div style='margin-top:10px'>{html.escape(qc_line)}</div>")
         out.append('</div>')
         out.append(f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>')
@@ -6800,6 +9746,16 @@ class CSCRefiner:
 
             # 1. Routing
             route = route_input(raw_txt, self.gov_state, self)
+            # STUFE 1 contract: route shape (fail-soft; no behavior change)
+            try:
+                if not contract_route_shape(route):
+                    try:
+                        self.log_event('contract_violation', {'where': 'route_input', 'kind': str(route.get('kind'))})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
 
             try:
                 self.log_event(
@@ -6839,6 +9795,7 @@ class CSCRefiner:
             if route["kind"] == "command":
                 self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
                 cmd = route["canonical_cmd"]
+                prev_profile_for_audit = (getattr(self.gov_state, "active_profile", "Standard") or "Standard")
 
                 try:
                     self.log_event('command', {'cmd': cmd, 'phase': 'begin'})
@@ -6854,8 +9811,36 @@ class CSCRefiner:
                         pass
                     return handled_res
 
-                # State Change
-                self._execute_legacy_command(cmd)
+                # State Change (Phase 3): explicit intent dispatch at the router boundary.
+                _applied_via_intent = False
+                try:
+                    if _controller_dispatch_intent is not None and _intent_from_command is not None:
+                        _intent = _intent_from_command(cmd)
+                        if _intent is not None:
+                            _gov_obj = getattr(self, 'gov', None) or globals().get('gov')
+                            _data = getattr(_gov_obj, 'data', {}) if _gov_obj is not None else {}
+
+                            def _mirror():
+                                gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
+                                if gov_obj2 is not None:
+                                    if hasattr(self.gov_state, 'qc_overrides'):
+                                        setattr(gov_obj2, 'qc_overrides', dict(getattr(self.gov_state, 'qc_overrides', {}) or {}))
+                                    gov.runtime_state = self.gov_state
+                                    setattr(gov_obj2, 'runtime_state', self.gov_state)
+
+                            _outcome = _controller_dispatch_intent(
+                                intent=_intent,
+                                cmd=cmd,
+                                runtime_state=self.gov_state,
+                                ruleset_data=_data if isinstance(_data, dict) else {},
+                                mirror_callback=_mirror,
+                            )
+                            _applied_via_intent = bool(_outcome.applied)
+                except Exception:
+                    _applied_via_intent = False
+
+                if not _applied_via_intent:
+                    self._execute_legacy_command(cmd)
 
                 try:
                     self.log_event('command', {'cmd': cmd, 'phase': 'state_changed'})
@@ -6886,9 +9871,23 @@ class CSCRefiner:
                 # - For Profile switches: minimal control output (header -> QC-Matrix -> timestamp)
                 # - Additionally, ONLY for Profile Sparring/Expert: show SCI menu to choose variant
                 current_profile = getattr(self.gov_state, "active_profile", "")
+                comm_start_audit_line = ""
+                if cmd == "Comm Start" and str(current_profile) != str(prev_profile_for_audit):
+                    comm_start_audit_line = _build_profile_switch_audit_line(
+                        "Comm Start",
+                        str(prev_profile_for_audit),
+                        str(current_profile),
+                    )
+                profile_switch_audit_line = ""
+                if cmd.startswith("Profile ") and str(current_profile) != str(prev_profile_for_audit):
+                    profile_switch_audit_line = _build_profile_switch_audit_line(
+                        cmd,
+                        str(prev_profile_for_audit),
+                        str(current_profile),
+                    )
 
                 if cmd.startswith("Profile "):
-                    html_content = self._render_profile_switch_control_html(timestamp)
+                    html_content = self._render_profile_switch_control_html(timestamp, audit_line=profile_switch_audit_line)
                     if current_profile in ["Expert", "Sparring"]:
                         try:
                             self.gov_state.sci_pending = True
@@ -6906,7 +9905,7 @@ class CSCRefiner:
                             pass
                         html_content = self._render_sci_menu_html(lang=self._lang())
                     else:
-                        html_content = self._render_comm_state_html()
+                        html_content = self._render_comm_state_html(audit_line=comm_start_audit_line)
 
                 self.history.append({"role": "bot", "content": f"Command executed: {cmd}", "ts": datetime.now().isoformat()})
                 try:
@@ -6917,6 +9916,35 @@ class CSCRefiner:
 
             # 3. Chat (Normal Question)
             self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
+
+            # CGI user feedback triplets are optional and must not be forwarded as a standalone LLM request.
+            try:
+                if bool(route.get('is_user_feedback_triplet')) or bool(route.get('is_process_cgi_feedback')):
+                    fb = (raw_txt or '').strip()
+                    try:
+                        if bool(route.get('is_user_feedback_triplet')):
+                            self.gov_state.last_user_feedback_triplet = fb
+                        if bool(route.get('is_process_cgi_feedback')):
+                            self.gov_state.last_process_cgi_feedback = fb
+                        self.gov_state.cgi_feedback_pending_for_model = True
+                    except Exception:
+                        pass
+                    # Log event (best-effort)
+                    try:
+                        self.log_event('cgi_feedback', {'value': _safe_preview_text(fb, 32), 'kind': 'user_feedback_triplet' if bool(route.get('is_user_feedback_triplet')) else 'process_cgi_feedback'})
+                    except Exception:
+                        pass
+                    ts = datetime.now().isoformat()
+                    note = (
+                        "<div style='border:1px solid #bbf7d0; background:#f0fdf4; padding:10px; "
+                        "border-radius:10px; margin:8px 0; color:#166534;'>"
+                        "<b>CGI feedback recorded.</b><br>"
+                        + html.escape(fb) +
+                        "</div>"
+                    )
+                    return {"html": note + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None}
+            except Exception:
+                pass
 
             # Turn counter (used for anchor auto snapshots, and as a general monotonic user-turn index)
             try:
@@ -6976,12 +10004,24 @@ class CSCRefiner:
 
                     if self.gov_state.sci_pending_turns < max_turns and is_contextual:
                         # Keep pending and show clarification + menu deterministically (no LLM call)
+                        lang = self._lang()
+                        if str(lang).lower().startswith('de'):
+                            note_title = 'SCI-Auswahl ausstehend.'
+                            note_body = (
+                                'Deine Eingabe wirkt wie eine Frage zur SCI-Methodik. '
+                                'Bitte wähle eine SCI-Variante (A–H), um fortzufahren.'
+                            )
+                        else:
+                            note_title = 'SCI selection pending.'
+                            note_body = (
+                                'Your input looks like a question about the SCI methodology. '
+                                'Please select an SCI variant (A–H) to continue.'
+                            )
                         note = (
                             "<div style='border:1px solid #c7d2fe; background:#eef2ff; padding:10px; "
                             "border-radius:10px; margin:8px 0; color:#1e3a8a;'>"
-                            "<b>SCI selection pending.</b><br>"
-                            "Your input looks like a question about the SCI methodology. "
-                            "Please select an SCI variant (A–H) to continue."
+                            f"<b>{note_title}</b><br>"
+                            f"{note_body}"
                             "</div>"
                         )
                         menu_html = self._render_sci_menu_html(lang=self._lang())
@@ -7067,6 +10107,23 @@ class CSCRefiner:
 
             user_for_model = self._apply_output_prefs_to_user_message(raw_txt_for_model)
 
+            # If CGI feedback was provided earlier, forward it ONCE as a neutral note (no rule/code changes).
+            try:
+                if bool(getattr(self.gov_state, 'cgi_feedback_pending_for_model', False)):
+                    fb_parts = []
+                    lu = (getattr(self.gov_state, 'last_user_feedback_triplet', '') or '').strip()
+                    lp = (getattr(self.gov_state, 'last_process_cgi_feedback', '') or '').strip()
+                    if lu:
+                        fb_parts.append(f"User feedback triplet (CGI): {lu}")
+                    if lp:
+                        fb_parts.append(f"Process CGI feedback: {lp}")
+                    if fb_parts:
+                        user_for_model = (user_for_model.rstrip() + "\n\n[CGI Feedback]\n" + "\n".join(fb_parts)).strip()
+                    # Mark as sent (single-use)
+                    self.gov_state.cgi_feedback_pending_for_model = False
+            except Exception:
+                pass
+
             # SCI Recursion: capture scope for next answer (canonical JSON: sci.recursive_sci)
             try:
                 if bool(getattr(self.gov_state, 'sci_recursion_one_shot', False)):
@@ -7138,28 +10195,11 @@ class CSCRefiner:
                         # --- Normalize RAW model output for validation (plain text only) ---
             repaired_raw = raw_resp
             governance_enabled_now = bool(getattr(self, 'session_with_governance', True))
-            try:
-                if not governance_enabled_now:
-                    raise RuntimeError('governance disabled')
-                _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                repaired_raw = enforce_qc_footer_deltas(repaired_raw, gov, _prof_now)
-            except Exception:
-                pass
-            try:
-                repaired_raw = normalize_evidence_tags(repaired_raw)
-            except Exception:
-                pass
-            try:
-                if not governance_enabled_now:
-                    raise RuntimeError('governance disabled')
-                _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                repaired_raw = enforce_self_debunking_contract(repaired_raw, gov, _prof_now, is_command=False, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
-            except Exception:
-                pass
-            try:
-                repaired_raw = normalize_sci_trace_numbering(repaired_raw, gov)
-            except Exception:
-                pass
+            repaired_raw = self._normalize_raw_output_contracts(
+                repaired_raw,
+                governance_enabled=governance_enabled_now,
+                is_command=False,
+            )
 
             # --- Validate + ONE repair pass for HARD violations (on RAW text, not HTML) ---
             repair_banner_html = ""
@@ -7177,7 +10217,11 @@ class CSCRefiner:
                             steps = validator._required_trace_steps_for_variant(vk) or []
                     except Exception:
                         steps = []
-                    expect_trace = bool(steps)
+                    # Expect SCI trace whenever SCI is active and a variant is selected.
+                    try:
+                        expect_trace = bool(getattr(self.gov_state, "sci_active", False)) and bool(vk)
+                    except Exception:
+                        expect_trace = bool(steps)
 
                     hard_vios, soft_vios = validator.validate(
                         text=repaired_raw,
@@ -7255,26 +10299,11 @@ class CSCRefiner:
 
                         # Normalize again (raw text)
                         repaired_raw = raw2
-                        try:
-                            if not governance_enabled_now:
-                                raise RuntimeError('governance disabled')
-                            _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                            repaired_raw = enforce_qc_footer_deltas(repaired_raw, gov, _prof_now)
-                        except Exception:
-                            pass
-                        try:
-                            repaired_raw = normalize_evidence_tags(repaired_raw)
-                        except Exception:
-                            pass
-                        try:
-                            _prof_now = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-                            repaired_raw = enforce_self_debunking_contract(repaired_raw, gov, _prof_now, is_command=False, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
-                        except Exception:
-                            pass
-                        try:
-                            repaired_raw = normalize_sci_trace_numbering(repaired_raw, gov)
-                        except Exception:
-                            pass
+                        repaired_raw = self._normalize_raw_output_contracts(
+                            repaired_raw,
+                            governance_enabled=governance_enabled_now,
+                            is_command=False,
+                        )
 
                         # Banner (visible; does not claim perfection beyond one pass)
                         try:
@@ -7302,6 +10331,19 @@ class CSCRefiner:
                     self.session_csc_applied_count = int(getattr(self, 'session_csc_applied_count', 0) or 0) + 1
             except Exception:
                 pass
+
+            # Track renderer outcome per session (for diagnostics; does not change UI output)
+            try:
+                if isinstance(meta, dict):
+                    ns = meta.get("normalization")
+                    if isinstance(ns, dict):
+                        if bool(ns.get("render_ok")):
+                            self.session_render_ok_count = int(getattr(self, "session_render_ok_count", 0) or 0) + 1
+                        elif bool(ns.get("render_fallback")):
+                            self.session_render_fallback_count = int(getattr(self, "session_render_fallback_count", 0) or 0) + 1
+            except Exception:
+                pass
+
             # If CSC was applied on prompt-side, prefer that metadata when renderer didn't produce any.
             if (meta is None) and pre_meta is not None:
                 meta = pre_meta
@@ -7483,6 +10525,13 @@ class CSCRefiner:
             tin = int(getattr(self, 'session_tokens_in', 0) or 0)
             tout = int(getattr(self, 'session_tokens_out', 0) or 0)
             stats_txt = f"Reqs: {reqs} | In: {tin} | Out: {tout}"
+            try:
+                ui = getattr(self, 'ui_controller', None)
+                if ui is not None and hasattr(ui, 'update_stats'):
+                    if ui.update_stats(self.main_win, stats_txt):
+                        return
+            except Exception:
+                pass
             self.main_win.evaluate_js(f"updateStats('{stats_txt}')")
 
 
@@ -7491,9 +10540,8 @@ class CSCRefiner:
         if not getattr(self, 'main_win', None):
             return {'ok': False, 'error': 'no_main_win'}
         try:
-            safe = json.dumps(str(cmd or ''), ensure_ascii=False)
-            self.main_win.evaluate_js(f"remoteInput({safe});")
-            return {'ok': True}
+            cmd_s = str(cmd or '')
+            return {'ok': bool(self._ui_remote_input(cmd_s))}
         except Exception as e:
             return {'ok': False, 'error': str(e)}
 
@@ -7558,6 +10606,65 @@ class CSCRefiner:
         # Wird gerufen, wenn man das X drückt
         self.close_app()
 
+    def _ui_add_system_message(self, message: str) -> bool:
+        try:
+            msg = str(message or "")
+            ui = getattr(self, "ui_controller", None)
+            if ui is not None and hasattr(ui, "add_system_message"):
+                if ui.add_system_message(getattr(self, "main_win", None), msg):
+                    return True
+            win = getattr(self, "main_win", None)
+            if win is None:
+                return False
+            win.evaluate_js(f"addMsg('sys', {json.dumps(msg, ensure_ascii=False)});")
+            return True
+        except Exception:
+            return False
+
+    def _ui_update_rule_file(self, filename: str) -> bool:
+        try:
+            name = str(filename or "")
+            ui = getattr(self, "ui_controller", None)
+            if ui is not None and hasattr(ui, "update_rule_file"):
+                if ui.update_rule_file(getattr(self, "main_win", None), name):
+                    return True
+            win = getattr(self, "main_win", None)
+            if win is None:
+                return False
+            win.evaluate_js(f"updateRuleFile({json.dumps(name, ensure_ascii=False)});")
+            return True
+        except Exception:
+            return False
+
+    def _ui_refresh_panel(self) -> bool:
+        try:
+            win = getattr(self, "panel_win", None)
+            if win is None:
+                return False
+            ui = getattr(self, "ui_controller", None)
+            if ui is not None and hasattr(ui, "eval_js"):
+                if ui.eval_js(win, "window.refresh_panel && window.refresh_panel();"):
+                    return True
+            win.evaluate_js("window.refresh_panel && window.refresh_panel()")
+            return True
+        except Exception:
+            return False
+
+    def _ui_remote_input(self, cmd: str) -> bool:
+        try:
+            text = str(cmd or "")
+            ui = getattr(self, "ui_controller", None)
+            if ui is not None and hasattr(ui, "remote_input"):
+                if ui.remote_input(getattr(self, "main_win", None), text):
+                    return True
+            win = getattr(self, "main_win", None)
+            if win is None:
+                return False
+            win.evaluate_js(f"remoteInput({json.dumps(text, ensure_ascii=False)});")
+            return True
+        except Exception:
+            return False
+
     def ping(self, _payload=None):
         """Panel health check."""
         try:
@@ -7584,6 +10691,25 @@ class CSCRefiner:
         except Exception:
             payload = {}
 
+        def _ok(result=None, **extra):
+            out = {'ok': True, 'action': action_s, 'result': result, 'error': None}
+            if extra:
+                out.update(extra)
+            return out
+
+        def _err(message: str):
+            return {'ok': False, 'action': action_s, 'result': None, 'error': str(message or 'error')}
+
+        # S6: delegate stable panel-action subsets to UIController (primary route).
+        try:
+            _ui = getattr(self, 'ui_controller', None)
+            if _ui is not None and hasattr(_ui, 'try_handle_panel_aux_action'):
+                _delegated = _ui.try_handle_panel_aux_action(self, action_s, payload)
+                if isinstance(_delegated, dict):
+                    return _delegated
+        except Exception:
+            pass
+
         try:
             if action_s == 'cmd':
                 # Execute via main window pipeline so results appear in the chat UI.
@@ -7591,85 +10717,25 @@ class CSCRefiner:
                 try:
                     if hasattr(self, 'remote_cmd'):
                         self.remote_cmd(str(text or ''))
-                        return {'ok': True, 'action': 'cmd', 'queued': True}
+                        return _ok({'queued': True}, queued=True)
                 except Exception as e:
-                    return {'ok': False, 'action': 'cmd', 'error': str(e)}
-                return {'ok': False, 'action': 'cmd', 'error': 'remote_cmd_unavailable'}
-            if action_s == 'set_provider':
-                provider = payload.get('provider', '')
-                return {'ok': True, 'action': action_s, 'result': self.set_provider(str(provider or ''))}
-            if action_s == 'set_model':
-                model = payload.get('model', '')
-                return {'ok': True, 'action': action_s, 'result': self.set_model(str(model or ''))}
-            if action_s == 'set_answer_language':
-                lang = payload.get('lang', '')
-                return {'ok': True, 'action': action_s, 'result': self.set_answer_language(str(lang or ''))}
-            if action_s == 'refresh_models':
-                provider = payload.get('provider', '')
+                    return _err(str(e))
+                return _err('remote_cmd_unavailable')
+            if action_s == 'ask':
+                # Blocking ask-path for panel-side automation/test runners.
+                text = payload.get('text', '')
                 try:
-                    p = (str(provider or '')).strip().lower()
-                except Exception:
-                    p = ''
-                if p:
-                    try:
-                        curp = (self.cfg.get_active_provider() or 'gemini').strip().lower()
-                    except Exception:
-                        curp = 'gemini'
-                    if p != curp:
-                        try:
-                            self.set_provider(p)
-                        except Exception:
-                            pass
-                return {'ok': True, 'action': action_s, 'result': self.refresh_models()}
-            if action_s == 'hf_catalog':
-                top_n = payload.get('top_n', 200)
-                provider_filter = payload.get('provider_filter', 'all')
-                force_refresh = bool(payload.get('force_refresh', False))
-                return {'ok': True, 'action': action_s,
-                        'result': self.hf_catalog(top_n=int(top_n or 200),
-                                                  provider_filter=str(provider_filter or 'all'),
-                                                  force_refresh=force_refresh)}
-            if action_s == 'list_chat_logs':
-                limit = payload.get('limit', 200)
-                lr = self.list_chat_logs(limit=int(limit or 200))
-                logs = []
-                try:
-                    if isinstance(lr, dict):
-                        logs = lr.get('logs') or []
-                    elif isinstance(lr, list):
-                        logs = lr
-                except Exception:
-                    logs = []
-                if not isinstance(logs, list):
-                    logs = []
-                return {'ok': True, 'action': action_s, 'logs': logs}
-            if action_s == 'load_chat_log':
-                name = payload.get('name', '')
-                fork = bool(payload.get('fork', True))
-                res = self.load_chat_log(str(name or ''), fork=fork)
-                try:
-                    if isinstance(res, dict) and res.get('ok') is True:
-                        self._ui_replay_loaded_history(status_msg=f"Loaded: {os.path.basename(str(name or ''))} ({'fork' if fork else 'no fork'})")
-                except Exception:
-                    pass
-                return {'ok': True, 'action': action_s, **(res or {})}
-            if action_s == 'clear_chat':
-                res = self.clear_chat()
-                try:
-                    if isinstance(res, dict):
-                        ok = bool(res.get('ok', True))
-                    else:
-                        ok = True
-                except Exception:
-                    ok = True
-                return {'ok': ok, 'action': action_s, **(res or {})}
-
+                    if hasattr(self, 'ask'):
+                        res = self.ask(str(text or ''))
+                        if isinstance(res, dict):
+                            return _ok(res, **res)
+                        return _ok({'html': str(res or '')})
+                except Exception as e:
+                    return _err(str(e))
+                return _err('ask_unavailable')
         except Exception as e:
-            try:
-                return {'ok': False, 'action': action_s, 'error': str(e)}
-            except Exception:
-                return {'ok': False, 'action': action_s, 'error': 'error'}
-        return {'ok': False, 'action': action_s, 'error': 'unknown action'}
+            return _err(str(e))
+        return _err('unknown action')
 
     def clear_chat(self):
         """Clear in-memory chat history and reset the main chat UI (no model call).
@@ -7719,6 +10785,194 @@ class CSCRefiner:
                 return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
             except Exception:
                 return {'ok': False, 'error': 'error'}
+
+    def save_manual_test_report(self, report):
+        """Persist panel manual-test run results as JSON under Logs/ManualTests (best-effort)."""
+        try:
+            payload = report if isinstance(report, dict) else {'raw': report}
+        except Exception:
+            payload = {'raw': str(report)}
+        try:
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        except Exception:
+            ts = str(int(time.time()))
+        try:
+            scenario = str((payload or {}).get('scenario') or 'manual_test').strip().lower()
+            scenario = re.sub(r'[^a-z0-9._-]+', '_', scenario).strip('_') or 'manual_test'
+        except Exception:
+            scenario = 'manual_test'
+        target_dir = os.path.join(LOGS_DIR, 'ManualTests')
+        target = os.path.join(target_dir, f'ManualTest_{ts}_{scenario}.json')
+        try:
+            svc = getattr(self, 'storage_service', None)
+        except Exception:
+            svc = None
+        if svc is None and _StorageService is not None:
+            try:
+                svc = _StorageService()
+            except Exception:
+                svc = None
+        ok = False
+        try:
+            if svc is not None and hasattr(svc, 'write_json'):
+                ok = bool(svc.write_json(target, payload, ensure_ascii=False))
+            else:
+                os.makedirs(target_dir, exist_ok=True)
+                with open(target, 'w', encoding='utf-8') as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+                ok = True
+        except Exception as e:
+            return {'ok': False, 'error': f'{type(e).__name__}: {e}', 'path': target}
+        return {'ok': bool(ok), 'path': target}
+
+    def _create_manual_test_monitor(self):
+        """Pre-create Manual Test Monitor dialog window (hidden)."""
+        try:
+            if getattr(self, 'manual_test_monitor_win', None) is not None:
+                return
+        except Exception:
+            pass
+        try:
+            self.manual_test_monitor_state = {
+                'scenario': '',
+                'status': 'idle',
+                'summary': '-',
+                'events': [],
+            }
+        except Exception:
+            pass
+        try:
+            self.manual_test_monitor_win = webview.create_window(
+                "Comm-SCI Manual Test Monitor",
+                html=HTML_MANUAL_TEST_MONITOR,
+                width=760,
+                height=700,
+                resizable=True,
+                hidden=True,
+                on_top=False,
+                js_api=(getattr(self, 'panel_bridge', None) or self),
+            )
+        except Exception:
+            try:
+                self.manual_test_monitor_win = None
+            except Exception:
+                pass
+
+    def _manual_test_monitor_eval(self, js_code: str) -> bool:
+        try:
+            win = getattr(self, 'manual_test_monitor_win', None)
+            if win is None:
+                return False
+            win.evaluate_js(str(js_code or ''))
+            return True
+        except Exception:
+            return False
+
+    def manual_test_monitor_show(self, payload=None):
+        payload = payload or {}
+        try:
+            win = getattr(self, 'manual_test_monitor_win', None)
+            if win is None:
+                self._create_manual_test_monitor()
+                win = getattr(self, 'manual_test_monitor_win', None)
+            if win is None:
+                return {'ok': False, 'error': 'manual_test_monitor_win unavailable'}
+            try:
+                if hasattr(win, 'show'):
+                    win.show()
+            except Exception:
+                pass
+            try:
+                if hasattr(win, 'bring_to_front'):
+                    win.bring_to_front()
+            except Exception:
+                pass
+            # Push current state if available
+            try:
+                st = getattr(self, 'manual_test_monitor_state', None) or {}
+                import json as _json
+                self._manual_test_monitor_eval(f"mtmReplace({_json.dumps(st, ensure_ascii=False)});")
+            except Exception:
+                pass
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
+    def manual_test_monitor_hide(self):
+        try:
+            win = getattr(self, 'manual_test_monitor_win', None)
+            if win is None:
+                return {'ok': True, 'hidden': True, 'skipped': True}
+            try:
+                if hasattr(win, 'hide'):
+                    win.hide()
+                elif hasattr(win, 'minimize'):
+                    win.minimize()
+            except Exception:
+                pass
+            return {'ok': True, 'hidden': True}
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
+    def manual_test_monitor_reset(self, payload=None):
+        payload = payload or {}
+        try:
+            st = getattr(self, 'manual_test_monitor_state', None)
+            if not isinstance(st, dict):
+                self.manual_test_monitor_state = {}
+                st = self.manual_test_monitor_state
+            st['scenario'] = str(payload.get('scenario', '') or '')
+            st['status'] = str(payload.get('status', 'running') or 'running')
+            st['summary'] = payload.get('summary', '-')
+            st['events'] = []
+            try:
+                import json as _json
+                self._manual_test_monitor_eval(f"mtmReplace({_json.dumps(st, ensure_ascii=False)});")
+            except Exception:
+                pass
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
+    def manual_test_monitor_append(self, entry):
+        try:
+            e = entry if isinstance(entry, dict) else {'message': str(entry)}
+            st = getattr(self, 'manual_test_monitor_state', None)
+            if not isinstance(st, dict):
+                self.manual_test_monitor_state = {'events': []}
+                st = self.manual_test_monitor_state
+            if not isinstance(st.get('events'), list):
+                st['events'] = []
+            st['events'].append(dict(e))
+            if len(st['events']) > 1000:
+                st['events'] = st['events'][-1000:]
+            try:
+                import json as _json
+                self._manual_test_monitor_eval(f"mtmAppend({_json.dumps(e, ensure_ascii=False)});")
+            except Exception:
+                pass
+            return {'ok': True}
+        except Exception as ex:
+            return {'ok': False, 'error': f"{type(ex).__name__}: {ex}"}
+
+    def manual_test_monitor_set_header(self, payload=None):
+        payload = payload or {}
+        try:
+            st = getattr(self, 'manual_test_monitor_state', None)
+            if not isinstance(st, dict):
+                self.manual_test_monitor_state = {}
+                st = self.manual_test_monitor_state
+            for k in ('scenario', 'status', 'summary'):
+                if k in payload:
+                    st[k] = payload.get(k)
+            try:
+                import json as _json
+                self._manual_test_monitor_eval(f"mtmSetHeader({_json.dumps({'scenario': st.get('scenario',''), 'status': st.get('status',''), 'summary': st.get('summary','-')}, ensure_ascii=False)});")
+            except Exception:
+                pass
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
     def get_ui(self):
         """Return a UI snapshot for the Panel.
@@ -7775,9 +11029,7 @@ class CSCRefiner:
         # Model lists (offline-fast): use in-memory caches warmed from disk; no network here.
         try:
             curp = data.get('current_provider', 'gemini')
-            if curp == 'gemini':
-                data['available_models'] = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-pro']
-            elif curp in ('openrouter', 'huggingface'):
+            if curp in ('gemini', 'openrouter', 'huggingface'):
                 data['available_models'] = self.get_available_models(curp)
         except Exception:
             pass
@@ -7852,6 +11104,38 @@ class CSCRefiner:
         except Exception:
             pass
 
+
+        # Panel UX (Phase 1): derive toggle UI from a pure state snapshot.
+        try:
+            gs = getattr(self, 'gov_state', None)
+            state_snapshot = _PanelStateSnapshot(
+                comm_active=bool(getattr(gs, 'comm_active', False)),
+                sci_on=bool(getattr(gs, 'sci_pending', False) or getattr(gs, 'sci_active', False)),
+                overlay=str(getattr(gs, 'overlay', '') or '').strip().lower(),
+                color_on=((getattr(gs, 'color', 'on') or 'on') == 'on'),
+            )
+        except Exception:
+            state_snapshot = None
+
+        def _toggle_btn(label_prefix: str, is_on: bool, cmd_on: str, cmd_off: str, desc_on: str, desc_off: str):
+            if is_on:
+                return {"name": f"{label_prefix}: OFF", "cmd": cmd_off, "desc": desc_off}
+            return {"name": f"{label_prefix}: ON", "cmd": cmd_on, "desc": desc_on}
+
+        try:
+            if _panel_normalize_ui is not None and state_snapshot is not None:
+                data = _panel_normalize_ui(data, state_snapshot)
+            else:
+                # Fail-soft fallback if the pure UI module is unavailable.
+                comm_active = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
+                comm = data.get('comm')
+                if isinstance(comm, list) and ("Comm Start" in comm) and ("Comm Stop" in comm):
+                    comm2 = [c for c in comm if c not in ("Comm Start", "Comm Stop")]
+                    comm2.insert(0, _toggle_btn("Comm ⏻", comm_active, "Comm Start", "Comm Stop", "Start Comm Control Layer", "Stop Comm Control Layer"))
+                    data['comm'] = comm2
+        except Exception:
+            pass
+
 # Local chat log listing (for loader UI)
         try:
             res = self.list_chat_logs(limit=200)
@@ -7897,6 +11181,17 @@ class CSCRefiner:
                         self._hf_models_cache = [str(m).strip() for m in models if str(m).strip()]
             except Exception:
                 pass
+            # Gemini cache
+            try:
+                p = pr._gemini_cache_path() if hasattr(pr, '_gemini_cache_path') else ''
+                if p and os.path.exists(p):
+                    raw = Path(p).read_text(encoding='utf-8')
+                    obj = json.loads(raw) if raw else {}
+                    models = obj.get('models') or []
+                    if isinstance(models, list):
+                        self._gemini_models_cache = [str(m).strip() for m in models if str(m).strip()]
+            except Exception:
+                pass
         except Exception:
             return
 
@@ -7905,10 +11200,13 @@ class CSCRefiner:
         try:
             p = (provider or '').strip().lower()
             if p == 'gemini':
-                # Keep stable, small default list (non-authoritative). User can type a model manually.
+                cache = getattr(self, '_gemini_models_cache', None)
+                if isinstance(cache, list) and cache:
+                    return cache
                 return [
                     'gemini-2.0-flash',
                     'gemini-2.5-flash',
+                    'gemini-3-flash',
                     'gemini-1.5-pro',
                 ]
             if p == 'openrouter':
@@ -7942,6 +11240,10 @@ class CSCRefiner:
             base = globals().get('CHAT_LOG_DIR')
             if not base:
                 return {'ok': True, 'logs': []}
+            svc = getattr(self, 'storage_service', None)
+            if svc is not None and hasattr(svc, 'list_json_filenames'):
+                return {'ok': True, 'logs': svc.list_json_filenames(str(base), limit=lim)}
+
             p = pathlib.Path(base)
             if not p.exists() or not p.is_dir():
                 return {'ok': True, 'logs': []}
@@ -7949,7 +11251,6 @@ class CSCRefiner:
             for f in p.iterdir():
                 if f.is_file() and f.name.lower().endswith('.json'):
                     files.append(f.name)
-            # sort by name descending (timestamps in filename)
             files.sort(reverse=True)
             if len(files) > lim:
                 files = files[:lim]
@@ -7972,12 +11273,24 @@ class CSCRefiner:
             if not base:
                 return {'ok': False, 'error': 'chat_log_dir_missing'}
 
-            import os
-            base_abs = os.path.abspath(base)
-            candidate = os.path.abspath(os.path.join(base_abs, os.path.basename(name)))
-            if not candidate.startswith(base_abs):
-                return {'ok': False, 'error': 'path_traversal_blocked'}
-            if not os.path.exists(candidate):
+            svc = getattr(self, 'storage_service', None)
+            candidate = None
+            if svc is not None and hasattr(svc, 'safe_resolve_in_dir'):
+                candidate = svc.safe_resolve_in_dir(str(base), name)
+            if not candidate:
+                import os
+                base_abs = os.path.abspath(base)
+                candidate = os.path.abspath(os.path.join(base_abs, os.path.basename(name)))
+                if not candidate.startswith(base_abs):
+                    return {'ok': False, 'error': 'path_traversal_blocked'}
+
+            exists = False
+            if svc is not None and hasattr(svc, 'exists'):
+                exists = bool(svc.exists(candidate))
+            else:
+                import os
+                exists = os.path.exists(candidate)
+            if not exists:
                 return {'ok': False, 'error': 'file_not_found'}
 
             # Prefer bound method on self (unit tests), else call module helper.
@@ -8078,54 +11391,68 @@ class CSCRefiner:
                 pass
 
             # UI notice
-            try:
-                if self.main_win:
-                    self.main_win.evaluate_js(f"addMsg('sys', 'Active provider set to: {provider}.')")
-            except Exception:
-                pass
+            self._ui_add_system_message(f"Active provider set to: {provider}.")
 
             # Reconnect only for Gemini (session-based)
             if provider == 'gemini':
                 self._trigger_reconnect(f"Providerwechsel (Gemini)...")
             else:
                 # For stateless providers, just refresh panel
-                try:
-                    if self.panel_win:
-                        self.panel_win.evaluate_js('window.refresh_panel && window.refresh_panel()')
-                except Exception:
-                    pass
+                self._ui_refresh_panel()
         except Exception:
             pass
 
     def refresh_models(self):
-        """Refresh provider model list cache (OpenRouter/Hugging Face best-effort).
+        """Refresh provider model list cache (Gemini/OpenRouter/Hugging Face best-effort).
 
+        - Gemini: refresh cached model list from Google GenAI models API (best-effort).
         - OpenRouter: refresh cached /models list.
         - Hugging Face: tries /models; if unavailable, keeps config-defined list.
         """
         try:
             pr = getattr(self, 'provider_router', None)
-            curp = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else 'gemini')
+            psvc = getattr(self, 'provider_service', None)
+            if psvc is not None and hasattr(psvc, 'router') and pr is not None:
+                psvc.router = pr
+            curp = (self._active_provider() or 'gemini')
             curp = (curp or 'gemini').strip().lower()
 
+            if curp == 'gemini':
+                if psvc is not None:
+                    models, meta = psvc.get_cached_models('gemini', force_refresh=True)
+                else:
+                    models, meta = pr.get_gemini_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_gemini_models_cached') else ([], {})
+                try:
+                    self._gemini_models_cache = list(models) if isinstance(models, list) else []
+                except Exception:
+                    pass
+                self._ui_refresh_panel()
+                self._ui_add_system_message(
+                    f"Gemini models refreshed: {len(models)} (source: {meta.get('source','?')})."
+                )
+                return {'status': True, 'provider': 'gemini', 'count': len(models), 'meta': meta}
+
             if curp == 'openrouter':
-                models, meta = pr.get_openrouter_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_openrouter_models_cached') else ([], {})
+                if psvc is not None:
+                    models, meta = psvc.get_cached_models('openrouter', force_refresh=True)
+                else:
+                    models, meta = pr.get_openrouter_models_cached(force_refresh=True) if pr is not None and hasattr(pr, 'get_openrouter_models_cached') else ([], {})
                 try:
                     self._openrouter_models_cache = list(models) if isinstance(models, list) else []
                 except Exception:
                     pass
-                try:
-                    if self.main_win:
-                        self.main_win.evaluate_js(f"addMsg('sys', 'OpenRouter models refreshed: {len(models)} (source: {meta.get('source','?')}).')")
-                except Exception:
-                    pass
+                self._ui_add_system_message(
+                    f"OpenRouter models refreshed: {len(models)} (source: {meta.get('source','?')})."
+                )
                 return {'status': True, 'provider': 'openrouter', 'count': len(models), 'meta': meta}
 
             if curp in ('huggingface', 'hf'):
                 models = []
                 meta = {'source': 'none'}
                 try:
-                    if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
+                    if psvc is not None:
+                        models, meta = psvc.get_cached_models('huggingface', force_refresh=True)
+                    elif pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
                         models, meta = pr.get_huggingface_models_cached(force_refresh=True)
                 except Exception:
                     models = []
@@ -8135,19 +11462,11 @@ class CSCRefiner:
                     self._hf_models_cache = list(models) if isinstance(models, list) else []
                 except Exception:
                     pass
-                try:
-                    if getattr(self, 'panel_win', None):
-                        self.panel_win.evaluate_js('window.refresh_panel && window.refresh_panel()')
-                except Exception:
-                    pass
+                self._ui_refresh_panel()
                 # UI notice
-                try:
-                    if self.main_win:
-                        self.main_win.evaluate_js(
-                            f"addMsg('sys', 'Hugging Face models refreshed: {len(models)} (source: {meta.get('source','?')}).')"
-                        )
-                except Exception:
-                    pass
+                self._ui_add_system_message(
+                    f"Hugging Face models refreshed: {len(models)} (source: {meta.get('source','?')})."
+                )
                 return {'status': True, 'provider': 'huggingface', 'count': len(models), 'meta': meta}
 
             return {'status': True, 'provider': curp, 'message': 'No refresh needed.'}
@@ -8281,16 +11600,8 @@ class CSCRefiner:
         if provider == 'gemini':
             self._trigger_reconnect(f"Modellwechsel ({model})...")
         else:
-            try:
-                if self.main_win:
-                    self.main_win.evaluate_js(f"addMsg('sys', 'Model set to: {model} (provider: {provider}).')")
-            except Exception:
-                pass
-            try:
-                if self.panel_win:
-                    self.panel_win.evaluate_js('window.refresh_panel && window.refresh_panel()')
-            except Exception:
-                pass
+            self._ui_add_system_message(f"Model set to: {model} (provider: {provider}).")
+            self._ui_refresh_panel()
 
     def set_answer_language(self, lang: str):
         """Set desired language for the LLM answer content only (en/de).
@@ -8311,23 +11622,14 @@ class CSCRefiner:
                     cfg.set_answer_language(lang)
             except Exception:
                 pass
-            try:
-                if self.main_win:
-                    self.main_win.evaluate_js(f"addMsg('sys', 'Answer language (LLM) set to: {lang}.')")
-            except Exception:
-                pass
-            try:
-                if self.panel_win:
-                    self.panel_win.evaluate_js('window.refresh_panel && window.refresh_panel()')
-            except Exception:
-                pass
+            self._ui_add_system_message(f"Answer language (LLM) set to: {lang}.")
+            self._ui_refresh_panel()
         except Exception:
             pass
 
     def _trigger_reconnect(self, msg):
         self.ready_status = {"status": False, "msg": msg}
-        if self.main_win:
-            self.main_win.evaluate_js(f"addMsg('sys', '{msg} Restarting session...')")
+        self._ui_add_system_message(f"{msg} Restarting session...")
         threading.Thread(target=self._reconnect_bg).start()
 
     def _reconnect_bg(self):
@@ -8529,6 +11831,7 @@ class CSCRefiner:
                 gov_obj = getattr(self, 'gov', None) or globals().get('gov')
                 if gov_obj is not None:
                     setattr(gov_obj, 'qc_overrides', dict(clean))
+                    gov.runtime_state = self.gov_state
                     setattr(gov_obj, 'runtime_state', self.gov_state)
             except Exception:
                 pass
@@ -8841,49 +12144,55 @@ class CSCRefiner:
             chat_name = f"Log_{ts}.json"
             chat_path = os.path.join(CHAT_LOG_DIR, chat_name)
             try:
-                with open(chat_path, "w", encoding="utf-8") as f:
-                    _chat_payload = {"meta": WRAPPER_NAME, "model": cfg_get_model(), "history": self.history}
-                    # --- B8: Persist provider/model + fork metadata (additive; backwards compatible) ---
-                    try:
-                        pr = getattr(self, 'provider_router', None)
-                        _p = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else None)
-                        _p = (_p or (getattr(cfg, 'get_active_provider', lambda: 'gemini')() or 'gemini')).strip().lower()
-                    except Exception:
-                        _p = 'gemini'
-                    try:
-                        _m = ''
-                        if hasattr(cfg, 'get_provider_model'):
-                            _m = str(cfg.get_provider_model(_p) or '').strip()
-                        if not _m:
-                            _m = str(cfg_get_model() or '').strip()
-                    except Exception:
+                _chat_payload = {"meta": WRAPPER_NAME, "model": cfg_get_model(), "history": self.history}
+                # --- B8: Persist provider/model + fork metadata (additive; backwards compatible) ---
+                try:
+                    pr = getattr(self, 'provider_router', None)
+                    _p = (pr.get_active_provider() if pr is not None and hasattr(pr, 'get_active_provider') else None)
+                    _p = (_p or (getattr(cfg, 'get_active_provider', lambda: 'gemini')() or 'gemini')).strip().lower()
+                except Exception:
+                    _p = 'gemini'
+                try:
+                    _m = ''
+                    if hasattr(cfg, 'get_provider_model'):
+                        _m = str(cfg.get_provider_model(_p) or '').strip()
+                    if not _m:
                         _m = str(cfg_get_model() or '').strip()
-                    try:
-                        _chat_payload["active_provider"] = _p
-                        _chat_payload["active_model"] = _m
-                        _chat_payload["provider_model_history"] = list(getattr(self, "provider_model_history", []) or [])
-                        _chat_payload["forked_from_log_path"] = getattr(self, "forked_from_log_path", None)
-                        _chat_payload["fork_parent_trace_id"] = getattr(self, "fork_parent_trace_id", None)
-                    except Exception:
-                        pass
-                    # --- /B8 ---
-                    # --- B9: Ensure trace_id/session_id persisted in chat logs (for fork provenance) ---
-                    try:
-                        import uuid as _uuid
-                        _sid = str(getattr(self, "session_id", "") or "").strip()
-                        if not _sid:
-                            _sid = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + _uuid.uuid4().hex[:6]
-                            self.session_id = _sid
-                        _tid = str(getattr(self, "trace_id", "") or "").strip()
-                        if not _tid:
-                            _tid = _sid
-                            self.trace_id = _tid
-                        _chat_payload["session_id"] = _sid
-                        _chat_payload["trace_id"] = _tid
-                    except Exception:
-                        pass
-                    # --- /B9 ---
-                    json.dump(_chat_payload, f, indent=2)
+                except Exception:
+                    _m = str(cfg_get_model() or '').strip()
+                try:
+                    _chat_payload["active_provider"] = _p
+                    _chat_payload["active_model"] = _m
+                    _chat_payload["provider_model_history"] = list(getattr(self, "provider_model_history", []) or [])
+                    _chat_payload["forked_from_log_path"] = getattr(self, "forked_from_log_path", None)
+                    _chat_payload["fork_parent_trace_id"] = getattr(self, "fork_parent_trace_id", None)
+                except Exception:
+                    pass
+                # --- /B8 ---
+                # --- B9: Ensure trace_id/session_id persisted in chat logs (for fork provenance) ---
+                try:
+                    import uuid as _uuid
+                    _sid = str(getattr(self, "session_id", "") or "").strip()
+                    if not _sid:
+                        _sid = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + _uuid.uuid4().hex[:6]
+                        self.session_id = _sid
+                    _tid = str(getattr(self, "trace_id", "") or "").strip()
+                    if not _tid:
+                        _tid = _sid
+                        self.trace_id = _tid
+                    _chat_payload["session_id"] = _sid
+                    _chat_payload["trace_id"] = _tid
+                except Exception:
+                    pass
+                # --- /B9 ---
+                svc = getattr(self, 'storage_service', None)
+                wrote = False
+                if svc is not None and hasattr(svc, 'write_json'):
+                    wrote = bool(svc.write_json(chat_path, _chat_payload, indent=2, ensure_ascii=True))
+                if not wrote:
+                    os.makedirs(CHAT_LOG_DIR, exist_ok=True)
+                    with open(chat_path, "w", encoding="utf-8") as f:
+                        json.dump(_chat_payload, f, indent=2)
                 print(f"Exportiert (Chat): {chat_path}")
             except Exception as e:
                 print(f"[System] Export-Error (Chat): {e}")
@@ -9029,9 +12338,14 @@ class CSCRefiner:
         if audit_path is None:
             audit_path = os.path.join(AUDIT_LOG_DIR, f"Audit_{ts}.json")
         try:
-            os.makedirs(AUDIT_LOG_DIR, exist_ok=True)
-            with open(audit_path, 'w', encoding='utf-8') as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
+            svc = getattr(self, 'storage_service', None)
+            wrote = False
+            if svc is not None and hasattr(svc, 'write_json'):
+                wrote = bool(svc.write_json(audit_path, payload, indent=2, ensure_ascii=False))
+            if not wrote:
+                os.makedirs(AUDIT_LOG_DIR, exist_ok=True)
+                with open(audit_path, 'w', encoding='utf-8') as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
             print(f"Exportiert (Audit v2): {audit_path}")
         except Exception as e:
             print(f"[Export] Audit v2 write failed: {e}")
@@ -9040,9 +12354,15 @@ class CSCRefiner:
         if not audit_only:
             chat_path = os.path.join(CHAT_LOG_DIR, f"Log_{ts}.json")
             try:
-                os.makedirs(CHAT_LOG_DIR, exist_ok=True)
-                with open(chat_path, 'w', encoding='utf-8') as f:
-                    json.dump({'meta': WRAPPER_NAME, 'model': cfg_get_model(), 'history': getattr(self, 'history', []) or []}, f, indent=2, ensure_ascii=False)
+                chat_payload = {'meta': WRAPPER_NAME, 'model': cfg_get_model(), 'history': getattr(self, 'history', []) or []}
+                svc = getattr(self, 'storage_service', None)
+                wrote = False
+                if svc is not None and hasattr(svc, 'write_json'):
+                    wrote = bool(svc.write_json(chat_path, chat_payload, indent=2, ensure_ascii=False))
+                if not wrote:
+                    os.makedirs(CHAT_LOG_DIR, exist_ok=True)
+                    with open(chat_path, 'w', encoding='utf-8') as f:
+                        json.dump(chat_payload, f, indent=2, ensure_ascii=False)
             except Exception as e:
                 print(f"[Export] Chat write failed: {e}")
 
@@ -9064,13 +12384,26 @@ def set_api_key_for_provider(self, provider: str, api_key: str, *, persist: bool
 
         # Determine path
         target = write_path or os.path.join(CONFIG_DIR, 'Comm-SCI-API-Keys.json')
+        _storage = None
+        try:
+            _storage = getattr(self, 'storage_service', None)
+        except Exception:
+            _storage = None
+        if _storage is None and _StorageService is not None:
+            try:
+                _storage = _StorageService()
+            except Exception:
+                _storage = None
         os.makedirs(os.path.dirname(target), exist_ok=True)
 
         data = {}
         if os.path.exists(target):
             try:
-                with open(target, 'r', encoding='utf-8') as f:
-                    data = json.load(f) or {}
+                if _storage is not None and hasattr(_storage, 'read_json'):
+                    data = _storage.read_json(target) or {}
+                else:
+                    with open(target, 'r', encoding='utf-8') as f:
+                        data = json.load(f) or {}
             except Exception:
                 data = {}
 
@@ -9089,8 +12422,14 @@ def set_api_key_for_provider(self, provider: str, api_key: str, *, persist: bool
         # Do NOT write secrets anywhere else (no audit, no logs).
 
         if persist:
-            with open(target, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            if _storage is not None and hasattr(_storage, 'write_json'):
+                ok = bool(_storage.write_json(target, data, indent=2, ensure_ascii=False))
+                if not ok:
+                    with open(target, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+            else:
+                with open(target, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
 
         return {'ok': True, 'path': target, 'provider': p}
     except Exception as e:
@@ -9212,18 +12551,15 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
             data['current_model'] = cm
         except Exception:
             pass
-        # Available models list
+        # Available models list (must stay fast and local: no network here)
         try:
             models = []
             if curp == 'gemini':
-                models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3-flash', 'gemini-1.5-pro']
+                # Use warmed in-memory cache only; avoid live fetch in get_ui().
+                models = self.get_available_models(curp)
             elif curp == 'openrouter':
-                pr = getattr(self, 'provider_router', None)
-                if pr is not None and hasattr(pr, 'get_openrouter_models_cached'):
-                    models, meta = pr.get_openrouter_models_cached(force_refresh=False)
-                    data['openrouter_models_meta'] = meta
-                else:
-                    models = []
+                # Use warmed in-memory cache only; avoid live fetch in get_ui().
+                models = self.get_available_models(curp)
             elif curp == 'huggingface':
                 pr = getattr(self, 'provider_router', None)
                 models = []
@@ -9232,29 +12568,10 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
                 data['hf_catalog_default_top_n'] = int(getattr(self, 'hf_catalog_top_n', 200) or 200)
                 data['hf_catalog_default_provider_filter'] = (getattr(self, 'hf_catalog_provider_filter', 'all') or 'all')
 
-                # 1) Prefer HF Hub catalog (cached) when available (default: Top 200, all providers)
-                try:
-                    if pr is not None and hasattr(pr, 'get_huggingface_catalog_cached'):
-                        cat_models, cat_meta = pr.get_huggingface_catalog_cached(top_n=int(getattr(self, 'hf_catalog_top_n', int(data.get('hf_catalog_default_top_n', 200) or 200)) or 200),
-                                                                               provider_filter=(getattr(self, 'hf_catalog_provider_filter', 'all') or 'all'),
-                                                                               force_refresh=False)
-                        if cat_models:
-                            models = cat_models
-                            data['huggingface_catalog_meta'] = cat_meta
-                except Exception:
-                    pass
+                # 1) Use warmed in-memory cache only; avoid live fetch in get_ui().
+                models = self.get_available_models(curp)
 
-                # 2) Otherwise: HF router /models cache (may be unavailable)
-                if not models:
-                    meta = {'source': 'none'}
-                    try:
-                        if pr is not None and hasattr(pr, 'get_huggingface_models_cached'):
-                            models, meta = pr.get_huggingface_models_cached(force_refresh=False)
-                            data['huggingface_models_meta'] = meta
-                    except Exception:
-                        models = []
-
-                # 3) Fallback: configured HF models list
+                # 2) Fallback: configured HF models list (local config/key file)
                 if not models:
                     try:
                         if pr is not None and hasattr(pr, 'get_huggingface_models_from_config'):
@@ -9275,9 +12592,14 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
         return data
     
     def remote_cmd(self, cmd):
-        if self.main_win:
-            safe = cmd.replace("'", "\'").replace('"', '\\"')
-            self.main_win.evaluate_js(f"remoteInput('{safe}')")
+        """Inject a command into the main UI input and trigger send() via JS."""
+        if not getattr(self, 'main_win', None):
+            return {'ok': False, 'error': 'no_main_win'}
+        try:
+            cmd_s = str(cmd or '')
+            return {'ok': bool(self._ui_remote_input(cmd_s))}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)}
 
 
 
@@ -9370,6 +12692,13 @@ def _safe_html(self, context: str, fn):
             return _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error')
 
 
+def _build_profile_switch_audit_line(command: str, from_profile: str, to_profile: str) -> str:
+    return (
+        f"Profile-Switch-Audit: command={command} · from={from_profile} · "
+        f"to={to_profile} · rule=explicit-standalone-only"
+    )
+
+
 def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
     """Central deterministic command router (no LLM calls).
 
@@ -9443,47 +12772,119 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
             bot_msgs = []
 
         sample = bot_msgs[-n:] if n > 0 else []
-
+        # Build a best-effort mapping from each bot message to the immediately preceding user input.
+        # This allows the scan to reliably classify command responses without depending on model output text.
         rows = []
-        for i, msg_obj in enumerate(sample, 1):
-            txt = (msg_obj or {}).get('content', '') or ''
-            vios = []
-
-            # QC footer present?
-            if 'QC-Matrix:' not in txt and 'QC:' not in txt:
-                vios.append('Missing QC footer')
-
-            # Self-Debunking required?
+        if _compliance_scan is not None:
             try:
-                prof_now = getattr(getattr(self, 'gov_state', None), 'active_profile', '') or 'Standard'
-                sd_msg = gov.check_self_debunking(txt, prof_now)
-                if sd_msg:
-                    vios.append(sd_msg)
+                _hist = (getattr(self, 'history', []) or [])
+                rows = _compliance_scan.scan_message_compliance_best_effort(
+                    sample=sample,
+                    history=_hist,
+                    build_route_ctx=_build_route_ctx,
+                    api=self,
+                    gov=gov,
+                )
             except Exception:
-                pass
-
-            # Verification Route Gate
+                rows = []
+        if not rows:
+            prev_user_by_bot_id = {}
             try:
-                vr_msg = gov.check_verification_route_gate(txt)
-                if vr_msg:
-                    vios.append(vr_msg)
+                _hist = (getattr(self, 'history', []) or [])
+                for _ix, _m in enumerate(_hist):
+                    if (_m or {}).get('role') != 'bot':
+                        continue
+                    _prev_user = ''
+                    for _jx in range(_ix - 1, -1, -1):
+                        _pm = _hist[_jx] or {}
+                        if (_pm.get('role') or '') in ('user', 'human'):
+                            _prev_user = str(_pm.get('content', '') or '')
+                            break
+                    prev_user_by_bot_id[id(_m)] = _prev_user
             except Exception:
-                pass
+                prev_user_by_bot_id = {}
 
-            # SCI Trace contract (if a variant is active)
-            try:
-                vk = getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''
-                if vk:
-                    if 'SCI Trace' not in txt:
-                        vios.append('Missing SCI Trace block')
-            except Exception:
-                pass
 
-            status = '✓ Compliant' if not vios else '⚠ ' + '; '.join(vios)
-            rows.append((i, status))
+            rows = []
+            for i, msg_obj in enumerate(sample, 1):
+                txt = (msg_obj or {}).get('content', '') or ''
+                vios = []
+
+                # Command responses are deterministic UI/control outputs; they must not be
+                # evaluated against Self-Debunking / QC footer / SCI Trace contracts.
+                # Classification is based primarily on the preceding user message (Comm ...),
+                # and only secondarily on the assistant's first line.
+                try:
+                    prev_user = (prev_user_by_bot_id.get(id(msg_obj), '') or '').lstrip()
+                    prev_user_first = ''
+                    for _ln in str(prev_user).splitlines():
+                        if _ln.strip():
+                            prev_user_first = _ln.strip()
+                            break
+                    first_line = ''
+                    for _ln in str(txt).splitlines():
+                        if _ln.strip():
+                            first_line = _ln.strip()
+                            break
+                    ctx_turn = _build_route_ctx(self, user_raw=prev_user_first, is_command=prev_user_first.startswith('Comm '))
+                    is_cmd_msg = bool(ctx_turn.get('is_command'))
+                    if not is_cmd_msg:
+                        is_cmd_msg = bool(re.match(r"^(?:Command executed:\s+)?(?:Comm\s+\w+|Profile\s+\w+|SCI\s+(?:on|off|menu)|QC\s+Override)\b", first_line))
+                except Exception:
+                    is_cmd_msg = False
+
+                # QC footer present? (skip for command responses)
+                if (not is_cmd_msg) and ('QC-Matrix:' not in txt and 'QC:' not in txt):
+                    vios.append('Missing QC footer')
+
+                # Self-Debunking required? (skip for command responses)
+                try:
+                    prof_now = getattr(getattr(self, 'gov_state', None), 'active_profile', '') or 'Standard'
+                    if not is_cmd_msg:
+                        sd_msg = gov.check_self_debunking(txt, prof_now)
+                        if sd_msg:
+                            vios.append(sd_msg)
+                except Exception:
+                    pass
+
+                # Verification Route Gate
+                try:
+                    vr_msg = gov.check_verification_route_gate(txt)
+                    if vr_msg:
+                        vios.append(vr_msg)
+                except Exception:
+                    pass
+
+                # SCI Trace contract (if a variant is active)
+                try:
+                    vk = getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''
+                    if vk and not is_cmd_msg:
+                        if 'SCI Trace' not in txt:
+                            vios.append('Missing SCI Trace block')
+                except Exception:
+                    pass
+
+                status = '✓ Compliant' if not vios else '⚠ ' + '; '.join(vios)
+                rows.append((i, status))
 
         # Render
         msg = "Audit exported."
+
+        # Module dependency warnings (Stage 3d)
+        dep_warn_html = ""
+        try:
+            ds = getattr(self, 'deps_status', {}) or {}
+            missing = [k for k in ('auditstream','rendering_utils','compliance_scan') if not (ds.get(k, (False,''))[0])]
+            if missing:
+                dep_warn_html = (
+                    "<div style='margin-top:8px; padding:8px; border:1px solid #d77; background:#fff3f3; border-radius:8px;'>"
+                    "<b>Warning:</b> Optional modules missing; fallback paths active: "
+                    + html.escape(", ".join(missing))
+                    + "</div>"
+                )
+        except Exception:
+            dep_warn_html = ""
+
         detail = ""
         rel_audit = ""
         if audit_path:
@@ -9537,7 +12938,7 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
 
         html_content = (
             "<div style='border:1px solid #bbb; background:#f7f7f7; padding:10px; border-radius:10px; margin:8px 0;'>"
-            f"<b>Comm Audit</b><br>{msg}{detail}{last_line}{tbl}</div>"
+            f"<b>Comm Audit</b><br>{msg}{detail}{dep_warn_html}{last_line}{tbl}</div>"
         )
         html_content += f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>'
 
@@ -9592,6 +12993,7 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
 
         return {"html": html_content, "csc": None}
 
+
     # SCI menu trigger (explicit only)
     if cmd in ("SCI on", "SCI menu"):
         try:
@@ -9610,7 +13012,7 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
         html_content += f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>'
 
         try:
-            self.history.append({"role": "bot", "content": "SCI menu", "ts": datetime.now().isoformat(), "csc": None})
+            self.history.append({"role": "bot", "content": _safe_preview_text(re.sub(r"<[^>]+>", "", html_content), 2000) or "SCI menu", "ts": datetime.now().isoformat(), "csc": None})
         except Exception:
             pass
 
@@ -9627,7 +13029,14 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
 # ----------------------------
 
 
-def _openrouter_friendly_http_error(status_code: int, raw_body: str, *, lang: str = "de", tz: str = "Europe/Berlin") -> str:
+def _openrouter_friendly_http_error(
+    status_code: int,
+    raw_body: str,
+    *,
+    lang: str = "de",
+    tz: str = "Europe/Berlin",
+    provider_label: str = "OpenRouter",
+) -> str:
     """Translate common OpenRouter HTTP errors into human-friendly messages.
 
     Notes:
@@ -9739,10 +13148,63 @@ def _openrouter_friendly_http_error(status_code: int, raw_body: str, *, lang: st
                     role = 'user'
 
                 if role == 'bot':
+
+                    # If the loaded history contains a legacy plaintext 'Comm Config' dump (very large JSON),
+                    # re-render it deterministically as collapsible HTML to keep the UI readable and within margins.
                     try:
-                        import markdown as _markdown
-                        _h = _markdown.markdown(str(content), extensions=['extra', 'codehilite'])
-                        _h = sanitize_html(_h)
+                        _c = str(content)
+                        if 'Loaded rules file:' in _c and ('QC-Matrix:' in _c or 'QC Matrix:' in _c):
+                            # Heuristic: first line looks like "<sys> v<ver> · Loaded rules file: <file>"
+                            _lines = _c.splitlines()
+                            if _lines and 'Loaded rules file:' in _lines[0]:
+                                # Find JSON start (first line that starts with '{' or '[' after header)
+                                _json_i = None
+                                for _i in range(1, len(_lines)):
+                                    _ls = _lines[_i].lstrip()
+                                    if _ls.startswith('{') or _ls.startswith('['):
+                                        _json_i = _i
+                                        break
+                                # Find QC footer line near the end
+                                _qc_i = None
+                                for _i in range(len(_lines)-1, -1, -1):
+                                    _s = _lines[_i].strip()
+                                    if _s.startswith('QC-Matrix:') or _s.startswith('QC Matrix:'):
+                                        _qc_i = _i
+                                        break
+                                if _json_i is not None:
+                                    _status = _lines[0].strip()
+                                    _qc = _lines[_qc_i].strip() if _qc_i is not None else ''
+                                    _json_end = _qc_i if (_qc_i is not None and _qc_i > _json_i) else len(_lines)
+                                    _raw_json = "\n".join(_lines[_json_i:_json_end]).strip()
+                                    # Render (language-aware summary)
+                                    _ui_lang = self._lang()
+                                    _summary = 'Raw JSON anzeigen' if _ui_lang == 'de' else 'Show raw JSON'
+                                    _minor = (
+                                        'Read-only view of the full governance configuration (deterministic from JSON, no LLM).'
+                                        if _ui_lang != 'de'
+                                        else 'Nur-Lese-Ansicht der vollständigen Governance-Konfiguration (deterministisch aus JSON, ohne LLM).'
+                                    )
+                                    content = (
+                                        '<div class="comm-help comm-config">'
+                                        f'<div class="help-status">{html.escape(_status)}</div>'
+                                        f'<div class="minor">{html.escape(_minor)}</div>'
+                                        '<details class="config-details">'
+                                        f'<summary>{html.escape(_summary)}</summary>'
+                                        f'<pre class="raw-json">{html.escape(_raw_json)}</pre>'
+                                        '</details>'
+                                        + (f"<div style='margin-top:10px'>{html.escape(_qc)}</div>" if _qc else '')
+                                        + '</div>'
+                                    )
+                    except Exception:
+                        pass
+                    try:
+                        _c = str(content)
+                        if _c.lstrip().startswith('<'):
+                            _h = sanitize_html(_c)
+                        else:
+                            import markdown as _markdown
+                            _h = _markdown.markdown(_c, extensions=['extra', 'codehilite'])
+                            _h = sanitize_html(_h)
                     except Exception:
                         _h = sanitize_html(html.escape(str(content)))
                     ui_hist.append({'role': 'bot', 'html': _h})
@@ -9814,14 +13276,16 @@ def _openrouter_friendly_http_error(status_code: int, raw_body: str, *, lang: st
     # Human-friendly mapping
     lower = (msg or "").lower()
 
+    pl = (provider_label or "OpenRouter").strip()
+
     if int(ecode) == 429:
         quota = _fmt_quota()
         if "free-models-per-day" in lower:
             if lang == "en":
-                head = "OpenRouter limit reached (free models per day)."
+                head = f"{pl} limit reached (free models per day)."
                 tail = "Options: wait for reset, use a paid model/provider, or add credits."
             else:
-                head = "OpenRouter-Limit erreicht (Free-Modelle pro Tag)."
+                head = f"{pl}-Limit erreicht (Free-Modelle pro Tag)."
                 tail = "Optionen: bis zum Reset warten, anderes Modell/Provider nutzen oder Credits hinzufügen."
             parts = [head]
             if quota:
@@ -9829,10 +13293,10 @@ def _openrouter_friendly_http_error(status_code: int, raw_body: str, *, lang: st
             return " ".join(parts + [tail]).strip() + " [[ACTION:SWITCH_FREE_MODEL]]" + f" [HTTP 429]"
         else:
             if lang == "en":
-                head = "OpenRouter rate limit reached."
+                head = f"{pl} rate limit reached."
                 tail = "Options: wait briefly and retry, or switch model/provider."
             else:
-                head = "OpenRouter-Rate-Limit erreicht."
+                head = f"{pl}-Rate-Limit erreicht."
                 tail = "Optionen: kurz warten und erneut versuchen oder Modell/Provider wechseln."
             parts = [head]
             if quota:
@@ -9843,36 +13307,36 @@ def _openrouter_friendly_http_error(status_code: int, raw_body: str, *, lang: st
 
     if int(ecode) == 404 and ("privacy" in lower or "data policy" in lower or "no endpoints found" in lower):
         if lang == "en":
-            return ("OpenRouter cannot route your request because your Privacy/Data-Policy settings exclude all endpoints "
+            return (f"{pl} cannot route your request because your Privacy/Data-Policy settings exclude all endpoints "
                     "for this model. Check OpenRouter → Settings → Privacy (and any provider restrictions). "
                     f"[HTTP {status_code}]")
-        return ("OpenRouter kann nicht routen, weil deine Privacy/Data-Policy-Einstellungen alle passenden Endpoints "
+        return (f"{pl} kann nicht routen, weil deine Privacy/Data-Policy-Einstellungen alle passenden Endpoints "
                 "für dieses Modell ausschließen. Prüfe OpenRouter → Settings → Privacy (und ggf. Provider-Restrictions). "
                 f"[HTTP {status_code}]")
 
     if int(ecode) == 402 or "insufficient credits" in lower or "add credits" in lower:
         if lang == "en":
-            return ("OpenRouter: insufficient credits for this request. Add credits or choose a free/eligible model. "
+            return (f"{pl}: insufficient credits for this request. Add credits or choose a free/eligible model. "
                     f"[HTTP {status_code}]")
-        return ("OpenRouter: Nicht genügend Guthaben für diese Anfrage. Guthaben hinzufügen oder ein passendes "
+        return (f"{pl}: Nicht genügend Guthaben für diese Anfrage. Guthaben hinzufügen oder ein passendes "
                 "choose a (possibly free) model. "
                 f"[HTTP {status_code}]")
 
     if int(ecode) in (401, 403):
         if lang == "en":
-            return ("OpenRouter authentication/permission error. Check your API key and account settings. "
+            return (f"{pl} authentication/permission error. Check your API key and account settings. "
                     f"[HTTP {status_code}]")
-        return ("OpenRouter: auth/permission error. Check API key and account/privacy settings. "
+        return (f"{pl}: auth/permission error. Check API key and account/privacy settings. "
                 f"[HTTP {status_code}]")
 
     # Fallback
     if msg:
         if lang == "en":
-            return f"OpenRouter error: {msg} [HTTP {status_code}]"
-        return f"OpenRouter error: {msg} [HTTP {status_code}]"
+            return f"{pl} error: {msg} [HTTP {status_code}]"
+        return f"{pl} error: {msg} [HTTP {status_code}]"
     if lang == "en":
-        return f"OpenRouter request failed. [HTTP {status_code}]"
-    return f"OpenRouter-Anfrage fehlgeschlagen. [HTTP {status_code}]"
+        return f"{pl} request failed. [HTTP {status_code}]"
+    return f"{pl}-Anfrage fehlgeschlagen. [HTTP {status_code}]"
 
 class OpenAICompatibleClient:
     """Minimal OpenAI-compatible chat client (used for OpenRouter).
@@ -9940,7 +13404,8 @@ class OpenAICompatibleClient:
                     except Exception:
                         pass
                     continue
-                raise RuntimeError(_openrouter_friendly_http_error(int(code or 0), raw_err, lang=lang))
+                _pl = "Hugging Face" if ("huggingface" in str(self.base_url or "").lower()) else "OpenRouter"
+                raise RuntimeError(_openrouter_friendly_http_error(int(code or 0), raw_err, lang=lang, provider_label=_pl))
             except Exception as e:
                 if attempt < maxr:
                     try:
@@ -10045,7 +13510,8 @@ class OpenAICompatibleClient:
                 raw_err = e.read().decode('utf-8', errors='replace')
             except Exception:
                 raw_err = str(e)
-            raise RuntimeError(_openrouter_friendly_http_error(int(getattr(e,'code',0) or 0), raw_err, lang=lang))
+            _pl = "Hugging Face" if ("huggingface" in str(self.base_url or "").lower()) else "OpenRouter"
+            raise RuntimeError(_openrouter_friendly_http_error(int(getattr(e,'code',0) or 0), raw_err, lang=lang, provider_label=_pl))
         except Exception as e:
             raise RuntimeError(f'OpenAICompatibleClient error: {e}')
 
@@ -10153,7 +13619,7 @@ class ProviderRouter:
             # 3) key file fallback (provider-structured or legacy)
             if not key and os.path.exists(KEYS_PATH):
                 try:
-                    data = json.loads(Path(KEYS_PATH).read_text(encoding='utf-8')) or {}
+                    data = _storage_read_json(KEYS_PATH) or {}
                     if isinstance(data, dict):
                         provs2 = data.get('providers')
                         if isinstance(provs2, dict):
@@ -10201,7 +13667,7 @@ class ProviderRouter:
             # 3) key file fallback
             if not key and os.path.exists(KEYS_PATH):
                 try:
-                    data = json.loads(Path(KEYS_PATH).read_text(encoding='utf-8')) or {}
+                    data = _storage_read_json(KEYS_PATH) or {}
                     if isinstance(data, dict):
                         provs2 = data.get('providers')
                         if isinstance(provs2, dict):
@@ -10216,6 +13682,157 @@ class ProviderRouter:
             return OpenAICompatibleClient(base_url=base_url, api_key=key, app_referrer='', app_title='Comm-SCI Desktop')
         except Exception:
             return None
+
+    def _gemini_cache_path(self) -> str:
+        try:
+            return os.path.join(CONFIG_DIR, 'gemini_models_cache.json')
+        except Exception:
+            return 'gemini_models_cache.json'
+
+    def _gemini_default_models(self) -> list:
+        models = []
+        try:
+            m = self.get_provider_model('gemini', fallback_model='').strip()
+            if m:
+                models.append(m)
+        except Exception:
+            pass
+        for m in ('gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3-flash', 'gemini-1.5-pro'):
+            models.append(m)
+        seen = set()
+        uniq = []
+        for m in models:
+            s = str(m or '').strip()
+            if not s:
+                continue
+            k = s.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(s)
+        return uniq
+
+    def _normalize_gemini_model_name(self, raw_name: str) -> str:
+        s = str(raw_name or '').strip()
+        if s.startswith('models/'):
+            s = s.split('/', 1)[1].strip()
+        return s
+
+    def get_gemini_models_cached(self, *, force_refresh: bool = False):
+        """Return (models, meta) using a local cache plus best-effort live Gemini model listing.
+
+        meta: {'source': 'cache'|'cache-stale'|'live'|'fallback'|'none', 'age_s': int, 'count': int}
+        """
+        cache_path = self._gemini_cache_path()
+
+        cache_minutes = 30
+        try:
+            provs = (self.cfg.config or {}).get('providers') or {}
+            pconf = (provs.get('gemini') or {}) if isinstance(provs, dict) else {}
+            cache_minutes = int((pconf.get('model_cache_minutes') or 30) or 30)
+        except Exception:
+            cache_minutes = 30
+
+        now = time.time()
+        cached = None
+        try:
+            if os.path.exists(cache_path):
+                raw = _storage_read_text(cache_path, encoding='utf-8')
+                cached = json.loads(raw) if raw else None
+        except Exception:
+            cached = None
+
+        def _extract_models(obj):
+            out = []
+            try:
+                src = (obj or {}).get('models') or []
+                if isinstance(src, list):
+                    for m in src:
+                        mm = self._normalize_gemini_model_name(m)
+                        if mm:
+                            out.append(mm)
+            except Exception:
+                out = []
+            seen = set()
+            uniq = []
+            for m in out:
+                k = m.lower()
+                if k in seen:
+                    continue
+                seen.add(k)
+                uniq.append(m)
+            return sorted(uniq, key=lambda s: s.lower())
+
+        age_s = 10**9
+        ts = 0.0
+        try:
+            ts = float((cached or {}).get('ts') or 0.0)
+            if ts > 0:
+                age_s = int(max(0.0, now - ts))
+        except Exception:
+            ts = 0.0
+            age_s = 10**9
+
+        models_cached = _extract_models(cached)
+        fresh = bool(ts) and (cache_minutes > 0) and (age_s <= int(cache_minutes * 60))
+        if fresh and (not force_refresh) and models_cached:
+            return models_cached, {'source': 'cache', 'age_s': age_s, 'count': len(models_cached)}
+
+        models_live = []
+        if genai is not None:
+            try:
+                key = (get_api_key() or '').strip()
+            except Exception:
+                key = ''
+            if key:
+                try:
+                    client = genai.Client(api_key=key)
+                    stream = client.models.list()
+                    for md in stream:
+                        try:
+                            name_raw = getattr(md, 'name', '')
+                            name = self._normalize_gemini_model_name(name_raw)
+                            if not name or not name.lower().startswith('gemini'):
+                                continue
+                            actions = getattr(md, 'supported_actions', None)
+                            if isinstance(actions, list) and actions:
+                                allow = False
+                                for a in actions:
+                                    aa = str(a or '').strip().lower()
+                                    if aa in ('generatecontent', 'generate_content'):
+                                        allow = True
+                                        break
+                                if not allow:
+                                    continue
+                            models_live.append(name)
+                        except Exception:
+                            continue
+                except Exception:
+                    models_live = []
+
+        if models_live:
+            seen = set()
+            uniq = []
+            for m in models_live:
+                k = str(m or '').strip().lower()
+                if not k or k in seen:
+                    continue
+                seen.add(k)
+                uniq.append(str(m).strip())
+            models_live = sorted(uniq, key=lambda s: s.lower())
+            try:
+                _storage_write_json(cache_path, {'ts': now, 'models': models_live}, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+            return models_live, {'source': 'live', 'age_s': 0, 'count': len(models_live)}
+
+        if models_cached:
+            return models_cached, {'source': 'cache-stale', 'age_s': age_s, 'count': len(models_cached)}
+
+        fallback = self._gemini_default_models()
+        if fallback:
+            return fallback, {'source': 'fallback', 'age_s': age_s, 'count': len(fallback)}
+        return [], {'source': 'none', 'age_s': age_s, 'count': 0}
 
     def _openrouter_cache_path(self) -> str:
         try:
@@ -10246,7 +13863,7 @@ class ProviderRouter:
         cached = None
         try:
             if os.path.exists(cache_path):
-                raw = Path(cache_path).read_text(encoding='utf-8')
+                raw = _storage_read_text(cache_path, encoding='utf-8')
                 cached = json.loads(raw)
         except Exception:
             cached = None
@@ -10320,7 +13937,7 @@ class ProviderRouter:
 
         # write cache
         try:
-            Path(cache_path).write_text(json.dumps({'ts': now, 'models': models}, ensure_ascii=False), encoding='utf-8')
+            _storage_write_json(cache_path, {'ts': now, 'models': models}, indent=2, ensure_ascii=False)
         except Exception:
             pass
 
@@ -10380,7 +13997,7 @@ class ProviderRouter:
         cached = None
         try:
             if os.path.exists(cache_path):
-                raw = Path(cache_path).read_text(encoding='utf-8')
+                raw = _storage_read_text(cache_path, encoding='utf-8')
                 cached = json.loads(raw)
         except Exception:
             cached = None
@@ -10412,8 +14029,7 @@ class ProviderRouter:
         if models_live:
             # write cache
             try:
-                Path(cache_path).write_text(json.dumps({'ts': now, 'models': models_live}, ensure_ascii=False, indent=2),
-                                           encoding='utf-8')
+                _storage_write_json(cache_path, {'ts': now, 'models': models_live}, indent=2, ensure_ascii=False)
             except Exception:
                 pass
             return models_live, {'source': 'live', 'age_s': 0, 'count': len(models_live)}
@@ -10424,8 +14040,7 @@ class ProviderRouter:
             if isinstance(models_cfg, list) and models_cfg:
                 # write cache as config snapshot (so UI remains fast/offline)
                 try:
-                    Path(cache_path).write_text(json.dumps({'ts': now, 'models': models_cfg}, ensure_ascii=False, indent=2),
-                                               encoding='utf-8')
+                    _storage_write_json(cache_path, {'ts': now, 'models': models_cfg}, indent=2, ensure_ascii=False)
                 except Exception:
                     pass
                 src = 'cache-stale' if (models_cached and not fresh) else 'config'
@@ -10466,7 +14081,7 @@ class ProviderRouter:
         cached = None
         try:
             if os.path.exists(cache_path):
-                raw = Path(cache_path).read_text(encoding='utf-8')
+                raw = _storage_read_text(cache_path, encoding='utf-8')
                 cached = json.loads(raw)
         except Exception:
             cached = None
@@ -10584,7 +14199,7 @@ class ProviderRouter:
         """
         import urllib.request as _urlreq
         top_n = int(top_n or 200)
-        top_n = max(1, min(1000, top_n))
+        top_n = max(1, min(10000, top_n))
         pf = (provider_filter or "all").strip()
         try:
             from urllib.parse import urlencode
@@ -10645,7 +14260,7 @@ class ProviderRouter:
         now = int(time.time())
         want_pf = (provider_filter or "all").strip()
         want_top = int(top_n or 200)
-        want_top = max(1, min(1000, want_top))
+        want_top = max(1, min(10000, want_top))
 
         def _meta(source: str, age_s: int, count: int, err: str = "") -> dict:
             out = {"source": source, "age_s": int(age_s or 0), "count": int(count or 0),
@@ -10665,8 +14280,7 @@ class ProviderRouter:
         cached = None
         try:
             if os.path.exists(cache_path):
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    cached = json.load(f)
+                cached = _storage_read_json(cache_path)
         except Exception:
             cached = None
 
@@ -10698,9 +14312,7 @@ class ProviderRouter:
             # persist cache
             try:
                 payload = {"ts": now, "top_n": want_top, "provider_filter": want_pf, "models": live_models}
-                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                with open(cache_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2, ensure_ascii=False)
+                _storage_write_json(cache_path, payload, indent=2, ensure_ascii=False)
             except Exception:
                 # cache write failure should not break the UI
                 pass
@@ -10743,15 +14355,261 @@ class ProviderRouter:
             models = self._fetch_hf_hub_catalog(top_n=want_top, provider_filter=want_pf)
             meta = {"source": "live", "age_s": 0, "count": len(models), "top_n": want_top, "provider_filter": want_pf}
             try:
-                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                with open(cache_path, "w", encoding="utf-8") as f:
-                    json.dump({"ts": now, "top_n": want_top, "provider_filter": want_pf, "models": models}, f, ensure_ascii=False, indent=2)
+                _storage_write_json(cache_path, {"ts": now, "top_n": want_top, "provider_filter": want_pf, "models": models}, indent=2, ensure_ascii=False)
             except Exception:
                 pass
             return models, meta
         except Exception:
             # fallback: no catalog available
             return [], {"source": "none", "age_s": 0, "count": 0, "top_n": want_top, "provider_filter": want_pf}
+
+
+
+class ProviderService:
+    """Thin provider facade used by Api._llm_call and model refresh paths."""
+
+    def __init__(self, cfg_mgr, provider_router):
+        self.cfg = cfg_mgr
+        self.router = provider_router
+
+    def canonical_provider_id(self, provider: str) -> str:
+        p = str(provider or "").strip().lower()
+        if p in ("hf", "huggingface"):
+            return "huggingface"
+        if p in ("openai", "openai_compat", "openrouter"):
+            return "openrouter"
+        if p == "gemini":
+            return "gemini"
+        return "openrouter"
+
+    def get_openai_client(self, provider: str):
+        pid = self.canonical_provider_id(provider)
+        r = self.router
+        if r is None:
+            return None
+        try:
+            if pid == "huggingface" and hasattr(r, "build_huggingface_client"):
+                return r.build_huggingface_client()
+            if pid == "openrouter" and hasattr(r, "build_openrouter_client"):
+                return r.build_openrouter_client()
+        except Exception:
+            return None
+        return None
+
+    def get_cached_models(self, provider: str, *, force_refresh: bool = False):
+        pid = self.canonical_provider_id(provider)
+        r = self.router
+        models, meta = [], {}
+        if r is None:
+            return models, meta
+        try:
+            if pid == "huggingface":
+                if hasattr(r, "get_huggingface_models_cached"):
+                    models, meta = r.get_huggingface_models_cached(force_refresh=force_refresh)
+                if (not models) and hasattr(r, "get_huggingface_models_from_config"):
+                    models = r.get_huggingface_models_from_config() or []
+            elif pid == "openrouter":
+                if hasattr(r, "get_openrouter_models_cached"):
+                    models, meta = r.get_openrouter_models_cached(force_refresh=force_refresh)
+            elif pid == "gemini":
+                if hasattr(r, "get_gemini_models_cached"):
+                    models, meta = r.get_gemini_models_cached(force_refresh=force_refresh)
+        except Exception:
+            models, meta = [], {}
+        return models or [], meta or {}
+
+    def get_provider_model(self, provider: str, *, fallback_model: str = "") -> str:
+        pid = self.canonical_provider_id(provider)
+        r = self.router
+        if r is None:
+            return str(fallback_model or "").strip()
+        try:
+            if hasattr(r, "get_provider_model"):
+                return str(r.get_provider_model(pid, fallback_model=fallback_model) or "").strip()
+        except Exception:
+            pass
+        return str(fallback_model or "").strip()
+
+    def get_config_fallback_models(self, provider: str):
+        pid = self.canonical_provider_id(provider)
+        out = []
+        try:
+            provs = (getattr(self.cfg, "config", {}) or {}).get("providers") or {}
+            pconf = provs.get(pid) if isinstance(provs, dict) else {}
+            fb = (pconf or {}).get("fallback_models") if isinstance(pconf, dict) else None
+            if isinstance(fb, list):
+                for x in fb:
+                    sx = str(x or "").strip()
+                    if sx and sx not in out:
+                        out.append(sx)
+        except Exception:
+            out = []
+        return out
+
+
+# ----------------------------
+# STUFE 2+: JSONL instrumentation (audit stream, append-only)
+# ----------------------------
+_jsonl_audit_stream_date_cache = None
+_jsonl_audit_stream_path_cache = None
+
+def _get_audit_stream_jsonl_path(now: datetime) -> str:
+    """Return JSONL audit stream path for current day (best-effort)."""
+    global _jsonl_audit_stream_date_cache, _jsonl_audit_stream_path_cache
+    try:
+        day = now.strftime('%Y%m%d')
+    except Exception:
+        day = 'unknown'
+    if _jsonl_audit_stream_date_cache != day or not _jsonl_audit_stream_path_cache:
+        _jsonl_audit_stream_date_cache = day
+        try:
+            _jsonl_audit_stream_path_cache = os.path.join(AUDIT_LOG_DIR, f'AuditStream_{day}.jsonl')
+        except Exception:
+            _jsonl_audit_stream_path_cache = None
+    return _jsonl_audit_stream_path_cache
+
+def _append_jsonl_line(path: str, obj: dict) -> None:
+    if _auditstream is not None:
+        try:
+            _auditstream.append_jsonl_line(path, obj)
+            return
+        except Exception:
+            pass
+    """Append one JSON object as a single line. Must never raise."""
+    try:
+        if not path:
+            return
+        line = json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
+        if _StorageService is not None:
+            try:
+                _svc = _StorageService()
+                _svc.append_text(path, line + '\n')
+                return
+            except Exception:
+                pass
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        except Exception:
+            pass
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(line + '\n')
+    except Exception:
+        return
+
+
+def _storage_read_json(path: str):
+    try:
+        if _StorageService is not None:
+            svc = _StorageService()
+            if hasattr(svc, 'read_json'):
+                return svc.read_json(path)
+    except Exception:
+        pass
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _storage_read_text(path: str, *, encoding: str = 'utf-8'):
+    try:
+        if _StorageService is not None:
+            svc = _StorageService()
+            if hasattr(svc, 'read_text'):
+                return svc.read_text(path, encoding=encoding)
+    except Exception:
+        pass
+    try:
+        with open(path, 'r', encoding=encoding) as f:
+            return f.read()
+    except Exception:
+        return None
+
+
+def _storage_write_json(path: str, payload, *, indent: int = 2, ensure_ascii: bool = True) -> bool:
+    try:
+        if _StorageService is not None:
+            svc = _StorageService()
+            if hasattr(svc, 'write_json'):
+                return bool(svc.write_json(path, payload, indent=indent, ensure_ascii=ensure_ascii))
+    except Exception:
+        pass
+    try:
+        parent = os.path.dirname(str(path or ''))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, indent=indent, ensure_ascii=ensure_ascii)
+        return True
+    except Exception:
+        return False
+
+
+def _storage_write_text(path: str, text: str, *, encoding: str = 'utf-8') -> bool:
+    try:
+        if _StorageService is not None:
+            svc = _StorageService()
+            if hasattr(svc, 'write_text'):
+                return bool(svc.write_text(path, text, encoding=encoding))
+    except Exception:
+        pass
+    try:
+        parent = os.path.dirname(str(path or ''))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, 'w', encoding=encoding) as f:
+            f.write(str(text))
+        return True
+    except Exception:
+        return False
+
+def _build_jsonl_meta(api) -> dict:
+    """Best-effort metadata for JSONL events (no secrets)."""
+    wrapper_name = globals().get('WRAPPER_NAME')
+    wrapper_version = globals().get('WRAPPER_VERSION')
+    ruleset_version = None
+    provider = None
+    model = None
+
+    try:
+        gov = getattr(api, 'gov_state', None)
+        try:
+            provider = getattr(gov, 'provider', None) or getattr(gov, 'provider_name', None)
+            model = getattr(gov, 'model', None) or getattr(gov, 'model_name', None)
+        except Exception:
+            pass
+        try:
+            rules = getattr(gov, 'rules', None)
+            if rules is not None:
+                ruleset_version = getattr(rules, 'version', None) or getattr(rules, 'ruleset_version', None)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    if _auditstream is not None:
+        try:
+            return _auditstream.build_jsonl_meta(
+                wrapper_name=str(wrapper_name) if wrapper_name is not None else None,
+                wrapper_version=str(wrapper_version) if wrapper_version is not None else None,
+                ruleset_version=str(ruleset_version) if ruleset_version is not None else None,
+                provider=str(provider) if provider is not None else None,
+                model=str(model) if model is not None else None,
+            )
+        except Exception:
+            pass
+
+    meta = {'wrapper_name': wrapper_name, 'wrapper_version': wrapper_version}
+    if ruleset_version:
+        meta['ruleset_version'] = ruleset_version
+    if provider:
+        meta['provider'] = provider
+    if model:
+        meta['model'] = model
+    return meta
+
+
 
 class Api(CSCRefiner):
     def __init__(self):
@@ -10762,14 +14620,29 @@ class Api(CSCRefiner):
         try:
             _g = globals().get('gov')
             if _g is not None:
+                gov.runtime_state = self.gov_state
                 setattr(_g, 'runtime_state', self.gov_state)
         except Exception:
             pass
 
 
+        # Dependency health (Stage 3d/3e)
+        _strict = _strict_modules_enabled()
+        if _strict:
+            _check_optional_module('Module.auditstream', strict=True)
+            _check_optional_module('Module.rendering_utils', strict=True)
+            _check_optional_module('Module.compliance_scan', strict=True)
+
+        self.deps_status = {
+            'auditstream': _check_optional_module('Module.auditstream'),
+            'rendering_utils': _check_optional_module('Module.rendering_utils'),
+            'compliance_scan': _check_optional_module('Module.compliance_scan'),
+        }
+
         # Provider routing (single-file adapters)
         try:
             self.provider_router = ProviderRouter(globals().get('cfg'))
+            self.provider_service = ProviderService(globals().get('cfg'), self.provider_router)
             # Warm provider model caches from disk (no network).
             try:
                 self._warm_model_caches_from_disk()
@@ -10786,10 +14659,38 @@ class Api(CSCRefiner):
             self.session_csc_applied_count = 0
             self.session_guard_hits = 0
             self.session_events = []  # list of {ts,type,data}
+            self.SESSION_EVENTS_MAX = SESSION_EVENTS_MAX
             # --- /B5 ---
             
         except Exception:
             self.provider_router = None
+            self.provider_service = None
+
+        try:
+            if _GovernanceService is not None:
+                self.governance_service = _GovernanceService(
+                    normalize_headings_fn=normalize_known_markdown_control_headings,
+                    enforce_self_debunking_fn=enforce_self_debunking_contract,
+                    normalize_sci_trace_fn=normalize_sci_trace_numbering,
+                    normalize_self_debunking_numbering_fn=normalize_self_debunking_numbering,
+                    enforce_qc_footer_fn=enforce_qc_footer_deltas,
+                    ensure_qc_footer_present_fn=ensure_qc_footer_present,
+                    normalize_evidence_tags_fn=normalize_evidence_tags,
+                )
+            else:
+                self.governance_service = None
+        except Exception:
+            self.governance_service = None
+
+        try:
+            self.ui_controller = _UIController() if _UIController is not None else None
+        except Exception:
+            self.ui_controller = None
+
+        try:
+            self.storage_service = _StorageService() if _StorageService is not None else None
+        except Exception:
+            self.storage_service = None
 
         # Window handles
         self.main_win = None
@@ -10801,6 +14702,10 @@ class Api(CSCRefiner):
             self.panel_bridge = PanelBridge(self)
         except Exception:
             self.panel_bridge = None
+        try:
+            self.main_bridge = MainBridge(self)
+        except Exception:
+            self.main_bridge = None
 
 
         # Closing guard (prevents double-exit)
@@ -10901,6 +14806,15 @@ class Api(CSCRefiner):
                         sk = str(kk)
                     except Exception:
                         continue
+
+                    # Redact obvious secret-bearing keys (defensive)
+                    try:
+                        _skl = sk.lower()
+                    except Exception:
+                        _skl = ''
+                    if any(t in _skl for t in ('api_key','apikey','token','secret','password','bearer')):
+                        safe[sk] = '<redacted>'
+                        continue
                     # short-circuit big strings
                     if isinstance(vv, str) and len(vv) > 300:
                         safe[sk] = _safe_preview_text(vv, 300)
@@ -10934,22 +14848,90 @@ class Api(CSCRefiner):
                 'comm_active': getattr(_gs, 'comm_active', None),
                 'data': data,
             })
+
+            # Cap in-memory session event list (avoid unbounded RAM growth).
+            try:
+                _cap = int(getattr(self, 'SESSION_EVENTS_MAX', globals().get('SESSION_EVENTS_MAX', 2000)))
+                if _cap > 0 and isinstance(self.session_events, list) and len(self.session_events) > _cap:
+                    del self.session_events[:-_cap]
+            except Exception:
+                pass
+
+
+            # JSONL audit stream (best-effort, no behavior change)
+            try:
+                now = datetime.now()
+                stream_path = _get_audit_stream_jsonl_path(now)
+                gs = getattr(self, 'gov_state', None)
+                rec = {
+                    'ts': now.isoformat(),
+                    'event': k,
+                    'level': lvl,
+                    'trace_id': getattr(self, 'trace_id', getattr(self, 'session_id', None)),
+                    'route': {
+                        'is_command': None,
+                        'comm_active': getattr(gs, 'comm_active', None),
+                        'sci_variant': getattr(gs, 'sci_variant', None),
+                        'ui_lang': getattr(gs, 'ui_lang', None),
+                        'color': getattr(gs, 'color', None),
+                    },
+                    'data': data,
+                    'meta': _build_jsonl_meta(self),
+                }
+                _append_jsonl_line(stream_path, rec)
+            except Exception:
+                pass
         except Exception:
             return
 
 
 
 
-    def _get_enforcement_policy(self) -> str:
-        """Return enforcement policy from config. Defaults to 'audit_only'."""
+    def _get_enforcement_settings(self) -> dict:
+        """Return normalized enforcement settings from config (fail-safe defaults)."""
+        conf = {}
         try:
-            pol = (getattr(cfg, "config", {}) or {}).get("enforcement_policy", "audit_only")
-            pol = str(pol).strip().lower()
+            conf = (getattr(cfg, "config", {}) or {})
+            if not isinstance(conf, dict):
+                conf = {}
+        except Exception:
+            conf = {}
+
+        nested = conf.get("enforcement")
+        if not isinstance(nested, dict):
+            nested = {}
+
+        try:
+            pol_raw = nested.get("policy", conf.get("enforcement_policy", "audit_only"))
+            pol = str(pol_raw or "audit_only").strip().lower()
         except Exception:
             pol = "audit_only"
         if pol not in ("audit_only", "strict_warn", "strict_block"):
             pol = "audit_only"
-        return pol
+
+        try:
+            enabled = bool(nested.get("enabled", conf.get("enforcement_enabled", True)))
+        except Exception:
+            enabled = True
+
+        raw_bs = nested.get("blocked_severities", conf.get("enforcement_blocked_severities", ["critical", "major"]))
+        bs = []
+        if isinstance(raw_bs, list):
+            for item in raw_bs:
+                s = str(item or "").strip().lower()
+                if s in ("critical", "major", "minor") and s not in bs:
+                    bs.append(s)
+        if not bs:
+            bs = ["critical", "major"]
+
+        return {"enabled": enabled, "policy": pol, "blocked_severities": bs}
+
+    def _get_enforcement_policy(self) -> str:
+        """Return normalized enforcement policy from config."""
+        try:
+            return str((self._get_enforcement_settings() or {}).get("policy") or "audit_only")
+        except Exception:
+            return "audit_only"
 
 
     def clear_chat(self):
@@ -11050,6 +15032,52 @@ class PanelBridge:
     def panel_action(self, action, payload=None):
         return self._api.panel_action(action, payload)
 
+
+class MainBridge:
+    """Slim JS-API bridge for the main chat window.
+
+    Purpose:
+    - Expose only methods used by HTML_CHAT.
+    - Avoid pywebview scanning the full Api object graph (which can include
+      unsupported callables from third-party clients).
+    """
+
+    def __init__(self, api):
+        self._api = api
+
+    def ask(self, txt):
+        return self._api.ask(txt)
+
+    def remote_cmd(self, txt):
+        return self._api.remote_cmd(txt)
+
+    def ui_qc_bar_enabled(self):
+        return self._api.ui_qc_bar_enabled()
+
+    def is_ready(self):
+        return self._api.is_ready()
+
+    def ping(self, _payload=None):
+        return self._api.ping(_payload)
+
+    def update_stats_ui(self):
+        return self._api.update_stats_ui()
+
+    def ensure_panel_visible(self):
+        return self._api.ensure_panel_visible()
+
+    def load_rule_file(self):
+        return self._api.load_rule_file()
+
+    def export(self):
+        return self._api.export()
+
+    def settings(self):
+        return self._api.settings()
+
+    def close_app(self):
+        return self._api.close_app()
+
 # ----------------------------
 
 def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
@@ -11082,10 +15110,59 @@ def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
                 role = 'user'
 
             if role == 'bot':
+
+                # If the loaded history contains a legacy plaintext 'Comm Config' dump (very large JSON),
+                # re-render it deterministically as collapsible HTML to keep the UI readable and within margins.
                 try:
-                    import markdown as _markdown
-                    _h = _markdown.markdown(str(content), extensions=['extra', 'codehilite'])
-                    _h = sanitize_html(_h)
+                    _c = str(content)
+                    if 'Loaded rules file:' in _c and ('QC-Matrix:' in _c or 'QC Matrix:' in _c):
+                        _lines = _c.splitlines()
+                        if _lines and 'Loaded rules file:' in _lines[0]:
+                            _json_i = None
+                            for _i in range(1, len(_lines)):
+                                _ls = _lines[_i].lstrip()
+                                if _ls.startswith('{') or _ls.startswith('['):
+                                    _json_i = _i
+                                    break
+                            _qc_i = None
+                            for _i in range(len(_lines)-1, -1, -1):
+                                _s = _lines[_i].strip()
+                                if _s.startswith('QC-Matrix:') or _s.startswith('QC Matrix:'):
+                                    _qc_i = _i
+                                    break
+                            if _json_i is not None:
+                                _status = _lines[0].strip()
+                                _qc = _lines[_qc_i].strip() if _qc_i is not None else ''
+                                _json_end = _qc_i if (_qc_i is not None and _qc_i > _json_i) else len(_lines)
+                                _raw_json = "\n".join(_lines[_json_i:_json_end]).strip()
+                                _ui_lang = self._lang()
+                                _summary = 'Raw JSON anzeigen' if _ui_lang == 'de' else 'Show raw JSON'
+                                _minor = (
+                                    'Read-only view of the full governance configuration (deterministic from JSON, no LLM).'
+                                    if _ui_lang != 'de'
+                                    else 'Nur-Lese-Ansicht der vollständigen Governance-Konfiguration (deterministisch aus JSON, ohne LLM).'
+                                )
+                                content = (
+                                    '<div class="comm-help comm-config">'
+                                    f'<div class="help-status">{html.escape(_status)}</div>'
+                                    f'<div class="minor">{html.escape(_minor)}</div>'
+                                    '<details class="config-details">'
+                                    f'<summary>{html.escape(_summary)}</summary>'
+                                    f'<pre class="raw-json">{html.escape(_raw_json)}</pre>'
+                                    '</details>'
+                                    + (f"<div style='margin-top:10px'>{html.escape(_qc)}</div>" if _qc else '')
+                                    + '</div>'
+                                )
+                except Exception:
+                    pass
+                try:
+                    _c = str(content)
+                    if _c.lstrip().startswith('<'):
+                        _h = sanitize_html(_c)
+                    else:
+                        import markdown as _markdown
+                        _h = _markdown.markdown(_c, extensions=['extra', 'codehilite'])
+                        _h = sanitize_html(_h)
                 except Exception:
                     _h = sanitize_html(html.escape(str(content)))
                 ui_hist.append({'role': 'bot', 'html': _h})
@@ -11174,7 +15251,7 @@ if __name__ == '__main__':
         raise SystemExit('google-genai is required. Install with: pip install google-genai')
     api = Api()
     api.main_win = webview.create_window(
-        MAIN_WINDOW_TITLE, html=HTML_CHAT, js_api=api, 
+        MAIN_WINDOW_TITLE, html=HTML_CHAT, js_api=(getattr(api, 'main_bridge', None) or api), 
         width=1100, height=1000,
         x=0, y=0
     )

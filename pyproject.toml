@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "comm-sci-wrapper"
-version = "0.0.0"
-description = "Deterministic Python wrapper (UI + state machine + logs) for auditable LLM usage under Comm-SCI-Control."
+name = "comm-sci-control-app"
+version = "20.0.3"
+description = "Deterministic Python runtime (UI, state machine, audit/logging) for Comm-SCI governance workflows."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
@@ -16,6 +16,7 @@ dependencies = [
   "requests>=2.31",
   "markdown>=3.5",
   "bleach>=6.1",
+  "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,13 @@ all = [
   "pytest>=8.0",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
-python_files = ["Test-*.py", "test_*.py"]
+python_files = ["test_*.py"]
+testpaths = ["tests"]
