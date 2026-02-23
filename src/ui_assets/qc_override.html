@@ -1,0 +1,216 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>QC Override</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 16px; color: #111; }
+  h2 { margin: 0 0 10px 0; font-size: 18px; }
+  .sub { margin: 0 0 14px 0; color: #444; font-size: 13px; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+  .lbl { width: 120px; font-weight: 600; font-size: 13px; }
+  input[type=range] { flex: 1; }
+  .val { width: 26px; text-align: right; font-variant-numeric: tabular-nums; }
+  .status { margin-top: 10px; font-size: 12px; color: #444; }
+  .err { color: #b00020; white-space: pre-wrap; font-size: 12px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 10px 0; }
+  .presets button { padding: 6px 10px; font-size: 12px; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .actions button { flex: 1; padding: 10px 12px; font-size: 13px; }
+</style>
+<script>
+(function(){
+  function qs(sel){ return document.querySelector(sel); }
+  function setStatus(txt, isErr){
+    const el = qs('#status');
+    if(!el) return;
+    el.className = isErr ? 'err' : 'status';
+    el.textContent = txt || '';
+  }
+  window.addEventListener('error', function(ev){
+    try{ setStatus('JS Error: ' + (ev && ev.message ? ev.message : String(ev)), true); }catch(e){}
+  });
+
+  const DIMENSIONS = [
+    ['Clarity','clarity'],
+    ['Brevity','brevity'],
+    ['Evidence','evidence'],
+    ['Empathy','empathy'],
+    ['Consistency','consistency'],
+    ['Neutrality','neutrality']
+  ];
+
+  function readValues(){
+    const out = {};
+    for(const [label, key] of DIMENSIONS){
+      const inp = qs('#sl-' + key);
+      if(inp) out[label] = parseInt(inp.value, 10);
+    }
+    return out;
+  }
+
+  function setValues(vals){
+    for(const [label, key] of DIMENSIONS){
+      const v = vals && (vals[label] !== undefined ? vals[label] : vals[key]);
+      if(v === undefined || v === null) continue;
+      const inp = qs('#sl-' + key);
+      const sp = qs('#v-' + key);
+      if(inp){ inp.value = String(v); }
+      if(sp){ sp.textContent = String(v); }
+    }
+  }
+
+  function attach(){
+    for(const [label, key] of DIMENSIONS){
+      const inp = qs('#sl-' + key);
+      const sp = qs('#v-' + key);
+      if(inp && sp){
+        inp.addEventListener('input', function(){ sp.textContent = String(inp.value); });
+      }
+    }
+  }
+
+  async function callApi(fn, payload){
+    if(!window.pywebview || !pywebview.api || !pywebview.api[fn]){
+      throw new Error('Bridge not ready: ' + fn);
+    }
+    return await pywebview.api[fn](payload || {});
+  }
+
+  async function boot(){
+    setStatus('Offline (bridge not ready). Trying…', false);
+    attach();
+
+    for(let i=0;i<40;i++){
+      try{
+        if(window.pywebview && pywebview.api && pywebview.api.ping){
+          const pong = await pywebview.api.ping();
+          if(pong && pong.ok){
+            const st = await callApi('qc_get_state', {});
+            if(st && st.ok){
+              const prof = st.profile || 'Standard';
+              document.title = 'Temporary QC override – Profile: ' + prof;
+              const h = qs('#title');
+              if(h) h.textContent = 'Temporary QC override – Profile: ' + prof;
+
+              const defaults = st.defaults || {};
+              const ovs = st.overrides || {};
+              const base = {};
+              for(const [label, key] of DIMENSIONS){
+                const d = defaults[key];
+                let v = 2;
+                if(Array.isArray(d) && d.length>=2){
+                  v = parseInt(d[1],10);
+                }else if(typeof d === 'number'){
+                  v = d;
+                }
+                base[label] = v;
+              }
+              setValues(base);
+              setValues(ovs);
+              setStatus(st.note || 'Online.', false);
+            }else{
+              setStatus('Online, aber qc_get_state fehlgeschlagen.', true);
+            }
+            return;
+          }
+        }
+      }catch(e){}
+      await new Promise(r => setTimeout(r, 250));
+    }
+    setStatus('Bridge not ready (offline). You can still adjust sliders, then Apply will retry.', false);
+  }
+
+  async function onApply(){
+    try{
+      const vals = readValues();
+      const res = await callApi('qc_override_apply', vals);
+      if(res && res.ok){
+        setStatus('Applied.', false);
+      }else{
+        setStatus('Apply failed: ' + (res && res.error ? res.error : 'unknown'), true);
+      }
+    }catch(e){
+      setStatus('Apply error: ' + String(e), true);
+    }
+  }
+
+  async function onClear(){
+    try{
+      const res = await callApi('qc_override_clear', {});
+      if(res && res.ok){
+        try{
+          const st = await callApi('qc_get_state', {});
+          if(st && st.ok){
+            const defaults = st.defaults || {};
+            const base = {};
+            for(const [label, key] of DIMENSIONS){
+              const d = defaults[key];
+              let v = 2;
+              if(Array.isArray(d) && d.length>=2){
+                v = parseInt(d[1],10);
+              }else if(typeof d === 'number'){
+                v = d;
+              }
+              base[label] = v;
+            }
+            setValues(base);
+          }
+        }catch(e){}
+        setStatus('Cleared.', false);
+      }else{
+        setStatus('Clear failed: ' + (res && res.error ? res.error : 'unknown'), true);
+      }
+    }catch(e){
+      setStatus('Clear error: ' + String(e), true);
+    }
+  }
+
+  async function onCancel(){
+    try{
+      await callApi('qc_override_cancel', {});
+    }catch(e){
+      try{ window.close(); }catch(_){}
+    }
+  }
+
+  function preset(kind){
+    const vals = readValues();
+    if(kind==='verbose'){ vals['Brevity']=0; vals['Clarity']=3; }
+    if(kind==='short'){ vals['Brevity']=3; vals['Clarity']=2; }
+    if(kind==='evidence'){ vals['Evidence']=3; vals['Clarity']=3; }
+    if(kind==='neutral'){ vals['Neutrality']=3; vals['Empathy']=1; }
+    setValues(vals);
+  }
+
+  window.QCUI = { boot, onApply, onClear, onCancel, preset };
+})();
+</script>
+</head>
+<body onload="QCUI.boot()">
+  <h2 id="title">Temporary QC override – Profile: ?</h2>
+  <p class="sub">Temporary QC adjustment (active until profile switch / Clear)</p>
+
+  <div class="row"><div class="lbl">Clarity</div><input id="sl-clarity" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-clarity">2</div></div>
+  <div class="row"><div class="lbl">Brevity</div><input id="sl-brevity" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-brevity">2</div></div>
+  <div class="row"><div class="lbl">Evidence</div><input id="sl-evidence" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-evidence">2</div></div>
+  <div class="row"><div class="lbl">Empathy</div><input id="sl-empathy" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-empathy">2</div></div>
+  <div class="row"><div class="lbl">Consistency</div><input id="sl-consistency" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-consistency">2</div></div>
+  <div class="row"><div class="lbl">Neutrality</div><input id="sl-neutrality" type="range" min="0" max="3" step="1" value="2"><div class="val" id="v-neutrality">2</div></div>
+
+  <div class="presets">
+    <button onclick="QCUI.preset('verbose')">More verbose</button>
+    <button onclick="QCUI.preset('short')">Shorter</button>
+    <button onclick="QCUI.preset('evidence')">More evidence</button>
+    <button onclick="QCUI.preset('neutral')">More neutral</button>
+  </div>
+
+  <div class="actions">
+    <button onclick="QCUI.onApply()">Apply</button>
+    <button onclick="QCUI.onClear()">Clear Overrides</button>
+    <button onclick="QCUI.onCancel()">Cancel</button>
+  </div>
+
+  <div id="status" class="status"></div>
+</body>
+</html>

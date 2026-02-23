@@ -3732,3 +3732,20 @@ def test_html_number_self_debunking_non_ol_handles_lowercase_labels_with_space_b
     assert "<strong>Warum das wichtig ist</strong>:" in out
     assert "<strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:" in out
     assert "<br><strong>Warum das wichtig ist</strong>:" in out or "<br><strong>Warum das wichtig ist</strong>" in out
+
+
+def test_html_number_self_debunking_ol_handles_sibling_p_secondary_labels_and_missing_colon():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: Punkt eins.</li>'
+        '<p>Warum das wichtig ist : Relevanz.</p>'
+        '<p>Was würde verifizieren/falsifizieren (nächster Check) Test.</p>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "<p><strong>Warum das wichtig ist</strong>: Relevanz.</p>" in out
+    assert "<p><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test.</p>" in out

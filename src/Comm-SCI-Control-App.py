@@ -2701,7 +2701,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 )
                 sec_rx = "|".join(re.escape(x) for x in secondary_labels)
                 cleaned = re.sub(
-                    rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:)",
+                    rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:?)",
                     r"\1<br>",
                     cleaned,
                     flags=re.IGNORECASE,
@@ -2722,8 +2722,19 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 ]
                 for _pat, _canon in canonical_sec:
                     cleaned = re.sub(
-                        rf"(?is)(?:<strong>\s*)?{re.escape(_pat)}(?:\s*</strong>)?\s*:",
-                        f"<strong>{_canon}</strong>:",
+                        rf"(?is)(?<!\()(?:(?:<strong>\s*)?{re.escape(_pat)}(?:\s*</strong>)?)\s*:?\s*",
+                        f"<strong>{_canon}</strong>: ",
+                        cleaned,
+                        flags=re.IGNORECASE,
+                    )
+                cleaned = re.sub(r"(?is)</strong>:\s+<", "</strong>:<", cleaned)
+                # Some weak models/HTML conversions split a single logical <li> item into
+                # "<li>...Weakness...</li><p>Why...</p><p>What would...</p>" inside the same <ol>.
+                # Normalize those sibling <p> rows as well (bold + canonical colon).
+                for _pat, _canon in canonical_sec:
+                    cleaned = re.sub(
+                        rf"(?is)(<p[^>]*>\s*)(?:<strong>\s*)?{re.escape(_pat)}(?:\s*</strong>)?\s*:?\s*",
+                        rf"\1<strong>{_canon}</strong>: ",
                         cleaned,
                         flags=re.IGNORECASE,
                     )
@@ -2785,7 +2796,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 )
                 _sec_rx = "|".join(re.escape(x) for x in secondary_labels)
                 ln = re.sub(
-                    rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{_sec_rx})(?:\s*</strong>)?\s*:)",
+                    rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{_sec_rx})(?:\s*</strong>)?\s*:?)",
                     r"\1<br>",
                     ln,
                     flags=re.IGNORECASE,
