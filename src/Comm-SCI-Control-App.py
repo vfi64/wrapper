@@ -8064,13 +8064,22 @@ class CSCRefiner:
 
             # 4. Alerts generieren (Wiederhergestellt aus alter Version)
             alerts = []
+            csc_visible_marker = ""
 
-            # CSC marker presence check (deterministic): if CSC was triggered/applied, the marker should be visible.
+            # CSC transparency marker: render deterministically in the visible header when the
+            # ruleset requires visibility, instead of emitting a noisy false-positive alert based
+            # on raw model text (the marker is prompt-side and may be stripped during normalization).
             try:
                 if csc_meta and csc_meta.get('applied'):
-                    marker = getattr(refiner, 'marker', '') or ''
-                    if marker and (marker not in (raw_response or '')):
-                        alerts.append(("CSC", f"CSC applied but marker missing in output: {marker}"))
+                    cl = (getattr(gov, 'data', {}) or {}).get('control_layer', {}) or {}
+                    bridge = (cl.get('components', {}) or {}).get('csc_trigger_bridge', {}) or {}
+                    constraints = (bridge.get('constraints', {}) or {})
+                    tm = (constraints.get('transparency_marker', {}) or {})
+                    marker = str(tm.get('marker', getattr(refiner, 'marker', '') or '') or '').strip()
+                    marker_enabled = bool(tm.get('enabled', True))
+                    marker_visibility = str(tm.get('visibility', '') or '').strip().lower()
+                    if marker_enabled and marker and marker_visibility == 'always_visible_if_applied':
+                        csc_visible_marker = marker
             except Exception:
                 pass
             
@@ -8144,6 +8153,11 @@ class CSCRefiner:
                 try:
                     if bool(getattr(self.gov_state, 'dynamic_one_shot_active', False)):
                         header += " · Dynamic: one-shot (active)"
+                except Exception:
+                    pass
+                try:
+                    if csc_visible_marker and (csc_visible_marker not in header):
+                        header += f" · {csc_visible_marker}"
                 except Exception:
                     pass
             except: header = ""

@@ -2,6 +2,11 @@
 
 All notable changes are documented in this file.
 
+## 1.0.2 - 2026-02-24
+
+- Reduced noisy false-positive `CONTROL LAYER ALERTS (Python)` messages for CSC marker visibility by rendering the CSC transparency marker visibly in the header (policy-conform) instead of checking raw model text only.
+- Preserved existing Verification Route Gate repair notes and other Control Layer signals.
+
 ## 1.0.1 - 2026-02-24
 
 - Completed S9 panel/fallback helper modularization (asset loading, runtime bootstrap state, fallback race-guard decisions, panel HTML source selection) without changing `panel_action(...)` contracts.
