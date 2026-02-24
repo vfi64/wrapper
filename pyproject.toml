@@ -33,9 +33,27 @@ all = [
   "cryptography>=42.0",
   "pytest>=8.0",
 ]
+local-dev = [
+  "google-genai>=0.6",
+  "cryptography>=42.0",
+  "pytest>=8.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+py-modules = [
+  "app_bootstrap",
+  "controller",
+  "governance_service",
+  "intents",
+  "provider_service",
+  "render_service",
+  "state",
+  "storage_service",
+  "transitions",
+  "ui_controller",
+  "ui_panel_model",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

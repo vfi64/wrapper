@@ -3,6 +3,12 @@
 ## 1. System model (roles)
 Comm-SCI treats an LLM as a **probabilistic instrument** whose behavior is governed by an explicit, canonical rule system.
 
+### Operational baseline (local development / release candidate checks)
+Use a reproducible local virtual environment (`.venc`) and install via `pyproject.toml`
+(`pip install -e ".[local-dev]"`). For release-candidate checks, run the app from the
+repository root launcher (`python Comm-SCI-Control-App.py`) so the source-tree layout and
+local assets/fallback paths are exercised exactly as developed.
+
 There are exactly two authoritative layers:
 
 1) **Normative layer (Comm-SCI JSON ruleset)**

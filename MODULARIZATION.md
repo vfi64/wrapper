@@ -148,9 +148,9 @@ Current S8 verification snapshot (2026-02-24):
 - Stop once acceptance criteria are met; defer deeper refactors to post-release hardening (Variant B).
 - Reproducible local startup flow (current release candidate baseline):
   ```bash
-  cd /Users/hof/Dropbox/Privat/GitHub/Comm-SCI-Control-private
+  cd /path/to/repo
   source .venc/bin/activate
-  python /Users/hof/Dropbox/Privat/GitHub/Comm-SCI-Control-private/src/Comm-SCI-Control-App.py
+  python Comm-SCI-Control-App.py
   ```
 
 ---
