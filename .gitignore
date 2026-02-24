@@ -1,4 +1,5 @@
 Config/Comm-SCI-API-Keys.json
+Config/*models_cache.json
 *.env
 .env
 .env.*
