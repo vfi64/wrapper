@@ -1,7 +1,7 @@
 # Comm-SCI-Control-App: Manueller Release-Kurztest
 
 Repo:
-`/Users/hof/Dropbox/Privat/GitHub/Comm-SCI-Control-private`
+`/pfad/zum/repo`
 
 ## Schnellablauf (5-10 Minuten)
 

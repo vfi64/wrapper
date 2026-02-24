@@ -1,7 +1,7 @@
 # Comm-SCI-Control-App: Manuelle Test-Checkliste
 
 Repo (manuelle Tests):
-`/Users/hof/Dropbox/Privat/GitHub/Comm-SCI-Control-private`
+`/pfad/zum/repo`
 
 ## Ziel
 Reproduzierbarer GUI-Testlauf fuer Release-/Aenderungspruefungen mit Fokus auf:
@@ -12,7 +12,7 @@ Reproduzierbarer GUI-Testlauf fuer Release-/Aenderungspruefungen mit Fokus auf:
 ## Vorbereitung
 
 ```bash
-cd /Users/hof/Dropbox/Privat/GitHub/Comm-SCI-Control-private
+cd /pfad/zum/repo
 ./scripts/run_local_tests.sh
 python Comm-SCI-Control-App.py
 ```
