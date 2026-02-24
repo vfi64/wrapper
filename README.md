@@ -2,7 +2,7 @@
 
 Deterministic Python runtime for Comm-SCI governance workflows.
 
-Current app version: **1.0.0**  
+Current app version: **1.0.1**  
 Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.0.3.json`**
 
 ## DOI (current Zenodo records)

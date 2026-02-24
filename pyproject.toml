@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "comm-sci-control-app"
-version = "1.0.0"
+version = "1.0.1"
 description = "Deterministic Python runtime (UI, state machine, audit/logging) for Comm-SCI governance workflows."
 readme = "README.md"
 requires-python = ">=3.10"

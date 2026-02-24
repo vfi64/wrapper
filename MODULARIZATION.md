@@ -153,6 +153,44 @@ Current S8 verification snapshot (2026-02-24):
   python Comm-SCI-Control-App.py
   ```
 
+### S9 — Panel fallback/helper modularization (post-release, behavior-preserving)
+**Goal:** reduce panel/fallback-specific monolith logic by extracting pure helper modules while preserving pywebview runtime behavior.
+- Extract panel asset/static-selftest helpers into a dedicated module.
+- Extract panel bootstrap runtime state/fallback-decision logic into a dedicated module.
+- Extract panel fallback recreate-plan / duplicate-panel race-guard decisions into a dedicated module.
+- Keep pywebview window creation/destruction calls and `panel_action(...)` contracts unchanged in the monolith during S9.
+
+**Out of scope (S9 must not do this)**
+- No feature additions.
+- No change to `panel_action(...)` names, payload schemas, or JS callback semantics.
+- No provider/rendering behavior changes.
+- No broad UI controller/orchestrator rewrite.
+
+#### S9 acceptance checklist (completed)
+- [x] Panel asset/static-selftest helper logic extracted into a separate module with dedicated tests.
+- [x] Panel bootstrap runtime state/fallback-reason logic extracted into a separate module with dedicated tests.
+- [x] Panel fallback recreate-plan / duplicate-panel race-guard decisions extracted into a separate module with dedicated tests.
+- [x] Monolith delegates to extracted S9 helper modules using soft-import fail-open behavior.
+- [x] Targeted panel regression tests remain green after S9a-S9d.
+- [x] Manual pywebview runtime-fallback re-test passed after S9 changes (broken `panel_bootstrap_selftest` callback -> embedded fallback, no duplicate panel).
+- [x] Manual panel/manual-test smoke checks re-run after S9 changes (`qc_override_footer`, `full_regression_light`).
+
+Current S9 verification snapshot (2026-02-24):
+- Implemented/committed in private repo:
+  - `e0bf605` (`S9a`: `panel_asset_loader`)
+  - `c7a1df1` (`S9b`: `panel_bootstrap_state`)
+  - `49e8ba0` (`S9c`: `panel_window_fallback`)
+  - `e2e4910` (`S9d`: `panel_html_source`)
+- Automated: module tests for S9a-S9d (`tests/test_panel_asset_loader.py`, `tests/test_panel_bootstrap_state.py`, `tests/test_panel_window_fallback.py`, `tests/test_panel_html_source.py`) -> `22 PASS`.
+- Automated: targeted panel regression subset in `tests/test_app.py` (static selftest, runtime payload validation, bootstrap callback acceptance, duplicate-panel race guard) -> `6 PASS`.
+- Manual: pywebview broken-callback fallback re-test passed (delayed fallback to embedded panel, no duplicate-panel regression on Panel toggle); fallback evidence recorded in `Logs/Audit/AuditStream_20260224.jsonl` (`panel_bootstrap -> fallback_to_embedded`, `runtime_selftest_timeout`).
+- Manual: `qc_override_footer` -> `PASS` (`Logs/ManualTests/ManualTest_20260224_192212_736057_qc_override_footer.json`), `full_regression_light` -> `PASS` (`Logs/ManualTests/ManualTest_20260224_192619_681365_full_regression_light.json`).
+
+#### S9 execution notes
+- Keep pywebview operations (`create_window`, `destroy`, event binding, show/hide/focus) in the monolith until S9 acceptance is complete.
+- Extract only pure decisions/state transitions first; verify with focused tests before touching window-lifecycle calls.
+- Use the existing S7/S8 manual fallback test procedure as the S9 manual gate.
+
 ---
 
 ## Contribution workflow (recommended)

@@ -2,6 +2,12 @@
 
 All notable changes are documented in this file.
 
+## 1.0.1 - 2026-02-24
+
+- Completed S9 panel/fallback helper modularization (asset loading, runtime bootstrap state, fallback race-guard decisions, panel HTML source selection) without changing `panel_action(...)` contracts.
+- `src/Comm-SCI-Control-App.py` now delegates more panel/fallback decision logic to helper modules while keeping pywebview window operations in the monolith.
+- Added dedicated unit tests for extracted S9 helper modules and kept targeted panel regression tests green.
+
 ## 1.0.0 - 2026-02-24
 
 Public release milestone for the stabilized `20.0.3` baseline line (runtime/ruleset
