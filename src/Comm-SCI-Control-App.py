@@ -88,6 +88,11 @@ try:
 except Exception:
     _StorageService = None  # type: ignore
 
+try:
+    import app_bootstrap as _app_bootstrap  # type: ignore
+except Exception:
+    _app_bootstrap = None  # type: ignore
+
 # Stage 3e (CI): strict module mode. If enabled, missing extracted modules is a hard error.
 _STRICT_MODULES = (os.environ.get('WRAPPER_STRICT_MODULES', '') or '').strip().lower() in ('1', 'true', 'yes', 'on')
 if _STRICT_MODULES:
@@ -4358,7 +4363,7 @@ HTML_PANEL = """
     <option value="smoke_short">Kurztest (A+C+D+F ohne HF)</option>
     <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
     <option value="sci_format">SCI-Format (A/B)</option>
-    <option value="qc_override_footer">QC-Override + Footer (SCI B)</option>
+    <option value="qc_override_footer">QC-Override + Footer (SCI B, Gemini-Referenz)</option>
     <option value="full_regression_light">A-F (leicht, HF optional)</option>
   </select>
   <div class="row" style="margin-top:6px;">
@@ -5288,7 +5293,9 @@ async function _mtScenarioSciFormat(){
 async function _mtScenarioQcOverrideFooter(){
   let fails = 0;
   await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtSetProvider('openrouter');
+  // Deterministic reference provider for QC/SCI contract checks (credits/limits on
+  // optional providers must not turn feature-contract tests into false FAILs).
+  await _mtSetProvider('gemini');
   await _mtAsk('Expert', 30000);
   await _mtAsk('SCI menu', 30000);
   await _mtAsk('B', 30000);
@@ -15857,36 +15864,38 @@ for _name in ("_render_error_html", "_safe_html", "_handle_command_deterministic
     if _name in globals() and not hasattr(Api, _name):
         setattr(Api, _name, globals()[_name])
 
-if __name__ == '__main__':
-    if '--selftest' in sys.argv:
-        # Minimal offline self-tests (no webview / no network)
-        gov_local = GovernanceManager()
-        gov_local.load_file(DEFAULT_JSON)
-        st = GovernanceRuntimeState()
-        # max_depth from rules if available
-        try:
-            md = int(((gov_local.data.get('sci') or {}).get('recursive_sci') or {}).get('max_depth', 2))
-        except Exception:
-            md = 2
-        # Enter recursion md times should succeed; one more should fail
-        for i in range(md):
-            assert try_enter_sci_recursion(st, max_depth=md) is True
-        assert try_enter_sci_recursion(st, max_depth=md) is False
-        # Simulate one-shot auto-return
-        st.sci_recursion_one_shot = True
-        cur = int(getattr(st, 'sci_recursion_depth', 0) or 0)
-        st.sci_recursion_depth = max(cur - 1, 0)
-        assert st.sci_recursion_depth >= 0
-        print('[SelfTest] OK')
-        raise SystemExit(0)
+def _run_module_selftest():
+    # Minimal offline self-tests (no webview / no network)
+    gov_local = GovernanceManager()
+    gov_local.load_file(DEFAULT_JSON)
+    st = GovernanceRuntimeState()
+    # max_depth from rules if available
+    try:
+        md = int(((gov_local.data.get('sci') or {}).get('recursive_sci') or {}).get('max_depth', 2))
+    except Exception:
+        md = 2
+    # Enter recursion md times should succeed; one more should fail
+    for _ in range(md):
+        assert try_enter_sci_recursion(st, max_depth=md) is True
+    assert try_enter_sci_recursion(st, max_depth=md) is False
+    # Simulate one-shot auto-return
+    st.sci_recursion_one_shot = True
+    cur = int(getattr(st, 'sci_recursion_depth', 0) or 0)
+    st.sci_recursion_depth = max(cur - 1, 0)
+    assert st.sci_recursion_depth >= 0
+    print('[SelfTest] OK')
 
-    if webview is None:
-        raise SystemExit('pywebview is required. Install with: pip install pywebview')
-    if genai is None or types is None:
-        raise SystemExit('google-genai is required. Install with: pip install google-genai')
-    api = Api()
-    api.main_win = webview.create_window(
-        MAIN_WINDOW_TITLE, html=HTML_CHAT, js_api=(getattr(api, 'main_bridge', None) or api), 
+
+def _bootstrap_desktop_windows(api, webview_module):
+    if _app_bootstrap is not None:
+        return _app_bootstrap.bootstrap_desktop_windows(
+            api,
+            webview_module,
+            title=MAIN_WINDOW_TITLE,
+            html_chat=HTML_CHAT,
+        )
+    api.main_win = webview_module.create_window(
+        MAIN_WINDOW_TITLE, html=HTML_CHAT, js_api=(getattr(api, 'main_bridge', None) or api),
         width=1100, height=1000,
         x=0, y=0
     )
@@ -15897,5 +15906,30 @@ if __name__ == '__main__':
     api._create_qc_override()
     # HIER: Binden des Schließen-Events ("X") an unsere Logik
     api.main_win.events.closed += api.on_main_window_close
-    
-    webview.start(api.start_background_thread)			
+
+
+def _run_desktop_app():
+    if _app_bootstrap is not None:
+        _app_bootstrap.run_desktop_app(
+            api_factory=Api,
+            webview_module=webview,
+            genai_module=genai,
+            genai_types=types,
+            title=MAIN_WINDOW_TITLE,
+            html_chat=HTML_CHAT,
+        )
+        return
+    if webview is None:
+        raise SystemExit('pywebview is required. Install with: pip install pywebview')
+    if genai is None or types is None:
+        raise SystemExit('google-genai is required. Install with: pip install google-genai')
+    api = Api()
+    _bootstrap_desktop_windows(api, webview)
+    webview.start(api.start_background_thread)
+
+
+if __name__ == '__main__':
+    if '--selftest' in sys.argv:
+        _run_module_selftest()
+        raise SystemExit(0)
+    _run_desktop_app()

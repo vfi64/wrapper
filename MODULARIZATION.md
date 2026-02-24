@@ -115,6 +115,44 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 - Multi‑file split into packages (only after stable interfaces)
 - Additional stages only if required by new features
 
+### S8 — Composition root / window bootstrap isolation (release-oriented)
+**Goal:** make the launcher path smaller and safer without changing runtime behavior.
+- Extract the `__main__` bootstrap sequence (dependency checks, window creation order, event binding, `webview.start(...)`) into a small composition/bootstrap module or function.
+- Keep `Api` behavior, `panel_action(...)` names, payload schemas, and pywebview window timing semantics unchanged.
+- Centralize window lifecycle orchestration for main/panel/QC windows (including pre-create order and close-event wiring) behind a narrow interface.
+- Preserve deterministic local assets + fallback behavior introduced in S7 (including panel runtime self-test fallback).
+
+**Out of scope (S8 must not do this)**
+- No feature additions.
+- No provider/rendering behavior changes.
+- No broad package re-layout or multi-file split beyond bootstrap/composition extraction.
+- No UI redesign or panel action contract changes.
+
+#### S8 acceptance checklist (planned)
+- [x] `if __name__ == '__main__'` block in `Comm-SCI-Control-App.py` is reduced to a thin bootstrap call (plus minimal guard logic).
+- [x] Window creation order and behavior remain identical in manual smoke checks (main window, panel pre-create, QC window pre-create, close handling).
+- [x] Panel runtime self-test + fallback path still works (including no duplicate panel after fallback replacement).
+- [x] No change in `panel_action(...)` route names or response payload schemas.
+- [x] Targeted regression tests cover bootstrap/window lifecycle seams introduced by S8.
+- [x] Manual startup instructions use a reproducible `.venc` flow (documented for release).
+
+Current S8 verification snapshot (2026-02-24):
+- Automated: `tests/test_app_bootstrap.py` (`7 PASS`) for dependency guards, window creation order, close-event binding, and `webview.start(...)` composition-root sequencing.
+- Automated: targeted S7 panel regression tests (`5 PASS`) for panel asset static self-test, runtime payload validation, bootstrap callback acceptance, and duplicate-panel race fix.
+- Manual: panel/manual-test smoke runs passed (`qc_override_footer`, `full_regression_light`) after S8 bootstrap extraction; provider-credit warnings are treated as provider-path checks, not feature-contract failures.
+- Manual: post-S8 pywebview runtime-fallback re-test (intentionally broken `panel_bootstrap_selftest` callback) passed: delayed fallback to embedded panel works, and no duplicate-panel regression on Panel toggle.
+
+#### S8 execution notes (Variant A)
+- Prefer extraction by *composition root* (new module/function) over moving core logic between existing services.
+- Keep commits small and behavior-preserving; run manual pywebview smoke checks after each window-lifecycle change.
+- Stop once acceptance criteria are met; defer deeper refactors to post-release hardening (Variant B).
+- Reproducible local startup flow (current release candidate baseline):
+  ```bash
+  cd /Users/hof/Dropbox/Privat/GitHub/Comm-SCI-Control-private
+  source .venc/bin/activate
+  python /Users/hof/Dropbox/Privat/GitHub/Comm-SCI-Control-private/src/Comm-SCI-Control-App.py
+  ```
+
 ---
 
 ## Contribution workflow (recommended)

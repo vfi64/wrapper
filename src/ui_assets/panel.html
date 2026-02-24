@@ -88,7 +88,7 @@
     <option value="smoke_short">Kurztest (A+C+D+F ohne HF)</option>
     <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
     <option value="sci_format">SCI-Format (A/B)</option>
-    <option value="qc_override_footer">QC-Override + Footer (SCI B)</option>
+    <option value="qc_override_footer">QC-Override + Footer (SCI B, Gemini-Referenz)</option>
     <option value="full_regression_light">A-F (leicht, HF optional)</option>
   </select>
   <div class="row" style="margin-top:6px;">
@@ -1092,7 +1092,9 @@ async function _mtScenarioSciFormat(){
 async function _mtScenarioQcOverrideFooter(){
   let fails = 0;
   await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtSetProvider('openrouter');
+  // Deterministic reference provider for QC/SCI contract checks (credits/limits on
+  // optional providers must not turn feature-contract tests into false FAILs).
+  await _mtSetProvider('gemini');
   await _mtAsk('Expert', 30000);
   await _mtAsk('SCI menu', 30000);
   await _mtAsk('B', 30000);
