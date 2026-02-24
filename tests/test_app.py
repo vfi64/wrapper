@@ -3865,6 +3865,17 @@ def test_panel_action_accepts_panel_bootstrap_selftest_callback():
     assert (api.panel_bootstrap_state or {}).get("status") == "passed"
 
 
+def test_on_panel_closed_ignores_retired_panel_close_event_once():
+    mod = load_fix_module()
+    api = mod.Api()
+    marker = object()
+    api.panel_win = marker
+    api._panel_closed_ignore_count = 1
+    api.on_panel_closed()
+    assert api.panel_win is marker
+    assert api._panel_closed_ignore_count == 0
+
+
 def test_route_input_passes_through_chat_when_comm_inactive_except_comm_start():
     mod = load_fix_module()
     _prime_module_gov(mod)

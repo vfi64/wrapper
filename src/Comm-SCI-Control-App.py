@@ -12134,20 +12134,27 @@ class CSCRefiner:
         except Exception:
             pass
 
+        old_win = getattr(self, "panel_win", None)
         try:
-            self._remember_window_geom(getattr(self, "panel_win", None), "panel")
-        except Exception:
-            pass
-        try:
-            if getattr(self, "panel_win", None) is not None:
-                self.panel_win.destroy()
+            self._remember_window_geom(old_win, "panel")
         except Exception:
             pass
         self.panel_win = None
         self.panel_hidden = False
         self._panel_force_embedded_html = True
         try:
+            # Create replacement panel first (hidden), then retire the old one.
+            # The old window's delayed "closed" callback is ignored once below.
             self._create_panel()
+            if old_win is not None:
+                try:
+                    self._panel_closed_ignore_count = int(getattr(self, "_panel_closed_ignore_count", 0) or 0) + 1
+                except Exception:
+                    self._panel_closed_ignore_count = 1
+                try:
+                    old_win.destroy()
+                except Exception:
+                    pass
             return True
         except Exception as e:
             try:
@@ -12672,6 +12679,16 @@ class CSCRefiner:
                 pass
 
     def on_panel_closed(self):
+        # S7 fallback can destroy a retired panel after a replacement panel already exists.
+        # Ignore that one late closed event so it does not clear the replacement handle.
+        try:
+            if getattr(self, "panel_win", None) is not None:
+                _n = int(getattr(self, "_panel_closed_ignore_count", 0) or 0)
+                if _n > 0:
+                    self._panel_closed_ignore_count = _n - 1
+                    return
+        except Exception:
+            pass
         # remember last geometry if possible
         try:
             self._remember_window_geom(self.panel_win, "panel")
@@ -15319,6 +15336,7 @@ class Api(CSCRefiner):
         self.panel_bootstrap_last_report = None
         self.panel_bootstrap_timeout_s = 2.5
         self._panel_bootstrap_ready_event = threading.Event()
+        self._panel_closed_ignore_count = 0
         try:
             self._panel_bootstrap_ready_event.set()
         except Exception:
