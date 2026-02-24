@@ -179,6 +179,83 @@ async function _apiCall(name, args, timeoutMs) {
   return await Promise.race([p, t]);
 }
 
+let _panelBootstrapReported = false;
+
+function _panelDomRuntimeSelftestOk(){
+  const requiredIds = ['provider', 'model', 'anslang', 'manualTestScenario', 'manualTestMonitorMode', 'ui'];
+  for(const id of requiredIds){
+    if(!document.getElementById(id)) return false;
+  }
+  return true;
+}
+
+function _panelDynamicSectionCount(data){
+  const keys = ['comm', 'profiles', 'sci', 'overlays', 'tools'];
+  let n = 0;
+  for(const k of keys){
+    try {
+      const v = data ? data[k] : null;
+      if(Array.isArray(v) && v.length) n += 1;
+    } catch(e) {}
+  }
+  return n;
+}
+
+function _buildPanelBootstrapSelftestReport(data, pong){
+  const loaded = !!(data && data.loaded === true);
+  const domOk = _panelDomRuntimeSelftestOk();
+  const dynamicSectionCount = _panelDynamicSectionCount(data || {});
+  const report = {
+    ok: true,
+    source: 'external_panel_asset',
+    bridge_ping: !!(pong && pong.ok === true),
+    build_ui: true,
+    dom_ok: !!domOk,
+    data_loaded: loaded,
+    dynamic_section_count: dynamicSectionCount,
+    counts: {
+      comm: Array.isArray(data && data.comm) ? data.comm.length : 0,
+      profiles: Array.isArray(data && data.profiles) ? data.profiles.length : 0,
+      sci: Array.isArray(data && data.sci) ? data.sci.length : 0,
+      overlays: Array.isArray(data && data.overlays) ? data.overlays.length : 0,
+      tools: Array.isArray(data && data.tools) ? data.tools.length : 0,
+    }
+  };
+
+  if(!report.bridge_ping){
+    report.ok = false;
+    report.reason = 'bridge_ping_missing';
+    return report;
+  }
+  if(!report.dom_ok){
+    report.ok = false;
+    report.reason = 'dom_markers_missing';
+    return report;
+  }
+  if(loaded && dynamicSectionCount <= 0){
+    report.ok = false;
+    report.reason = 'loaded_ruleset_but_no_dynamic_sections';
+    return report;
+  }
+  report.reason = '';
+  return report;
+}
+
+async function _reportPanelBootstrapSelftestOnce(report){
+  if(_panelBootstrapReported) return false;
+  if(!report || report.ok !== true) return false;
+  try {
+    const res = await _apiCall('panel_action', ['panel_bootstrap_selftest', report], 1500);
+    if(res && res.ok === false) throw new Error(String(res.error || 'panel_bootstrap_selftest rejected'));
+    _panelBootstrapReported = true;
+    _log('panel bootstrap selftest reported');
+    return true;
+  } catch(e) {
+    _log('panel bootstrap selftest report failed: ' + (e && e.message ? e.message : String(e)));
+    return false;
+  }
+}
+
 /* ---------- UI rendering ---------- */
 function _storageKeyForModelQuery(provider){
   return `model_query_${provider||'unknown'}`;
@@ -333,6 +410,7 @@ async function buildUI(){
     data = {};
   }
   buildUIFromData(data);
+  return data;
 }
 
 /* ---------- fail-open bootstrap with retry ---------- */
@@ -348,7 +426,12 @@ async function _tryBringOnline(){
   const pong = await _apiCall('ping', [], 800);
   if(!pong || pong.ok !== true) throw new Error('ping failed');
   _log('bridge ok (ping)');
-  await buildUI();
+  const data = await buildUI();
+  const bootstrapReport = _buildPanelBootstrapSelftestReport(data || {}, pong || {});
+  if(!bootstrapReport.ok){
+    throw new Error('panel bootstrap selftest failed: ' + String(bootstrapReport.reason || 'unknown'));
+  }
+  _reportPanelBootstrapSelftestOnce(bootstrapReport).catch(()=>{});
   _setStatus('Panel ready (online)', 'ok');
   return true;
 }

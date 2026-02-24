@@ -450,48 +450,95 @@ def _env_flag_enabled(name: str) -> bool:
     return v in {'1', 'true', 'yes', 'on'}
 
 
-def _panel_asset_static_selftest_ok(panel_html: str) -> bool:
-    """Static sanity checks before canary-enabling external panel.html.
-
-    This catches accidental file truncation/partial edits. It cannot validate the
-    pywebview runtime bridge; runtime remains fail-open by default via env-gated canary.
-    """
+def _panel_asset_static_selftest_report(panel_html: str) -> dict:
+    """Static sanity checks for external panel.html across legacy/current marker variants."""
     txt = panel_html or ''
-    required_markers = (
-        'function panelAction(',
-        'function buildUI(',
-        'window.pywebview',
-        'id="provider"',
-        'id="model"',
-        'id="answer-language"',
-        'id="manual-test-scenario"',
-        'id="monitor-visibility"',
-        'comm-core-grid',
-        'profiles-grid',
-        'sci-grid',
-        'modes-grid',
-        'tools-grid',
-    )
-    return all(m in txt for m in required_markers)
+
+    # Accept both historical and current marker names so the self-test checks
+    # structure/behavioral anchors instead of one exact HTML snapshot.
+    marker_groups = {
+        "action_fn": ('function panelAction(', 'function run('),
+        "build_ui_fn": ('function buildUI(',),
+        "pywebview_bridge": ('window.pywebview',),
+        "provider_select": ('id="provider"',),
+        "model_select": ('id="model"',),
+        "answer_language": ('id="answer-language"', 'id="anslang"'),
+        "manual_test_scenario": ('id="manual-test-scenario"', 'id="manualTestScenario"'),
+        "monitor_visibility": ('id="monitor-visibility"', 'id="manualTestMonitorMode"'),
+        "dynamic_sections": (
+            'comm-core-grid',
+            "section('Comm Core'",
+            'section("Comm Core"',
+        ),
+    }
+
+    missing = []
+    matched = {}
+    for key, variants in marker_groups.items():
+        hit = None
+        for marker in variants:
+            if marker in txt:
+                hit = marker
+                break
+        matched[key] = hit
+        if hit is None:
+            missing.append(key)
+
+    return {
+        "ok": (len(missing) == 0),
+        "missing": missing,
+        "matched": matched,
+    }
 
 
-def _load_panel_asset_text_canary(fallback_text: str) -> str:
-    """Load external panel.html only when explicitly enabled and statically valid.
+def _panel_asset_static_selftest_ok(panel_html: str) -> bool:
+    try:
+        return bool((_panel_asset_static_selftest_report(panel_html) or {}).get("ok"))
+    except Exception:
+        return False
 
-    Default behavior remains the embedded panel template to avoid pywebview field
-    regressions. Set COMM_SCI_ENABLE_PANEL_ASSET=1 to canary-test external panel.html.
-    """
-    if not _env_flag_enabled('COMM_SCI_ENABLE_PANEL_ASSET'):
-        return fallback_text
+
+def _panel_runtime_selftest_payload_ok(payload) -> tuple[bool, str]:
+    """Validate panel runtime-selftest callback payload from external panel.html."""
+    if not isinstance(payload, dict):
+        return False, "payload_not_dict"
+    if payload.get("ok") is not True:
+        return False, "js_report_not_ok"
+    if payload.get("bridge_ping") is not True:
+        return False, "bridge_ping_missing"
+    if payload.get("build_ui") is not True:
+        return False, "build_ui_missing"
+    if payload.get("dom_ok") is not True:
+        return False, "dom_markers_missing"
+
+    try:
+        loaded = (payload.get("data_loaded") is True)
+    except Exception:
+        loaded = False
+    try:
+        dyn_count = int(payload.get("dynamic_section_count", 0) or 0)
+    except Exception:
+        dyn_count = 0
+    if loaded and dyn_count <= 0:
+        return False, "loaded_ruleset_but_no_dynamic_sections"
+    return True, ""
+
+
+def _load_panel_asset_text_s7(fallback_text: str):
+    """Prefer external panel.html when static self-test passes; runtime self-test happens pre-show."""
     txt = _load_ui_asset_text('panel.html', '')
     if not txt:
-        print('[S7] panel.html canary requested but asset missing/unreadable; using embedded panel.')
-        return fallback_text
-    if not _panel_asset_static_selftest_ok(txt):
-        print('[S7] panel.html canary failed static self-test; using embedded panel.')
-        return fallback_text
-    print('[S7] panel.html canary enabled (static self-test passed).')
-    return txt
+        print('[S7] panel.html asset missing/unreadable; using embedded panel.')
+        return fallback_text, {"source": "embedded", "reason": "missing_asset", "static_ok": False}
+
+    report = _panel_asset_static_selftest_report(txt)
+    if not report.get("ok"):
+        miss = ",".join(report.get("missing") or []) or "unknown"
+        print(f"[S7] panel.html static self-test failed ({miss}); using embedded panel.")
+        return fallback_text, {"source": "embedded", "reason": "static_selftest_failed", "static_ok": False, "report": report}
+
+    print('[S7] panel.html external asset enabled (static self-test passed; runtime self-test pending).')
+    return txt, {"source": "external", "reason": "static_selftest_passed", "static_ok": True, "report": report}
 
 # ----------------------------
 # STUFE 0: Golden Run Checklist (manual, non-network)
@@ -5584,11 +5631,13 @@ HTML_QC_OVERRIDE = """
 </html>
 """
 
-# S7 (UI assets): prefer externalized templates, keep embedded strings as fail-open fallback.
-# panel.html remains embedded by default. External panel can be canary-tested via
-# COMM_SCI_ENABLE_PANEL_ASSET=1 and only passes through after a static self-test.
+# S7 (UI assets): prefer externalized templates, keep embedded strings as deterministic fallback.
+# panel.html is loaded from the external asset when its static self-test passes; the first
+# visible show still requires a runtime self-test callback, otherwise the app falls back to
+# the embedded panel before showing it.
 HTML_CHAT_TEMPLATE = _load_ui_asset_text("chat_template.html", HTML_CHAT_TEMPLATE)
-HTML_PANEL = _load_panel_asset_text_canary(HTML_PANEL)
+HTML_PANEL_EMBEDDED = HTML_PANEL
+HTML_PANEL, PANEL_HTML_ASSET_META = _load_panel_asset_text_s7(HTML_PANEL)
 HTML_QC_OVERRIDE = _load_ui_asset_text("qc_override.html", HTML_QC_OVERRIDE)
 
 HTML_MANUAL_TEST_MONITOR = """
@@ -10909,6 +10958,13 @@ class CSCRefiner:
         except Exception:
             pass
 
+        if action_s == 'panel_bootstrap_selftest':
+            try:
+                info = self._panel_accept_bootstrap_report(payload)
+            except Exception as e:
+                info = {'accepted': False, 'runtime_ok': False, 'reason': f'{type(e).__name__}: {e}'}
+            return _ok(info, runtime_ok=bool((info or {}).get('runtime_ok')))
+
         try:
             if action_s == 'cmd':
                 # Execute via main window pipeline so results appear in the chat UI.
@@ -11945,6 +12001,206 @@ class CSCRefiner:
                 pass
         return geom
 
+    def _panel_get_embedded_html(self) -> str:
+        try:
+            txt = globals().get("HTML_PANEL_EMBEDDED")
+            if isinstance(txt, str) and txt:
+                return txt
+        except Exception:
+            pass
+        try:
+            txt = globals().get("HTML_PANEL")
+            if isinstance(txt, str):
+                return txt
+        except Exception:
+            pass
+        return ""
+
+    def _panel_select_html_for_window(self):
+        if bool(getattr(self, "_panel_force_embedded_html", False)):
+            return self._panel_get_embedded_html(), "embedded"
+        try:
+            txt = globals().get("HTML_PANEL")
+            if not isinstance(txt, str) or not txt:
+                txt = self._panel_get_embedded_html()
+        except Exception:
+            txt = self._panel_get_embedded_html()
+        try:
+            meta = globals().get("PANEL_HTML_ASSET_META") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+        except Exception:
+            meta = {}
+        src = str(meta.get("source") or "embedded")
+        if not txt:
+            src = "embedded"
+        return txt, ("external" if src == "external" else "embedded")
+
+    def _panel_begin_bootstrap_probe(self, source: str) -> None:
+        src = str(source or "embedded")
+        now_iso = None
+        try:
+            now_iso = datetime.now().isoformat()
+        except Exception:
+            now_iso = None
+        try:
+            ev = getattr(self, "_panel_bootstrap_ready_event", None)
+            if ev is None:
+                ev = threading.Event()
+                self._panel_bootstrap_ready_event = ev
+            if src == "external":
+                ev.clear()
+            else:
+                ev.set()
+        except Exception:
+            pass
+        self.panel_bootstrap_state = {
+            "status": ("pending" if src == "external" else "skipped"),
+            "source": src,
+            "reason": "",
+            "created_at": now_iso,
+            "reported_at": None,
+        }
+        self.panel_html_source = src
+
+    def _panel_accept_bootstrap_report(self, payload=None) -> dict:
+        payload = payload or {}
+        state = getattr(self, "panel_bootstrap_state", None)
+        if not isinstance(state, dict):
+            state = {}
+            self.panel_bootstrap_state = state
+        if str(state.get("source") or "embedded") != "external":
+            try:
+                ev = getattr(self, "_panel_bootstrap_ready_event", None)
+                if ev is not None:
+                    ev.set()
+            except Exception:
+                pass
+            return {"accepted": False, "ignored": True, "reason": "panel_source_not_external"}
+
+        ok, why = _panel_runtime_selftest_payload_ok(payload)
+        state["status"] = "passed" if ok else "failed"
+        state["reason"] = ("" if ok else str(why or "invalid_runtime_selftest"))
+        try:
+            state["reported_at"] = datetime.now().isoformat()
+        except Exception:
+            state["reported_at"] = None
+        try:
+            self.panel_bootstrap_last_report = dict(payload) if isinstance(payload, dict) else {"raw": str(payload)}
+        except Exception:
+            self.panel_bootstrap_last_report = {"raw": "<unserializable>"}
+        try:
+            ev = getattr(self, "_panel_bootstrap_ready_event", None)
+            if ev is not None:
+                ev.set()
+        except Exception:
+            pass
+        try:
+            self.log_event("panel_bootstrap", {
+                "event": "runtime_selftest_report",
+                "ok": bool(ok),
+                "reason": ("" if ok else str(why or "")),
+                "source": "external",
+            })
+        except Exception:
+            pass
+        return {"accepted": True, "runtime_ok": bool(ok), "reason": ("" if ok else str(why or ""))}
+
+    def _panel_swap_to_embedded_fallback(self, reason: str = "runtime_selftest_failed") -> bool:
+        """Replace a pending/failed external panel with the embedded fallback before showing it."""
+        try:
+            state = getattr(self, "panel_bootstrap_state", None)
+            if not isinstance(state, dict):
+                state = {}
+                self.panel_bootstrap_state = state
+            state["status"] = "failed"
+            state["reason"] = str(reason or "runtime_selftest_failed")
+            state["source"] = "external"
+            try:
+                state["reported_at"] = datetime.now().isoformat()
+            except Exception:
+                pass
+            ev = getattr(self, "_panel_bootstrap_ready_event", None)
+            if ev is not None:
+                ev.set()
+        except Exception:
+            pass
+
+        try:
+            self.log_event("panel_bootstrap", {
+                "event": "fallback_to_embedded",
+                "reason": str(reason or "runtime_selftest_failed"),
+            })
+        except Exception:
+            pass
+
+        try:
+            self._remember_window_geom(getattr(self, "panel_win", None), "panel")
+        except Exception:
+            pass
+        try:
+            if getattr(self, "panel_win", None) is not None:
+                self.panel_win.destroy()
+        except Exception:
+            pass
+        self.panel_win = None
+        self.panel_hidden = False
+        self._panel_force_embedded_html = True
+        try:
+            self._create_panel()
+            return True
+        except Exception as e:
+            try:
+                self.log_event("panel_bootstrap", {
+                    "event": "fallback_recreate_failed",
+                    "reason": str(e),
+                }, level="error")
+            except Exception:
+                pass
+            return False
+
+    def _panel_wait_bootstrap_or_fallback(self, timeout_s=None) -> bool:
+        state = getattr(self, "panel_bootstrap_state", None)
+        if not isinstance(state, dict):
+            return True
+        if str(state.get("source") or "embedded") != "external":
+            return True
+        if str(state.get("status") or "") == "passed":
+            return True
+
+        wait_s = timeout_s
+        if wait_s is None:
+            try:
+                wait_s = float(getattr(self, "panel_bootstrap_timeout_s", 2.5) or 2.5)
+            except Exception:
+                wait_s = 2.5
+        try:
+            wait_s = max(0.0, float(wait_s))
+        except Exception:
+            wait_s = 2.5
+
+        try:
+            ev = getattr(self, "_panel_bootstrap_ready_event", None)
+            if ev is not None and str(state.get("status") or "") == "pending":
+                ev.wait(wait_s)
+        except Exception:
+            pass
+
+        state = getattr(self, "panel_bootstrap_state", None)
+        if not isinstance(state, dict):
+            return True
+        if str(state.get("status") or "") == "passed":
+            return True
+
+        reason = str(state.get("reason") or "").strip()
+        if not reason:
+            if str(state.get("status") or "") == "pending":
+                reason = "runtime_selftest_timeout"
+            else:
+                reason = "runtime_selftest_failed"
+        self._panel_swap_to_embedded_fallback(reason)
+        return False
+
 
     def _create_panel(self):
         # Geometry: prefer persisted config; fallback to current defaults
@@ -11971,11 +12227,13 @@ class CSCRefiner:
         if panel_y < 0 or panel_y > 3000:
             panel_y = 50
 
+        panel_html, panel_html_source = self._panel_select_html_for_window()
+
         # Panel window must receive the same js_api object as the main window.
         # (Secondary windows can otherwise miss methods like get_ui/ping on some backends.)
         kwargs = dict(
             title=PANEL_WINDOW_TITLE,
-            html=HTML_PANEL,
+            html=panel_html,
             js_api=(self.panel_bridge or self),
             width=panel_w,
             height=panel_h,
@@ -11996,6 +12254,10 @@ class CSCRefiner:
             self.panel_hidden = False
 
         self.panel_win = win
+        try:
+            self._panel_begin_bootstrap_probe(panel_html_source)
+        except Exception:
+            pass
         try:
             self._bind_panel_window_events(self.panel_win)
         except Exception:
@@ -12323,6 +12585,12 @@ class CSCRefiner:
             self._create_panel()
             return
         try:
+            # S7: external panel.html is only shown after a runtime self-test callback.
+            # If it never arrives, rebuild hidden with the embedded fallback first.
+            self._panel_wait_bootstrap_or_fallback()
+        except Exception:
+            pass
+        try:
             if hasattr(self.panel_win, "show"):
                 self.panel_win.show()
             if hasattr(self.panel_win, "restore"):
@@ -12407,6 +12675,19 @@ class CSCRefiner:
         # remember last geometry if possible
         try:
             self._remember_window_geom(self.panel_win, "panel")
+        except Exception:
+            pass
+        try:
+            self.panel_bootstrap_state = {
+                "status": "idle",
+                "source": str(getattr(self, "panel_html_source", "embedded") or "embedded"),
+                "reason": "window_closed",
+                "created_at": None,
+                "reported_at": None,
+            }
+            ev = getattr(self, "_panel_bootstrap_ready_event", None)
+            if ev is not None:
+                ev.set()
         except Exception:
             pass
         self.panel_win = None
@@ -15017,6 +15298,31 @@ class Api(CSCRefiner):
             self.main_bridge = MainBridge(self)
         except Exception:
             self.main_bridge = None
+
+        # S7 panel asset bootstrap/runtime self-test state
+        self._panel_force_embedded_html = False
+        try:
+            _meta = globals().get("PANEL_HTML_ASSET_META") or {}
+            if not isinstance(_meta, dict):
+                _meta = {}
+        except Exception:
+            _meta = {}
+        self.panel_html_source = str(_meta.get("source") or "embedded")
+        self.panel_html_asset_meta = dict(_meta)
+        self.panel_bootstrap_state = {
+            "status": "idle",          # idle | pending | passed | failed | skipped
+            "source": self.panel_html_source,
+            "reason": "",
+            "created_at": None,
+            "reported_at": None,
+        }
+        self.panel_bootstrap_last_report = None
+        self.panel_bootstrap_timeout_s = 2.5
+        self._panel_bootstrap_ready_event = threading.Event()
+        try:
+            self._panel_bootstrap_ready_event.set()
+        except Exception:
+            pass
 
 
         # Closing guard (prevents double-exit)

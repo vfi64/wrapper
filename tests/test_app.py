@@ -3823,6 +3823,48 @@ def test_panel_asset_static_selftest_ok_rejects_missing_markers():
     assert mod._panel_asset_static_selftest_ok(html) is False
 
 
+def test_panel_asset_static_selftest_accepts_current_panel_html_variant():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_PANEL", "")
+    assert isinstance(html, str) and html
+    assert mod._panel_asset_static_selftest_ok(html) is True
+
+
+def test_panel_runtime_selftest_payload_ok_rejects_loaded_without_dynamic_sections():
+    mod = load_fix_module()
+    ok, why = mod._panel_runtime_selftest_payload_ok({
+        "ok": True,
+        "bridge_ping": True,
+        "build_ui": True,
+        "dom_ok": True,
+        "data_loaded": True,
+        "dynamic_section_count": 0,
+    })
+    assert ok is False
+    assert why == "loaded_ruleset_but_no_dynamic_sections"
+
+
+def test_panel_action_accepts_panel_bootstrap_selftest_callback():
+    mod = load_fix_module()
+    api = mod.Api()
+    # Simulate an externally loaded panel pending runtime verification.
+    api._panel_begin_bootstrap_probe("external")
+    out = api.panel_action("panel_bootstrap_selftest", {
+        "ok": True,
+        "bridge_ping": True,
+        "build_ui": True,
+        "dom_ok": True,
+        "data_loaded": True,
+        "dynamic_section_count": 3,
+    })
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    res = out.get("result") or {}
+    assert res.get("accepted") is True
+    assert res.get("runtime_ok") is True
+    assert (api.panel_bootstrap_state or {}).get("status") == "passed"
+
+
 def test_route_input_passes_through_chat_when_comm_inactive_except_comm_start():
     mod = load_fix_module()
     _prime_module_gov(mod)

@@ -100,20 +100,23 @@ Konsequenz:
 - Panel-HTML/JS und Python-Handler sind im Monolithen an mehreren Stellen erweitert worden
 - Auslagerung erfordert strikt gleiche Bootstrap-/Bridge-Semantik
 
-## S7-Naechster sicherer Ansatz fuer `panel.html`
+## S7-Naechster sicherer Ansatz fuer `panel.html` (umgesetzt)
 
-1. Externe Datei **zunaechst nur laden**, aber nicht als aktive Quelle verwenden (Done/teilweise)
-2. Runtime-Selbsttest vor Aktivierung:
+1. Externe Datei statisch pruefen (Marker-/Struktur-Selbsttest)
+2. Externes `panel.html` als aktive Quelle laden (nur bei bestandenem Static-Selftest)
+3. Runtime-Selbsttest vor erstem sichtbaren `show()`:
    - `ping` erfolgreich
    - `buildUI()` erfolgreich
+   - DOM-Kernmarker vorhanden
    - `data.comm/profiles/...` nicht leer (falls ruleset geladen)
-3. Erst dann aktive Umschaltung auf externes `panel.html`
-4. Bei Fehler:
-   - automatische Rueckfallebene auf eingebettetes `HTML_PANEL`
-   - Log-Hinweis in `gov.log`
+4. Bei Fehler/Timeout:
+   - automatische Rueckfallebene auf eingebettetes `HTML_PANEL` **vor dem Anzeigen**
+   - Log-Hinweis in Session-Events (`panel_bootstrap`)
 
 ## Aktueller S7-Stand
 
 - `qc_override.html` extern aktiv (mit Fallback)
-- `panel.html` extern vorhanden, aber **aktiv deaktiviert** (Stabilitaets-Rueckstellung)
-- Nächster sinnvoller Schritt: Loader-Härtung fuer `panel.html` mit Runtime-Selbsttest statt direkter Aktivierung
+- `manual_test_monitor.html` extern aktiv (mit Fallback)
+- `chat_template.html` extern aktiv (mit Fallback)
+- `panel.html` extern aktiv, aber nur nach Static-Selftest + Runtime-Selbsttest; bei Fehler/Timeout automatischer Fallback auf eingebettetes `HTML_PANEL`
+- Verbleibendes S7-Risiko: manuelle GUI-Validierung auf pywebview-Backend (Mac) fuer echtes Fensterverhalten/Timing

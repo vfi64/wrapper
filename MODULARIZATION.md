@@ -104,8 +104,8 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 - Add tests for asset loading/fallback and key invariants (required JS functions, panel controls present).
 
 #### S7 acceptance checklist (planned)
-- [ ] Panel HTML/JS is loaded from local asset file(s) with deterministic fallback.
-- [ ] Chat HTML/JS/CSS is loaded from local asset file(s) with deterministic fallback.
+- [x] Panel HTML/JS is loaded from local asset file(s) with deterministic fallback.
+- [x] Chat HTML/JS/CSS is loaded from local asset file(s) with deterministic fallback.
 - [ ] No change in `panel_action` command names or payload schemas.
 - [ ] Existing panel/manual-test smoke checks remain green.
 - [ ] Wrapper file size is materially reduced (documented delta).
