@@ -5,6 +5,13 @@ Deterministic Python runtime for Comm-SCI governance workflows.
 Current app version: **20.0.3**  
 Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.0.3.json`**
 
+## DOI (current Zenodo records)
+
+- Wrapper (concept DOI / all versions): [10.5281/zenodo.18445672](https://doi.org/10.5281/zenodo.18445672)
+- Wrapper (version DOI / current public release `v1.0.0 (JSON-v20.0.3)`): [10.5281/zenodo.18759479](https://doi.org/10.5281/zenodo.18759479)
+- Ruleset (concept DOI / all versions): [10.5281/zenodo.17928357](https://doi.org/10.5281/zenodo.17928357)
+- Ruleset (version DOI / currently maintained Zenodo release): [10.5281/zenodo.18154098](https://doi.org/10.5281/zenodo.18154098)
+
 ## Quick Start (recommended, reproducible)
 
 ```bash

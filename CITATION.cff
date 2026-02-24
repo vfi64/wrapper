@@ -5,19 +5,19 @@ message: "If you use this software in academic work, please cite it. For the gov
 authors:
   - family-names: Fickert
     given-names: Volker
-version: "20.0.3"
-date-released: 2026-02-20
+version: "1.0.0"
+date-released: 2026-02-24
 license: Apache-2.0
 repository: https://github.com/vfi64/wrapper
 repository-code: https://github.com/vfi64/wrapper
-doi: 10.5281/zenodo.18445673
+doi: 10.5281/zenodo.18445672
 preferred-citation:
   type: software
   authors:
     - family-names: Fickert
       given-names: Volker
   title: "Comm-SCI-Control-App"
-  version: "20.0.3"
+  version: "1.0.0"
   year: 2026
   url: https://github.com/vfi64/wrapper
 
@@ -28,4 +28,4 @@ references:
       - family-names: Fickert
         given-names: Volker
     url: https://github.com/vfi64/Comm-SCI-Control
-    doi: 10.5281/zenodo.18445673
+    doi: 10.5281/zenodo.17928357

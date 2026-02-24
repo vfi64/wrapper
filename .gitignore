@@ -10,7 +10,24 @@ Logs/**
 
 __pycache__/
 *.pyc
+
+# Pytest / test-run artifacts (local only)
 .pytest_cache/
+pytestdebug.log
+.hypothesis/
+
+# Coverage / test reports (local only)
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+junit.xml
+pytest.xml
+
+# Python test env runners (local only)
+.tox/
+.nox/
+
 .venv/
 .venc/
 *.egg-info/
