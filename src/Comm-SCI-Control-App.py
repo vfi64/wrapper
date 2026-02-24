@@ -407,6 +407,7 @@ except Exception:
 # ----------------------------
 # Project paths (relative to script directory)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+UI_ASSETS_DIR = os.path.join(SCRIPT_DIR, 'ui_assets')
 
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
 
@@ -425,6 +426,72 @@ for _d in (JSON_DIR, CONFIG_DIR, LOGS_DIR, AUDIT_LOG_DIR, CHAT_LOG_DIR, USAGE_LO
         os.makedirs(_d, exist_ok=True)
     except Exception:
         pass
+
+
+def _load_ui_asset_text(filename: str, fallback_text: str) -> str:
+    """Load optional external UI asset text with deterministic fail-open fallback.
+
+    S7 goal: move large embedded UI templates out of the monolith without changing
+    runtime behavior. If the file is missing/unreadable, keep the embedded string.
+    """
+    try:
+        path = os.path.join(UI_ASSETS_DIR, filename)
+        if not os.path.isfile(path):
+            return fallback_text
+        with open(path, 'r', encoding='utf-8') as f:
+            txt = f.read()
+        return txt if txt else fallback_text
+    except Exception:
+        return fallback_text
+
+
+def _env_flag_enabled(name: str) -> bool:
+    v = (os.environ.get(name) or '').strip().lower()
+    return v in {'1', 'true', 'yes', 'on'}
+
+
+def _panel_asset_static_selftest_ok(panel_html: str) -> bool:
+    """Static sanity checks before canary-enabling external panel.html.
+
+    This catches accidental file truncation/partial edits. It cannot validate the
+    pywebview runtime bridge; runtime remains fail-open by default via env-gated canary.
+    """
+    txt = panel_html or ''
+    required_markers = (
+        'function panelAction(',
+        'function buildUI(',
+        'window.pywebview',
+        'id="provider"',
+        'id="model"',
+        'id="answer-language"',
+        'id="manual-test-scenario"',
+        'id="monitor-visibility"',
+        'comm-core-grid',
+        'profiles-grid',
+        'sci-grid',
+        'modes-grid',
+        'tools-grid',
+    )
+    return all(m in txt for m in required_markers)
+
+
+def _load_panel_asset_text_canary(fallback_text: str) -> str:
+    """Load external panel.html only when explicitly enabled and statically valid.
+
+    Default behavior remains the embedded panel template to avoid pywebview field
+    regressions. Set COMM_SCI_ENABLE_PANEL_ASSET=1 to canary-test external panel.html.
+    """
+    if not _env_flag_enabled('COMM_SCI_ENABLE_PANEL_ASSET'):
+        return fallback_text
+    txt = _load_ui_asset_text('panel.html', '')
+    if not txt:
+        print('[S7] panel.html canary requested but asset missing/unreadable; using embedded panel.')
+        return fallback_text
+    if not _panel_asset_static_selftest_ok(txt):
+        print('[S7] panel.html canary failed static self-test; using embedded panel.')
+        return fallback_text
+    print('[S7] panel.html canary enabled (static self-test passed).')
+    return txt
 
 # ----------------------------
 # STUFE 0: Golden Run Checklist (manual, non-network)
@@ -642,6 +709,17 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
         sci_pending = bool(getattr(state, 'sci_pending', False))
     except Exception:
         sci_pending = False
+
+    # Comm-off gate (strict parsing disable): only "Comm Start" is interpreted locally.
+    # Everything else is passed through as plain chat so the LLM sees it as normal content.
+    try:
+        comm_active_now = bool(getattr(state, 'comm_active', True))
+    except Exception:
+        comm_active_now = False
+    if not comm_active_now:
+        if txt == 'Comm Start':
+            return {'kind': 'command', 'canonical_cmd': 'Comm Start'}
+        return {'kind': 'chat', 'txt': txt}
 
     # Standalone-only: exact command tokens only.
     # If a command token is mixed with additional text (e.g. "Profile Expert what is time?"),
@@ -2029,6 +2107,42 @@ def normalize_known_markdown_control_headings(text: str) -> str:
             parts[i] = pat_sub.sub(_repl_sub, parts[i])
 
         return "```".join(parts)
+    except Exception:
+        return text
+
+
+def unwrap_accidental_full_text_codefence(text: str) -> str:
+    """Unwrap a full-response fenced code block when it clearly contains governance chat output.
+
+    Some weaker models occasionally wrap normal prose/governance responses in ```text ... ```
+    which causes the Markdown renderer to escape color spans and keep markdown markers visible.
+    We only unwrap when the fenced payload contains strong wrapper-specific markers.
+    """
+    try:
+        if not text:
+            return text
+        s = str(text).strip()
+        m = re.match(r"(?is)^```(?:\s*(?:text|txt|markdown|md))?\s*\n(?P<body>.*?)(?:\n)?```\s*$", s)
+        if not m:
+            return text
+        body = (m.group("body") or "").strip("\n")
+        if not body:
+            return text
+
+        probe = str(body)
+        probe_low = probe.lower()
+        governance_markers = (
+            "qc-matrix:" in probe_low
+            or "self-debunking" in probe_low
+            or "selbst-debunking" in probe_low
+            or "sci trace" in probe_low
+            or "active profile:" in probe_low
+            or "profile standard" in probe_low
+            or "<span style=" in probe_low
+        )
+        if not governance_markers:
+            return text
+        return body
     except Exception:
         return text
 
@@ -3752,7 +3866,7 @@ def _init_state_from_rules():
     prof = ui.get("defaults", {}).get("profile", "Standard") or "Standard"
     ov = ui.get("defaults", {}).get("overlay", "") or ""
     col = ui.get("defaults", {}).get("color_default", "on") or "on"
-    return GovernanceRuntimeState(comm_active=False, active_profile=prof, overlay=ov, color=col, conversation_language=(UI_LANG or '').lower(), answer_language=(getattr(cfg, "get_answer_language", lambda: "de")() or "de"), sci_pending=False, sci_variant="", sci_active=False)
+    return GovernanceRuntimeState(comm_active=True, active_profile=prof, overlay=ov, color=col, conversation_language=(UI_LANG or '').lower(), answer_language=(getattr(cfg, "get_answer_language", lambda: "de")() or "de"), sci_pending=False, sci_variant="", sci_active=False)
 
 
 # --- HTML TEMPLATES ---
@@ -4408,6 +4522,15 @@ function buildUIFromData(raw){
         hintEl.textContent = '';
       }
     }
+  } catch(e) {}
+
+  // Comm-off static UI gating (dynamic sections are filtered server-side).
+  try {
+    const commOn = !(data && data.comm_active === false);
+    const qcBtn = document.getElementById('qcOverrideBtn');
+    if(qcBtn) qcBtn.style.display = commOn ? '' : 'none';
+    const mtCard = document.getElementById('manualTestCard');
+    if(mtCard) mtCard.style.display = (commOn && !(data && data.manual_test_visible === false)) ? 'block' : 'none';
   } catch(e) {}
 
   // Buttons sections
@@ -5461,6 +5584,13 @@ HTML_QC_OVERRIDE = """
 </html>
 """
 
+# S7 (UI assets): prefer externalized templates, keep embedded strings as fail-open fallback.
+# panel.html remains embedded by default. External panel can be canary-tested via
+# COMM_SCI_ENABLE_PANEL_ASSET=1 and only passes through after a static self-test.
+HTML_CHAT_TEMPLATE = _load_ui_asset_text("chat_template.html", HTML_CHAT_TEMPLATE)
+HTML_PANEL = _load_panel_asset_text_canary(HTML_PANEL)
+HTML_QC_OVERRIDE = _load_ui_asset_text("qc_override.html", HTML_QC_OVERRIDE)
+
 HTML_MANUAL_TEST_MONITOR = """
 <!doctype html>
 <html>
@@ -5536,6 +5666,7 @@ function mtmReplace(data){
 </body>
 </html>
 """
+HTML_MANUAL_TEST_MONITOR = _load_ui_asset_text("manual_test_monitor.html", HTML_MANUAL_TEST_MONITOR)
 
 
 # --- API BACKEND ---
@@ -7708,6 +7839,7 @@ class CSCRefiner:
         try:
             # 1. Command? -> Render via v192 pipeline if available (deterministic-ish), else legacy Markdown
             if is_command:
+                raw_response = unwrap_accidental_full_text_codefence(raw_response or "")
                 raw_response = normalize_known_markdown_control_headings(raw_response or "")
                 if _rendering_pipeline_v192 is not None:
                     try:
@@ -7732,6 +7864,7 @@ class CSCRefiner:
             if not getattr(self.gov_state, 'comm_active', False):
                 html_out = ""
                 try:
+                    raw_response = unwrap_accidental_full_text_codefence(raw_response or "")
                     raw_response = normalize_known_markdown_control_headings(raw_response or "")
                     if _rendering_pipeline_v192 is not None:
                         try:
@@ -8197,6 +8330,11 @@ class CSCRefiner:
             except Exception:
                 pass
 
+            try:
+                raw_for_render = unwrap_accidental_full_text_codefence(raw_for_render or "")
+            except Exception:
+                pass
+
             
             # B: Bilder einbetten
             raw_for_render = _auto_embed_image_urls(raw_for_render)
@@ -8383,6 +8521,27 @@ class CSCRefiner:
                 pass
 
             render_ok = _looks_like_rendered_html(final_html_body or "")
+
+            # Provider outputs can occasionally end abruptly (especially with weaker/free models).
+            # Warn deterministically, but do not alter the model text.
+            try:
+                _raw_probe = (raw_original or raw_response or "")
+                _trunc, _trunc_msg = _detect_probable_truncation(_raw_probe, final_html_body or "")
+                if _trunc and _trunc_msg:
+                    alert_html = _control_layer_alert_html(
+                        _trunc_msg + " Bitte gegenprüfen oder Antwort neu generieren.",
+                        title="CONTROL LAYER NOTE",
+                        severity="warn",
+                    ) + (alert_html or "")
+                    try:
+                        if csc_meta is None:
+                            csc_meta = {}
+                        if isinstance(csc_meta, dict):
+                            csc_meta["probable_truncation"] = True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             # Record render outcome in normalization summary (if present)
             try:
@@ -9817,6 +9976,10 @@ class CSCRefiner:
                 handled_res = self._handle_command_deterministic(cmd, timestamp)
                 if handled_res:
                     try:
+                        self._ui_refresh_panel()
+                    except Exception:
+                        pass
+                    try:
                         self.log_event('command', {'cmd': cmd, 'phase': 'deterministic'})
                     except Exception:
                         pass
@@ -9919,6 +10082,10 @@ class CSCRefiner:
                         html_content = self._render_comm_state_html(audit_line=comm_start_audit_line)
 
                 self.history.append({"role": "bot", "content": f"Command executed: {cmd}", "ts": datetime.now().isoformat()})
+                try:
+                    self._ui_refresh_panel()
+                except Exception:
+                    pass
                 try:
                     self.log_event('command', {'cmd': cmd, 'phase': 'end', 'profile': getattr(self.gov_state, 'active_profile', '')})
                 except Exception:
@@ -10711,6 +10878,27 @@ class CSCRefiner:
         def _err(message: str):
             return {'ok': False, 'action': action_s, 'result': None, 'error': str(message or 'error')}
 
+        # Strict Comm-off panel gate: block rule-workflow actions even if stale/hidden UI calls still fire.
+        try:
+            _comm_on = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
+        except Exception:
+            _comm_on = False
+        if not _comm_on:
+            _blocked_actions = {
+                'qc_override_apply', 'qc_override_clear',
+                'manual_test_monitor_show', 'manual_test_monitor_hide', 'manual_test_monitor_reset',
+                'manual_test_monitor_append', 'manual_test_monitor_header', 'save_manual_test_report',
+            }
+            if action_s in _blocked_actions:
+                return _err("comm_off_blocked")
+            if action_s in {'cmd', 'ask'}:
+                try:
+                    _txt = str((payload or {}).get('text', '') or '').strip()
+                except Exception:
+                    _txt = ''
+                if _txt != 'Comm Start':
+                    return _err("comm_off_blocked")
+
         # S6: delegate stable panel-action subsets to UIController (primary route).
         try:
             _ui = getattr(self, 'ui_controller', None)
@@ -10836,6 +11024,23 @@ class CSCRefiner:
             return {'ok': False, 'error': f'{type(e).__name__}: {e}', 'path': target}
         return {'ok': bool(ok), 'path': target}
 
+    def on_manual_test_monitor_closed(self):
+        try:
+            self.manual_test_monitor_win = None
+        except Exception:
+            pass
+
+    def _bind_manual_test_monitor_window_events(self, win):
+        if not win:
+            return
+        evs = getattr(win, 'events', None)
+        closed_ev = getattr(evs, 'closed', None)
+        if closed_ev is not None:
+            try:
+                closed_ev += self.on_manual_test_monitor_closed
+            except Exception:
+                pass
+
     def _create_manual_test_monitor(self):
         """Pre-create Manual Test Monitor dialog window (hidden)."""
         try:
@@ -10863,6 +11068,10 @@ class CSCRefiner:
                 on_top=False,
                 js_api=(getattr(self, 'panel_bridge', None) or self),
             )
+            try:
+                self._bind_manual_test_monitor_window_events(self.manual_test_monitor_win)
+            except Exception:
+                pass
         except Exception:
             try:
                 self.manual_test_monitor_win = None
@@ -10882,17 +11091,42 @@ class CSCRefiner:
     def manual_test_monitor_show(self, payload=None):
         payload = payload or {}
         try:
-            win = getattr(self, 'manual_test_monitor_win', None)
-            if win is None:
-                self._create_manual_test_monitor()
-                win = getattr(self, 'manual_test_monitor_win', None)
+            def _ensure_window():
+                _win = getattr(self, 'manual_test_monitor_win', None)
+                if _win is None:
+                    self._create_manual_test_monitor()
+                    _win = getattr(self, 'manual_test_monitor_win', None)
+                return _win
+
+            win = _ensure_window()
             if win is None:
                 return {'ok': False, 'error': 'manual_test_monitor_win unavailable'}
+
+            show_ok = False
+            show_err = None
             try:
                 if hasattr(win, 'show'):
                     win.show()
-            except Exception:
-                pass
+                show_ok = True
+            except Exception as e:
+                show_err = e
+                show_ok = False
+
+            if not show_ok:
+                try:
+                    self.manual_test_monitor_win = None
+                except Exception:
+                    pass
+                win = _ensure_window()
+                if win is None:
+                    return {'ok': False, 'error': 'manual_test_monitor_win unavailable'}
+                try:
+                    if hasattr(win, 'show'):
+                        win.show()
+                    show_ok = True
+                except Exception as e2:
+                    return {'ok': False, 'error': f"{type(e2).__name__}: {e2}"}
+
             try:
                 if hasattr(win, 'bring_to_front'):
                     win.bring_to_front()
@@ -11144,6 +11378,46 @@ class CSCRefiner:
                     comm2 = [c for c in comm if c not in ("Comm Start", "Comm Stop")]
                     comm2.insert(0, _toggle_btn("Comm ⏻", comm_active, "Comm Start", "Comm Stop", "Start Comm Control Layer", "Stop Comm Control Layer"))
                     data['comm'] = comm2
+        except Exception:
+            pass
+
+        # Comm-off UI gating (strict): hide all rule-workflow widgets except Comm Start.
+        try:
+            comm_active_ui = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
+            data['comm_active'] = comm_active_ui
+            data['manual_test_visible'] = comm_active_ui
+            data['qc_override_visible'] = comm_active_ui
+            if not comm_active_ui:
+                def _cmd_name(_item):
+                    try:
+                        if isinstance(_item, dict):
+                            return str(_item.get('cmd') or _item.get('name') or '').strip()
+                        return str(_item or '').strip()
+                    except Exception:
+                        return ''
+                comm_items = data.get('comm') if isinstance(data.get('comm'), list) else []
+                kept = [it for it in comm_items if _cmd_name(it) == 'Comm Start']
+                if not kept:
+                    kept = [{
+                        'name': 'Comm Start',
+                        'cmd': 'Comm Start',
+                        'desc': 'Start Comm Control Layer',
+                    }]
+                else:
+                    # Avoid misleading labels like "Comm ⏻: ON" while Comm is off.
+                    _fixed = []
+                    for _it in kept:
+                        if isinstance(_it, dict):
+                            _cp = dict(_it)
+                            _cp['name'] = 'Comm Start'
+                            _cp['cmd'] = 'Comm Start'
+                            _fixed.append(_cp)
+                        else:
+                            _fixed.append({'name': 'Comm Start', 'cmd': 'Comm Start'})
+                    kept = _fixed
+                data['comm'] = kept
+                for _k in ('profiles', 'sci', 'overlays', 'tools', 'logs'):
+                    data[_k] = []
         except Exception:
             pass
 
@@ -12671,6 +12945,32 @@ def _control_layer_alert_html(message: str, *, title: str = "CONTROL LAYER ALERT
         f"<div class='csc-details'>{safe}{action_html}</div>"
         f"</details>"
     )
+
+
+def _detect_probable_truncation(raw_text: str, rendered_html: str = "") -> tuple[bool, str]:
+    """Best-effort detector for provider/model outputs that likely ended prematurely.
+
+    Goal: warn the user without changing the answer text or inventing content.
+    """
+    try:
+        raw = str(raw_text or "").strip()
+        if not raw:
+            return False, ""
+
+        plain = str(raw)
+        # Strong signals: abrupt cut inside a word or known SCI step likely cut.
+        tail = plain[-220:]
+        # Ends with an alnum fragment and no sentence/list terminator.
+        if re.search(r"[A-Za-zÄÖÜäöüß]{2,}$", tail) and not re.search(r"[.!?…:;\]\)\"']\s*$", plain):
+            return True, "Antwort wirkt unvollständig (endet vermutlich mitten im Satz/Wort)."
+
+        # SCI-specific abrupt endings like \"Dialectic_*: ... subjektives Er\"
+        if ("SCI Trace" in str(rendered_html or "") or "Dialectic_" in plain) and re.search(r"(?:Dialectic_|Plan:|Solution:|Critic:|Check:).{0,200}[A-Za-zÄÖÜäöüß]{2,}$", tail):
+            return True, "SCI-Trace wirkt unvollständig (mindestens ein Schritt endet abrupt)."
+
+        return False, ""
+    except Exception:
+        return False, ""
 
 
 def _render_error_html(self, context: str, err: Exception) -> str:

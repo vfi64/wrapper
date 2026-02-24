@@ -123,6 +123,16 @@ def apply_intent(state: WrapperState, intent: Intent, ruleset_data: Dict[str, An
             events.append({"event": "comm_started", "profile": new_state.active_profile})
         else:
             new_state.comm_active = False
+            # Strict Comm-off reset: clear SCI/one-shot/transient governance state to avoid leaks.
+            new_state.sci_pending = False
+            new_state.sci_active = False
+            new_state.sci_variant = ""
+            new_state.sci_pending_turns = 0
+            new_state.sci_recursion_one_shot = False
+            new_state.sci_recursion_parent_variant = ""
+            new_state.dynamic_one_shot_active = False
+            new_state.dynamic_nudge = ""
+            new_state.qc_overrides = {}
             events.append({"event": "comm_stopped"})
         return TransitionResult(new_state, [("Comm Start" if intent.turn_on else "Comm Stop")], events)
 

@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Manual Test Monitor</title>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 10px; background:#f7f8fa; color:#222; }
+  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .pill { border:1px solid #ccc; border-radius: 10px; padding: 3px 8px; background:#fff; font-size: 12px; }
+  .ok { color: #0b6b0b; }
+  .warn { color: #a05a00; }
+  .err { color: #b00020; }
+  .box { background:#fff; border:1px solid #ddd; border-radius:6px; padding:8px; }
+  #log { height: 520px; overflow-y: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.35; }
+  .line { margin: 0 0 2px 0; }
+  .line.ok { color:#0b6b0b; }
+  .line.warn { color:#8a5a00; }
+  .line.err { color:#b00020; }
+  .muted { color:#666; }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <div id="scenario" class="pill">Scenario: -</div>
+    <div id="status" class="pill">Status: idle</div>
+    <div id="summary" class="pill muted">Summary: -</div>
+  </div>
+  <div class="box">
+    <div id="log"></div>
+  </div>
+<script>
+window.__mtm = window.__mtm || {events:[]};
+function mtmClear(){
+  const el = document.getElementById('log');
+  if(el) el.innerHTML = '';
+  window.__mtm.events = [];
+}
+function mtmSetHeader(data){
+  data = data || {};
+  try { document.getElementById('scenario').textContent = 'Scenario: ' + String(data.scenario || '-'); } catch(e) {}
+  try { document.getElementById('status').textContent = 'Status: ' + String(data.status || 'idle'); } catch(e) {}
+  try {
+    const s = data.summary || '-';
+    document.getElementById('summary').textContent = 'Summary: ' + (typeof s === 'string' ? s : JSON.stringify(s));
+  } catch(e) {}
+}
+function mtmAppend(entry){
+  try {
+    const el = document.getElementById('log');
+    if(!el) return false;
+    const d = document.createElement('div');
+    const lvl = String((entry && entry.level) || 'info');
+    d.className = 'line ' + lvl;
+    const ts = (entry && entry.ts) ? String(entry.ts) + ' · ' : '';
+    d.textContent = ts + String((entry && entry.message) || '');
+    el.appendChild(d);
+    while(el.children.length > 500) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
+    return true;
+  } catch(e) { return false; }
+}
+function mtmReplace(data){
+  try {
+    mtmClear();
+    mtmSetHeader(data || {});
+    const ev = (data && Array.isArray(data.events)) ? data.events : [];
+    for(const x of ev) mtmAppend(x);
+    return true;
+  } catch(e) { return false; }
+}
+</script>
+</body>
+</html>

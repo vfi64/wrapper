@@ -1,0 +1,346 @@
+
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5; display: flex; flex-direction: column; height: 100vh; margin:0; }
+  #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+  
+  .msg { 
+    padding: 12px 16px; 
+    border-radius: 12px; 
+    background: white; 
+    border: 1px solid #ddd; 
+    max-width: 85%; 
+    line-height: 1.6; 
+    position: relative; 
+    user-select: text; 
+  }
+  
+  .user { align-self: flex-end; background: #e8f0fe; border-right: 5px solid #1a73e8; }
+  .bot { align-self: flex-start; border-left: 5px solid #34a853; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+  .sys { background: #333; color: #fff; font-family: monospace; font-size: 11px; align-self: center; width:auto; border:none; }
+  .err { background: #fee; color: #c00; border: 1px solid #fcc; align-self: center; }
+
+  .copy-btn {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    opacity: 0.3;
+    transition: opacity 0.2s;
+    padding: 2px;
+    height: auto;
+    width: auto;
+  }
+  .msg:hover .copy-btn { opacity: 1.0; }
+
+  .ts-footer { display: block; width: 100%; border-top: 1px solid #eee; margin-top: 8px; padding-top: 4px; font-size: 10px; color: #888; text-align: right; }
+
+  .raw-output-pre { background: #f8f9fa; padding: 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  details.raw-output { margin: 8px 0; }
+  .note-box { background: #fff7ed; border-left: 4px solid #fb923c; padding: 8px 10px; border-radius: 6px; margin: 8px 0; }
+
+  ul, ol { margin: 5px 0 5px 20px; padding: 0; }
+  li { margin-bottom: 5px; }
+  p { margin: 0 0 10px 0; }
+  pre { background: #f8f9fa; padding: 10px; border-radius: 6px; overflow-x: auto; border: 1px solid #e1e4e8; }
+
+  .input-area { padding: 15px; background: white; border-top: 1px solid #ccc; display: flex; gap: 10px; align-items: center; }
+  textarea { flex: 1; height: 50px; padding: 10px; border-radius: 6px; border: 1px solid #ccc; font-family: inherit; resize: none; }
+  button { padding: 0 20px; height: 50px; background: #1a73e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+  button:disabled { background: #ccc; cursor: not-allowed; }
+  
+  .top { background: #202124; color: white; padding: 8px 15px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .top-stats { margin-left: 10px; font-family: monospace; color: #aaa; border-left: 1px solid #555; padding-left: 10px;}
+  .exit-btn { background: #a50e0e; font-size: 10px; height: auto; padding: 5px 10px; margin-left: 10px;}
+  .menu-btn { font-size: 10px; height: auto; padding: 5px 10px; background: #444; }
+  .load-btn { cursor: pointer; font-size: 12px; margin-right: 5px; background: transparent; border: none; color: white;}
+
+  .qc-bar { margin-top: 8px; border-top: 1px solid #eee; padding-top: 5px; font-size: 11px; color:#555; }
+  .qc-btn { cursor: pointer; margin-right: 8px; color: #1a73e8; background:#f1f3f4; padding:2px 6px; border-radius:4px; }
+  .qc-btn:hover { background:#1a73e8; color:white; }
+
+  .csc-badge {
+    position: absolute;
+    top: 6px;
+    left: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid #f9ab00;
+    background: #fff7e0;
+    color: #8a4f00;
+  }
+
+  .csc-warning {
+    border: 1px solid #f9ab00;
+    background: #fff7e0;
+    padding: 10px;
+    border-radius: 10px;
+    margin: 0 0 8px 0;
+    color: #3c2b00;
+  }
+
+  .csc-warning summary { cursor: pointer; font-weight: 600; }
+  .csc-warning .csc-details { margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+
+
+  /* --- Comm Help (deterministic HTML renderer) --- */
+  .comm-help { font-size: inherit; line-height: inherit; }
+  .comm-help .help-status { font-size: inherit; color:#444; margin: 0 0 10px 0; }
+  .comm-help h3 { margin: 14px 0 8px 0; font-size: 1em; }
+  .comm-help .didactic { margin: 8px 0 12px 0; font-style: italic; color:#555; }
+  .comm-help .cmd-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 0; }
+  .comm-help .cmd-dl dt { margin: 0; }
+  .comm-help .cmd-dl dd { margin: 0; }
+  .comm-help code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background:#f6f8fa; padding: 1px 5px; border-radius: 6px; }
+  .comm-help code.nowrap { white-space: nowrap; }
+  .comm-help .section-note { color:#666; font-size: 12px; margin: 0 0 8px 0; }
+  .comm-help .variants { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 0; }
+  .comm-help .variants .vkey { font-weight: 700; }
+  .comm-help .numcodes { margin: 0; }
+  .comm-help .numcodes-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  .comm-help .numcodes-table th, .comm-help .numcodes-table td { border: 1px solid #e5e7eb; padding: 6px 8px; vertical-align: top; }
+  .comm-help .numcodes-table th { background: #f9fafb; text-align: left; }
+  .comm-help .muted { color:#666; font-size: 11px; }
+  .comm-help .opts code { padding: 0 4px; }
+  .comm-help .dash-note { margin-top: 8px; color:#444; font-size: 12px; }
+
+  /* Comm State / Comm Config (scoped) */
+  .comm-help .state-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  .comm-help .state-table th, .comm-help .state-table td { border: 1px solid #e0e0e0; padding: 6px 8px; vertical-align: top; }
+  .comm-help .state-table th { text-align: left; background: #fafafa; width: 220px; }
+  .comm-help pre.raw-json { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; box-sizing: border-box; overflow-x: auto; background: #f6f8fa; padding: 10px; border-radius: 10px; font-size: 11px; border: 1px solid #e0e0e0; }
+  .comm-help details.config-details > summary { cursor: pointer; font-weight: 600; margin: 8px 0; }
+  .comm-help .minor { color:#666; font-size: 12px; }
+
+
+  /* SCI Menu (deterministic HTML) */
+  .comm-help .sci-table { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 8px; }
+  .comm-help .sci-table th, .comm-help .sci-table td { border: 1px solid #e0e0e0; padding: 6px 8px; vertical-align: top; }
+  .comm-help .sci-table th { text-align: left; background: #fafafa; width: 80px; }
+
+  /* Anchor Snapshot (deterministic HTML) */
+  .comm-help .anchor-box { background:#f3f4f6; border: 1px solid #d1d5db; border-radius: 12px; padding: 10px 12px; }
+  .comm-help .anchor-box .anchor-badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:#e5e7eb; margin-bottom:8px; }
+  .comm-help .anchor-box pre { margin: 8px 0 0 0; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+
+</style>
+</head>
+<body>
+  <div class="top">
+    <div style="display:flex; align-items:center;">
+        <span style="font-weight:bold; margin-right:10px;">__WRAPPER_LABEL__</span>
+        
+        <button class="load-btn" onclick="window.pywebview.api.load_rule_file()" title="Load ruleset">📂</button>
+        <span id="rulefile" style="font-size:11px; color:#8ab4f8; margin-right:10px;"></span>
+        
+        <span id="stats" class="top-stats">Session: loading...</span>
+    </div>
+    <div>
+       <button class="menu-btn" onclick="window.pywebview.api.export()">💾 EXPORT</button>
+       <button class="menu-btn" onclick="window.pywebview.api.settings()">⚙️ PANEL</button>
+       <button class="exit-btn" onclick="window.pywebview.api.close_app()">❌ EXIT</button>
+    </div>
+  </div>
+  
+  <div id="chat">
+    <div class="msg sys" id="status">System initialized...</div>
+  </div>
+  
+  <div class="input-area">
+    <textarea id="inp" placeholder="Please wait..." disabled></textarea>
+    <button id="btn" onclick="send()" disabled>...</button>
+  </div>
+
+<script>
+  let __readyChecks = 0;
+  let checkInterval = setInterval(async () => {
+      const res = await window.pywebview.api.is_ready();
+      __readyChecks++;
+      // Auto-open the panel even if the system is not ready yet (e.g., missing API keys).
+      try {
+          const msg = (res && res.msg) ? String(res.msg).toLowerCase() : '';
+          if(!window.__panel_auto_shown && (__readyChecks >= 3 || msg.includes('key missing') || msg.includes('api key') || msg.includes('openrouter'))) {
+              window.__panel_auto_shown = true;
+              window.pywebview.api.ensure_panel_visible();
+          }
+      } catch(e) {}
+      if(res.status === true) {
+          clearInterval(checkInterval);
+          document.getElementById('status').innerText = "System ready: " + res.msg;
+          
+          if(res.filename) {
+             // Nur den Dateinamen anzeigen, nicht den ganzen Pfad
+             const parts = res.filename.split(/[\\\\/]/);
+             document.getElementById('rulefile').innerText = "[" + parts.pop() + "]";
+          }
+
+          document.getElementById('inp').disabled = false;
+          document.getElementById('inp').placeholder = "Command or message...";
+          document.getElementById('btn').disabled = false;
+          document.getElementById('btn').innerText = "Send";
+          document.getElementById('inp').focus();
+          window.pywebview.api.update_stats_ui();
+          // Auto-show panel once after rules are loaded
+          if(!window.__panel_auto_shown){ window.__panel_auto_shown = true; window.pywebview.api.ensure_panel_visible(); }
+
+      } else {
+          document.getElementById('status').innerText = res.msg;
+          if(res.msg.includes("ERROR")) document.getElementById('status').className = "msg err";
+      }
+  }, 500);
+
+  function updateStats(text) {
+      document.getElementById('stats').innerText = text;
+  }
+  
+  function updateRuleFile(name) {
+      const parts = name.split(/[\\\\/]/);
+      document.getElementById('rulefile').innerText = "[" + parts.pop() + "]";
+  }
+
+  function escHtml(s){
+      return (''+s).replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function renderCscBlock(csc){
+      if(!csc || !csc.applied) return '';
+      const msg = escHtml(csc.message || 'CSC applied.');
+      const trig = escHtml(csc.trigger || '');
+      const mode = escHtml(csc.mode || '');
+      const ov = escHtml(csc.overlay || '');
+      const prof = escHtml(csc.profile || '');
+      const fs = escHtml(csc.f_score ?? '');
+      const tok = escHtml(csc.token_count ?? '');
+      const mult = escHtml(csc.threshold_multiplier ?? '');
+      const thrFs = escHtml(csc.threshold_f_score ?? '');
+      const thrTok = escHtml(csc.min_token_count ?? '');
+      const thrGov = escHtml(csc.min_token_count_governance ?? '');
+
+      let details = '';
+      details += `<details><summary>Details</summary>`;
+      details += `<div class="csc-details">`;
+      details += `Trigger: ${trig || '—'}<br>`;
+      details += `Mode: ${mode || '—'}${csc.governance_triggered ? ' (governance)' : ''}<br>`;
+      details += `Overlay: ${ov || 'off'} · Profile: ${prof || '—'}<br>`;
+      details += `Score: f=${fs} · tokens=${tok}<br>`;
+      details += `Thresholds (x${mult || 1}): f≥${thrFs}, tok≥${thrTok}, gov_tok≥${thrGov}`;
+      details += `</div></details>`;
+
+      return `<span class="csc-badge" title="CSC applied">CSC applied</span>` +
+             `<div class="csc-warning"><b>CSC</b>: ${msg}${details}</div>`;
+  }
+
+  function addMsg(role, text, qc=false, csc=null) {
+      const d = document.createElement('div');
+      d.className = 'msg ' + role;
+      let html = '<button class="copy-btn" onclick="copyToClipboard(this)" title="Copy">📋</button>';
+      if(role === 'bot') html += renderCscBlock(csc);
+      html += text;
+      if(qc) html += '<div class="qc-bar">QC (CGI): <span class="qc-btn" onclick="rate(0)">0</span><span class="qc-btn" onclick="rate(1)">1</span><span class="qc-btn" onclick="rate(2)">2</span><span class="qc-btn" onclick="rate(3)">3</span></div>';
+      d.innerHTML = html;
+      document.getElementById('chat').appendChild(d);
+      document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+      if(window.MathJax) MathJax.typesetPromise();
+  }
+
+  function copyToClipboard(btn) {
+      const msgDiv = btn.parentElement;
+      const clone = msgDiv.cloneNode(true);
+      const unwanted = clone.querySelectorAll('.copy-btn, .qc-bar, .ts-footer, .csc-warning, .csc-badge');
+      unwanted.forEach(el => el.remove());
+      const textToCopy = clone.innerText.trim();
+      
+      const textArea = document.createElement("textarea");
+      textArea.value = textToCopy;
+      textArea.style.position = "fixed";
+      textArea.style.left = "-9999px";
+      textArea.style.top = "0";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      try {
+          const successful = document.execCommand('copy');
+          if(successful) {
+              const originalText = btn.innerText;
+              btn.innerText = "✅";
+              setTimeout(() => btn.innerText = originalText, 1500);
+          } else {
+              btn.innerText = "❌";
+          }
+      } catch (err) {
+          console.error('Fallback copy failed', err);
+          btn.innerText = "❌";
+      }
+      document.body.removeChild(textArea);
+  }
+
+  async function send() {
+      const txt = document.getElementById('inp').value.trim();
+      if(!txt) return;
+      document.getElementById('inp').value = '';
+      addMsg('user', txt);
+      const btn = document.getElementById('btn');
+      btn.disabled = true;
+      try {
+          const res = await window.pywebview.api.ask(txt);
+          const qc = await window.pywebview.api.ui_qc_bar_enabled();
+          if(typeof res === 'string') {
+              addMsg('bot', res, qc);
+          } else {
+              addMsg('bot', res.html || '', qc, res.csc || null);
+          }
+      } catch(e) {
+          addMsg('bot', '<span style="color:red">Error: '+e+'</span>');
+      }
+      btn.disabled = false;
+      document.getElementById('inp').focus();
+  }
+
+  function rate(v) { window.pywebview.api.remote_cmd('CGI Rating: '+v); }
+  function remoteInput(txt) { document.getElementById('inp').value=txt; send(); }
+  
+  document.getElementById('inp').addEventListener('keydown', (e)=>{
+      if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); send();}
+  });
+
+// --- Panel helpers: allow Python to replay a loaded chat log into the main UI (no model call).
+function resetChatToStatus(msg) {
+  const chat = document.getElementById('chat');
+  if (!chat) return;
+  chat.innerHTML = '';
+  const st = document.createElement('div');
+  st.className = 'msg sys';
+  st.id = 'status';
+  st.textContent = msg || 'System initialized...';
+  chat.appendChild(st);
+}
+
+window.resetChatFromHistory = function(history, statusMsg) {
+  try {
+    resetChatToStatus(statusMsg || 'Loaded chat log.');
+    if (!Array.isArray(history)) return;
+    for (const m of history) {
+      if (!m) continue;
+      const role = (m.role === 'bot' || m.role === 'assistant') ? 'bot' : (m.role === 'sys' || m.role === 'system' ? 'sys' : 'user');
+      const text = (m.html != null) ? String(m.html) : (m.content != null ? String(m.content) : '');
+      if (role === 'bot') addMsg('bot', text, false, null);
+      else addMsg(role, escHtml(text));
+    }
+    chat.scrollTop = chat.scrollHeight;
+  } catch (e) {
+    addMsg('sys', 'resetChatFromHistory failed: ' + String(e));
+  }
+};
+</script>
+</body>
+</html>

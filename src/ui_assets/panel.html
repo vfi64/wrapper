@@ -1,0 +1,1125 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  body { font-family: sans-serif; padding: 10px; background: #f8f9fa; user-select: none; }
+  h4 { margin: 12px 0 6px 0; color: #1a73e8; border-bottom: 2px solid #dae0e5; font-size: 11px; text-transform: uppercase; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  button { padding: 8px 5px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 11px; text-align:center; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  button:hover { background: #e8f0fe; border-color: #1a73e8; color: #1a73e8; }
+  .setting-select { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #999; margin-bottom: 5px; font-weight: bold; font-size: 12px;}
+  .card { background: white; padding: 8px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #ddd; }
+  .log-box { font-family: monospace; font-size: 9px; color: #333; margin-bottom: 8px; max-height: 70px; overflow-y: auto; background: #eee; padding: 6px; border-radius: 6px; border: 1px solid #ddd; }
+  .test-log-box { font-family: monospace; font-size: 10px; color: #222; margin-top: 6px; max-height: 160px; overflow-y: auto; background: #f4f6f8; padding: 6px; border-radius: 6px; border: 1px solid #ddd; white-space: pre-wrap; }
+  .status-box { font-family: monospace; font-size: 10px; color: #111; margin-bottom: 8px; background: #fff; padding: 6px; border-radius: 6px; border: 1px solid #ddd; }
+  .hint { font-size: 9px; color: #666; margin-bottom: 8px; text-align: center; }
+  .row { display:flex; gap:6px; }
+  .row > * { flex: 1; }
+  .smallbtn { padding: 7px 6px; font-size: 10px; }
+  .err { color: #b00020; }
+  .ok { color: #0b6b0b; }
+  .warn { color: #a05a00; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="row">
+    <select id="provider" class="setting-select" onchange="changeProvider()">
+      <option value="gemini">Provider: Gemini</option>
+      <option value="openrouter">Provider: OpenRouter</option>
+      <option value="huggingface">Provider: Hugging Face</option>
+    </select>
+    <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch provider models and refresh cache (Gemini/OpenRouter/HF)">Refresh Models</button>
+    <button class="smallbtn" id="qcOverrideBtn" onclick="run('QC Override')" title="QC Override">⚙ QC</button>
+</div>
+
+  <div id="hfCatalogRow" class="row" style="display:none;">
+    <select id="hfProviderFilter" class="setting-select" onchange="onHFProviderFilterChange()">
+      <option value="all">HF Provider: all</option>
+    </select>
+    <input id="hfTopN" class="setting-select" type="number" min="1" max="10000" value="200" />
+    <button id="hfCatalogBtn" class="smallbtn" onclick="fetchHFCatalog()" title="Fetch Hugging Face Hub catalog (Top N) and cache it">HF Catalog (Top N)</button>
+  </div>
+
+  <select id="model" class="setting-select" onchange="changeModel()">
+    <option value="">Model: (offline)</option>
+  </select>
+
+  <input id="modelSearch" class="setting-select" type="text" placeholder="Model search…" oninput="onModelSearch()" />
+  <div id="modelHint" class="hint" style="display:none; margin-top:4px;"></div>
+
+  <div class="row" id="freeOnlyRow" style="display:none; margin-top:6px;">
+    <label style="font-size:13px; user-select:none;">
+      <input type="checkbox" id="freeOnly" onchange="toggleFreeOnly()" /> Nur kostenlose Modelle anzeigen (:free)
+    </label>
+  </div>
+
+  <select id="anslang" class="setting-select" onchange="changeAnswerLanguage()">
+    <option value="en">Answer language (LLM): English</option>
+    <option value="de">Answer language (LLM): Deutsch</option>
+  </select>
+
+  <div class="hint">Panel runs fail-open: it stays usable even if the bridge is not ready yet.</div>
+</div>
+
+<div class="card" id="logLoader" style="margin-top:8px;">
+  <h4>Logs</h4>
+  <select id="chatlog" class="setting-select"></select>
+  <div class="row" style="margin-top:6px;">
+    <button class="smallbtn" onclick="refreshLogList()">Refresh list</button>
+    <button class="smallbtn" onclick="loadSelectedLog(true)">Load &amp; fork</button>
+  </div>
+  <div class="row" style="margin-top:6px;">
+    <button class="smallbtn" onclick="loadSelectedLog(false)">Load (no fork)</button>
+    <button class="smallbtn" onclick="clearChat()">Clear</button>
+  </div>
+  <div class="hint" id="logHint" style="margin-top:6px; display:none;"></div>
+</div>
+
+<div class="card" id="manualTestCard" style="margin-top:8px;">
+  <h4>Manual Test</h4>
+  <select id="manualTestMonitorMode" class="setting-select" onchange="setManualTestMonitorMode()" title="Manual-Test-Monitor Fenster">
+    <option value="show">Monitorfenster: anzeigen</option>
+    <option value="hide">Monitorfenster: ausblenden</option>
+  </select>
+  <select id="manualTestScenario" class="setting-select">
+    <option value="smoke_short">Kurztest (A+C+D+F ohne HF)</option>
+    <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
+    <option value="sci_format">SCI-Format (A/B)</option>
+    <option value="qc_override_footer">QC-Override + Footer (SCI B)</option>
+    <option value="full_regression_light">A-F (leicht, HF optional)</option>
+  </select>
+  <div class="row" style="margin-top:6px;">
+    <button class="smallbtn" id="manualTestStartBtn" onclick="startManualTestRunner()">Start Test</button>
+    <button class="smallbtn" id="manualTestStopBtn" onclick="stopManualTestRunner()">Stop</button>
+  </div>
+  <div class="hint" id="manualTestHint" style="margin-top:6px;">Fuehrt einen blockierenden GUI-Testablauf ueber `api.ask(...)` aus und prueft Basis-Formatregeln.</div>
+  <div id="manualTestLog" class="test-log-box" style="display:none;"></div>
+</div>
+
+<div id="status" class="status-box">Panel boot…</div>
+<div id="logs" class="log-box"></div>
+<div id="ui"></div>
+
+<script>
+/* ---------- helpers ---------- */
+function _api(){
+  if (window.pywebview && window.pywebview.api) return window.pywebview.api;
+  if (typeof pywebview !== "undefined" && pywebview.api) return pywebview.api;
+  return null;
+}
+
+function _now(){
+  try { return new Date().toISOString().replace('T',' ').replace('Z',''); } catch(e){ return ''; }
+}
+
+function _log(msg){
+  try { console.log('[panel]', msg); } catch(e) {}
+  const el = document.getElementById('logs');
+  if(!el) return;
+  const line = document.createElement('div');
+  line.textContent = (_now() ? (_now() + ' · ') : '') + String(msg);
+  el.appendChild(line);
+  // keep last ~80 lines
+  while(el.children.length > 80) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+function _setStatus(msg, cls){
+  const el = document.getElementById('status');
+  if(!el) return;
+  el.textContent = String(msg || '');
+  el.classList.remove('ok'); el.classList.remove('err');
+  if(cls) el.classList.add(cls);
+}
+
+function _setSelectOptions(sel, options, selectedValue) {
+  const el = document.getElementById(sel);
+  if(!el) return;
+  el.innerHTML = '';
+  (options || []).forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o.value;
+    opt.textContent = o.label;
+    el.appendChild(opt);
+  });
+  if(selectedValue !== undefined && selectedValue !== null) {
+    try { el.value = selectedValue; } catch(e) {}
+  }
+}
+
+function _fallbackData(){
+  return {
+    providers: ['gemini','openrouter','huggingface'],
+    current_provider: 'gemini',
+    current_model: '',
+    available_models: [],
+    answer_language: 'de',
+    comm: [],
+    profiles: [],
+    sci: [],
+    overlays: [],
+    tools: [],
+    logs: [],
+    chat_logs: [],
+    chat_log_selected: ''
+  };
+}
+
+async function _apiCall(name, args, timeoutMs) {
+  timeoutMs = timeoutMs || 2000;
+  const api = _api();
+  if (!api) throw new Error('bridge missing (pywebview.api not injected)');
+  if (typeof api[name] !== 'function') throw new Error('pywebview api method not available: ' + name);
+
+  const p = api[name].apply(api, args || []);
+  const t = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout ' + timeoutMs + 'ms: ' + name)), timeoutMs));
+  return await Promise.race([p, t]);
+}
+
+/* ---------- UI rendering ---------- */
+function _storageKeyForModelQuery(provider){
+  return `model_query_${provider||'unknown'}`;
+}
+
+function _safeLsGet(key, fallback){
+  try {
+    if(typeof window !== 'undefined' && window.localStorage){
+      const v = window.localStorage.getItem(String(key || ''));
+      return (v === null || v === undefined) ? fallback : v;
+    }
+  } catch(e) {}
+  return fallback;
+}
+
+function _safeLsSet(key, value){
+  try {
+    if(typeof window !== 'undefined' && window.localStorage){
+      window.localStorage.setItem(String(key || ''), String(value || ''));
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+function buildUIFromData(raw){
+  const base = _fallbackData();
+  const data = Object.assign({}, base, (raw || {}));
+
+  // Status/logs
+  try {
+    if(Array.isArray(data.logs) && data.logs.length){
+      document.getElementById('logs').innerHTML = data.logs.map(x => String(x)).join('<br>');
+    }
+  } catch(e) {}
+
+  // Provider select
+  const providers = (data.providers || ['gemini']);
+  _setSelectOptions('provider', providers.map(p => ({value:p, label:`Provider: ${p}`})), data.current_provider || 'gemini');
+
+  const p = (data.current_provider || 'gemini');
+  const btn = document.getElementById('refreshModelsBtn');
+  if(btn) btn.style.display = 'block';
+
+  // HF catalog controls
+  const hfRow = document.getElementById('hfCatalogRow');
+  if(hfRow) hfRow.style.display = (p === 'huggingface') ? 'flex' : 'none';
+  if(p === 'huggingface'){
+    const opts = (data.hf_provider_filter_options || ['all']);
+    let savedPF = (data.hf_catalog_default_provider_filter || 'all');
+    let savedTopN = String(_safeLsGet('hfTopN', (data.hf_catalog_default_top_n || 200)));
+    const topInp = document.getElementById('hfTopN');
+    savedPF = (_safeLsGet('hf_provider_filter', savedPF) || savedPF);
+    savedTopN = (_safeLsGet('hf_catalog_topn', savedTopN) || savedTopN);
+    _setSelectOptions('hfProviderFilter', opts.map(x => ({value:x, label:`HF Provider: ${x}`})), savedPF);
+    try {
+      if(topInp && !topInp.dataset.bound){
+        topInp.addEventListener('input', ()=>{
+          _safeLsSet('hfTopN', String(topInp.value||''));
+        });
+        topInp.dataset.bound = '1';
+      }
+    } catch(e) {}
+    if(topInp) topInp.value = savedTopN;
+  }
+
+  // Models list (filter + search client-side)
+  const allModels = data.available_models || [];
+  window._allModels = allModels;
+
+  const freeRow = document.getElementById('freeOnlyRow');
+  const freeCb  = document.getElementById('freeOnly');
+  const isOpenRouter = (p === 'openrouter');
+  if(freeRow) freeRow.style.display = isOpenRouter ? 'block' : 'none';
+
+  // Restore free-only (OpenRouter)
+  let freeOnly = false;
+  try {
+    freeOnly = isOpenRouter && (_safeLsGet('openrouter_free_only', '0') === '1');
+    if(freeCb) freeCb.checked = freeOnly;
+  } catch(e) {}
+
+  // Restore model search query per provider
+  try {
+    const key = _storageKeyForModelQuery(p);
+    const savedQ = _safeLsGet(key, '') || '';
+    const inp = document.getElementById('modelSearch');
+    if(inp) inp.value = savedQ;
+  } catch(e) {}
+
+  // Apply filters and select model
+  applyModelFilters(data.current_model || '');
+
+  // Provider/model hint
+  try {
+    const hint = (data.model_hint || '').trim();
+    const box = document.getElementById('modelHint');
+    if(box){
+      box.style.display = hint ? 'block' : 'none';
+      box.textContent = hint;
+    }
+  } catch(e) {}
+
+  // Answer language
+  try { document.getElementById('anslang').value = (data.answer_language || 'de'); } catch(e) {}
+
+  // Chat logs
+  try {
+    const logs = Array.isArray(data.chat_logs) ? data.chat_logs : [];
+    _setSelectOptions('chatlog', logs.map(x => ({value:String(x), label:String(x)})), data.chat_log_selected || (logs[0] || ''));
+    const hintEl = document.getElementById('logHint');
+    if(hintEl){
+      if(!logs.length){
+        hintEl.style.display = 'block';
+        hintEl.textContent = 'No chat logs found in Logs/Chats.';
+      } else {
+        hintEl.style.display = 'none';
+        hintEl.textContent = '';
+      }
+    }
+  } catch(e) {}
+
+  // Buttons sections
+  let html = '';
+  const section = (title, items) => {
+    if(!items || !items.length) return;
+    html += `<div class="card"><h4>${title}</h4><div class="grid">`;
+    items.forEach(i => {
+      let cmd, lbl, tip;
+      if (typeof i === 'string') { cmd = i; lbl = i; tip = ""; }
+      else { cmd = i.cmd ? i.cmd : i.name; lbl = i.name; tip = i.desc || ""; }
+      html += `<button title="${tip}" onclick="run('${cmd}')">${lbl}</button>`;
+    });
+    html += '</div></div>';
+  };
+
+  section('Comm Core', data.comm);
+  section('Profiles', data.profiles);
+  section('SCI Workflow', data.sci);
+  section('Modes & Overlays', data.overlays);
+  section('Tools', data.tools);
+
+  document.getElementById('ui').innerHTML = html;
+}
+
+async function buildUI(){
+  let data = {};
+  try {
+    data = await _apiCall('get_ui', [], 2500) || {};
+  } catch(e){
+    _log('get_ui failed: ' + (e && e.message ? e.message : String(e)));
+    data = {};
+  }
+  buildUIFromData(data);
+}
+
+/* ---------- fail-open bootstrap with retry ---------- */
+let _retryTimer = null;
+let _retryN = 0;
+const _MAX_RETRIES = 40;
+const _RETRY_MS = 250;
+
+async function _tryBringOnline(){
+  const api = _api();
+  if(!api) throw new Error('bridge not ready');
+  // Eindeutig: nicht nur Objekt existiert, sondern Call funktioniert:
+  const pong = await _apiCall('ping', [], 800);
+  if(!pong || pong.ok !== true) throw new Error('ping failed');
+  _log('bridge ok (ping)');
+  await buildUI();
+  _setStatus('Panel ready (online)', 'ok');
+  return true;
+}
+
+function _startRetryLoop(){
+  if(_retryTimer) return;
+  _retryTimer = setInterval(async () => {
+    if(_retryN >= _MAX_RETRIES){
+      clearInterval(_retryTimer); _retryTimer = null;
+      _log('retry loop stopped (max retries)');
+      return;
+    }
+    _retryN += 1;
+    _log('retry #' + _retryN);
+    try {
+      await _tryBringOnline();
+      clearInterval(_retryTimer); _retryTimer = null;
+    } catch(e) {
+      _setStatus('Panel ready (offline) · ' + (e && e.message ? e.message : String(e)), 'err');
+    }
+  }, _RETRY_MS);
+}
+
+function initPanelFailOpen(){
+  _log('boot');
+  // Always render immediately with fallback defaults
+  buildUIFromData(_fallbackData());
+  _setStatus('Panel ready (offline) · bridge not ready', 'err');
+
+  // Immediate attempt, then retry loop
+  (async () => {
+    try {
+      await _tryBringOnline();
+      // success -> no retry loop needed
+    } catch(e) {
+      _setStatus('Panel ready (offline) · ' + (e && e.message ? e.message : String(e)), 'err');
+      _startRetryLoop();
+    }
+  })();
+}
+
+document.addEventListener('DOMContentLoaded', initPanelFailOpen);
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = _safeLsGet('manual_test_monitor_mode', 'show');
+    const el = document.getElementById('manualTestMonitorMode');
+    if(el) el.value = (saved === 'hide' ? 'hide' : 'show');
+    setManualTestMonitorMode();
+  } catch(e) {}
+});
+window.addEventListener('pywebviewready', () => {
+  _log('pywebviewready');
+  // If still offline, kick retry loop.
+  if(!_retryTimer) _startRetryLoop();
+});
+
+// Visible, fail-loud error surfacing
+window.addEventListener('error', function(ev){
+  const msg = (ev && ev.message) ? ev.message : String(ev);
+  _log('JS error: ' + msg);
+  _setStatus('Panel JS error: ' + msg, 'err');
+});
+window.addEventListener('unhandledrejection', function(ev){
+  const msg = (ev && ev.reason && ev.reason.message) ? ev.reason.message : String(ev && ev.reason ? ev.reason : ev);
+  _log('Unhandled rejection: ' + msg);
+  _setStatus('Panel JS error: ' + msg, 'err');
+});
+
+// Public hook (Python evaluate_js calls use this)
+window.refresh_panel = buildUI;
+
+/* ---------- actions ---------- */
+async function run(c) {
+  const cmd = (c || '').trim();
+  if(!cmd) return;
+  try {
+    const r = await _apiCall('panel_action', ['cmd', {text: cmd}], 30000);
+    if(r && r.ok === false) {
+      _setStatus('cmd failed: ' + (r.error || 'unknown error'), 'err');
+    }
+    // Refresh panel UI after commands that change state-dependent labels (e.g., Comm Anchor on/off)
+    try { await buildUI(); } catch(e) {}
+    try { setTimeout(() => { try { buildUI(); } catch(e) {} }, 200); } catch(e) {}
+    try { setTimeout(() => { try { buildUI(); } catch(e) {} }, 800); } catch(e) {}
+  } catch(e) {
+    _setStatus('cmd failed: ' + (e && e.message ? e.message : String(e)), 'err');
+  }
+}
+
+async function changeProvider() {
+  const provider = document.getElementById('provider').value;
+  // Immediately align provider-specific controls to avoid stale UI states.
+  try {
+    const freeRow = document.getElementById('freeOnlyRow');
+    const freeCb = document.getElementById('freeOnly');
+    const isOpenRouter = (provider === 'openrouter');
+    if(freeRow) freeRow.style.display = isOpenRouter ? 'block' : 'none';
+    if(!isOpenRouter && freeCb) freeCb.checked = false;
+    const hfRow = document.getElementById('hfCatalogRow');
+    if(hfRow) hfRow.style.display = (provider === 'huggingface') ? 'flex' : 'none';
+  } catch(e) {}
+  try {
+    await _apiCall('panel_action', ['set_provider', {provider: provider}], 8000);
+    await _apiCall('panel_action', ['refresh_models', {provider: provider}], 15000);
+  } catch(e) {
+    _setStatus('set_provider failed: ' + (e && e.message ? e.message : String(e)), 'err');
+    return;
+  }
+  await buildUI();
+  try { setTimeout(() => { try { buildUI(); } catch(e) {} }, 250); } catch(e) {}
+}
+
+function changeModel() {
+  const model = document.getElementById('model').value;
+  const m = (model || '').trim();
+  if(!m) return;
+  (async () => {
+    try {
+      await _apiCall('panel_action', ['set_model', {model: m}], 15000);
+    } catch(e) {
+      _setStatus('set_model failed: ' + (e && e.message ? e.message : String(e)), 'err');
+    }
+  })();
+}
+
+function changeAnswerLanguage() {
+  const lang = document.getElementById('anslang').value;
+  const l = (lang || '').trim();
+  if(!l) return;
+  (async () => {
+    try {
+      await _apiCall('panel_action', ['set_answer_language', {lang: l}], 8000);
+    } catch(e) {
+      _setStatus('set_answer_language failed: ' + (e && e.message ? e.message : String(e)), 'err');
+    }
+  })();
+}
+
+async function refreshLogList(){
+  try {
+    const data = await _apiCall('panel_action', ['list_chat_logs', {limit: 200}], 1500);
+    const logs = (data && Array.isArray(data.logs)) ? data.logs : [];
+    _setSelectOptions('chatlog', logs.map(x => ({value:String(x), label:String(x)})), logs[0] || '');
+    const hintEl = document.getElementById('logHint');
+    if(hintEl){
+      if(!logs.length){
+        hintEl.style.display = 'block';
+        hintEl.textContent = 'No chat logs found in Logs/Chats.';
+      } else {
+        hintEl.style.display = 'none';
+        hintEl.textContent = '';
+      }
+    }
+  } catch(e){
+    _setStatus('list_chat_logs failed: ' + (e && e.message ? e.message : String(e)), 'err');
+  }
+}
+
+async function loadSelectedLog(fork){
+  const sel = document.getElementById('chatlog');
+  const name = sel ? (sel.value || '') : '';
+  if(!name){
+    const hintEl = document.getElementById('logHint');
+    if(hintEl){ hintEl.style.display = 'block'; hintEl.textContent = 'Select a log first.'; }
+    return;
+  }
+  try {
+    const res = await _apiCall('panel_action', ['load_chat_log', {name: name, fork: !!fork}], 8000);
+    if(res && res.ok === true){
+      const hintEl = document.getElementById('logHint');
+      if(hintEl){ hintEl.style.display = 'block'; hintEl.textContent = `Loaded: ${name} (messages: ${res.history_len||'?'}${res.forked?' · forked':''})`; }
+      _setStatus('Panel ready (online)', 'ok');
+      // Inform main UI (optional) by issuing a refresh.
+      try { await _apiCall('panel_action', ['cmd', {text: 'Comm State'}], 8000); } catch(e) {}
+    } else {
+      const err = res && res.error ? res.error : 'unknown error';
+      _setStatus('load_chat_log failed: ' + err, 'err');
+    }
+  } catch(e){
+    _setStatus('load_chat_log failed: ' + (e && e.message ? e.message : String(e)), 'err');
+  }
+}
+
+function clearLogHint(){
+  try {
+    const hintEl = document.getElementById('logHint');
+    if(hintEl){ hintEl.style.display = 'none'; hintEl.textContent = ''; }
+  } catch(e) {}
+}
+
+
+function clearChat(){
+  // Clear the main chat UI + in-memory history via backend action
+  clearLogHint();
+  try { _setStatus('Clearing chat…', 'info'); } catch(e) {}
+  _apiCall('panel_action', ['clear_chat', {}], 8000).then((res) => {
+    try {
+      if(res && res.ok === true){
+        const hintEl = document.getElementById('logHint');
+        if(hintEl){
+          hintEl.style.display = 'block';
+          hintEl.textContent = 'Chat cleared.';
+        }
+        _setStatus('Panel ready (online)', 'ok');
+      } else {
+        const err = res && res.error ? res.error : 'unknown error';
+        _setStatus('clear_chat failed: ' + err, 'err');
+      }
+    } catch(e){
+      _setStatus('clear_chat failed: ' + (e && e.message ? e.message : String(e)), 'err');
+    }
+  }).catch((e) => {
+    try {
+      _setStatus('clear_chat failed: ' + (e && e.message ? e.message : String(e)), 'err');
+    } catch(_e) {}
+  });
+}
+
+
+function onModelSearch(){
+  const p = (document.getElementById('provider') || {}).value || 'gemini';
+  const q = (document.getElementById('modelSearch') || {}).value || '';
+  _safeLsSet(_storageKeyForModelQuery(p), q);
+  applyModelFilters();
+}
+
+function applyModelFilters(desiredModel){
+  const p = (document.getElementById('provider') || {}).value || 'gemini';
+  const allModels = window._allModels || [];
+  let models = Array.isArray(allModels) ? allModels.slice() : [];
+
+  // Free-only filter (OpenRouter)
+  let freeOnly = false;
+  const freeCb = document.getElementById('freeOnly');
+  if(p === 'openrouter' && freeCb && freeCb.checked) freeOnly = true;
+  if(freeOnly) models = models.filter(m => (m || '').includes(':free'));
+
+  // Search filter
+  const q = ((document.getElementById('modelSearch') || {}).value || '').trim().toLowerCase();
+  if(q) models = models.filter(m => String(m || '').toLowerCase().includes(q));
+
+  // Build options
+  const modelOptions = (models || []).map(m => ({value:m, label:`Model: ${m}`}));
+  if(!modelOptions.length){
+    let label = 'Model: (offline / no models)';
+    if(p === 'openrouter' && freeOnly) label = 'Model: (keine :free Modelle)';
+    else if(q) label = 'Model: (keine Treffer)';
+    modelOptions.push({value:'', label: label});
+  }
+
+  const current = (document.getElementById('model') || {}).value || '';
+  const desired = (desiredModel || '').trim();
+  const visible = new Set((models || []).map(x => String(x)));
+  const selected = (desired && visible.has(String(desired))) ? desired
+                  : (current && visible.has(String(current))) ? current
+                  : (models[0] || '');
+
+  _setSelectOptions('model', modelOptions, selected);
+
+  // Only push to backend if online
+  const api = _api();
+  if(api && selected && selected !== current){
+    (async () => { try { await _apiCall('panel_action', ['set_model', {model: selected}], 15000); } catch(e) {} })();
+  }
+}
+
+function toggleFreeOnly() {
+  const p = (document.getElementById('provider') || {}).value || '';
+  const cb = document.getElementById('freeOnly');
+  if(p !== 'openrouter') return;
+  const v = cb && cb.checked;
+  _safeLsSet('openrouter_free_only', (v ? '1' : '0'));
+  applyModelFilters();
+}
+
+async function refreshModels() {
+  const p = (document.getElementById('provider') || {}).value || 'gemini';
+  try {
+    await _apiCall('panel_action', ['refresh_models', {provider: p}], 15000);
+  } catch(e) {
+    _setStatus('refresh_models failed: ' + (e && e.message ? e.message : String(e)), 'err');
+  }
+  await buildUI();
+}
+
+/* ---------- HF catalog hooks (optional; backend may ignore) ---------- */
+function onHFProviderFilterChange(){
+  const v = (document.getElementById('hfProviderFilter') || {}).value || 'all';
+  _safeLsSet('hf_provider_filter', v);
+}
+
+async function fetchHFCatalog(){
+  const api = _api();
+  if(!api){ _setStatus('offline: cannot fetch HF catalog', 'err'); return; }
+  let topN = 200;
+  let pf = 'all';
+  try {
+    topN = parseInt((document.getElementById('hfTopN') || {}).value || '200', 10);
+    if(!isFinite(topN) || topN < 1) topN = 200;
+    _safeLsSet('hfTopN', String(topN));
+    pf = (document.getElementById('hfProviderFilter') || {}).value || 'all';
+    _safeLsSet('hf_catalog_topn', String(topN));
+  } catch(e) {}
+  try {
+    await _apiCall('panel_action', ['hf_catalog', {top_n: topN, provider_filter: pf, force_refresh: true}], 20000);
+  } catch(e) {
+    _setStatus('hf_catalog failed: ' + (e && e.message ? e.message : String(e)), 'err');
+  }
+  await buildUI();
+}
+
+/* ---------- Manual test runner (blocking on answers) ---------- */
+window.__manualTestRunner = window.__manualTestRunner || { running:false, stop:false, runId:0, events:[], summary:null, scenario:'', askFallbackNoted:false };
+
+function _mtMonitorEnabled(){
+  try {
+    const el = document.getElementById('manualTestMonitorMode');
+    return !!(el && el.value === 'show');
+  } catch(e) { return true; }
+}
+
+async function setManualTestMonitorMode(){
+  try {
+    const mode = _mtMonitorEnabled() ? 'show' : 'hide';
+    _safeLsSet('manual_test_monitor_mode', mode);
+    if(mode === 'show'){
+      await _apiCall('panel_action', ['manual_test_monitor_show', {}], 8000);
+    } else {
+      await _apiCall('panel_action', ['manual_test_monitor_hide', {}], 8000);
+    }
+  } catch(e) {
+    _mtWarn('Monitor-Umschaltung fehlgeschlagen: ' + String(e && e.message ? e.message : e));
+  }
+}
+
+function _mtLog(msg, cls){
+  const el = document.getElementById('manualTestLog');
+  if(!el) return;
+  let stamp = '';
+  try { stamp = _now() || ''; } catch(e) { stamp = ''; }
+  const line = document.createElement('div');
+  if(cls) line.className = cls;
+  line.textContent = (stamp ? (stamp + ' · ') : '') + String(msg || '');
+  el.appendChild(line);
+  while(el.children.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+  try {
+    const mt = window.__manualTestRunner;
+    if(mt && mt.running){
+      if(!Array.isArray(mt.events)) mt.events = [];
+      const entry = {
+        ts: stamp || null,
+        level: cls || 'info',
+        message: String(msg || ''),
+      };
+      mt.events.push(entry);
+      try {
+        if(mt.monitorEnabled){
+          _apiCall('panel_action', ['manual_test_monitor_append', {entry: entry}], 4000).catch(()=>{});
+        }
+      } catch(e) {}
+    }
+  } catch(e) {}
+}
+
+function _mtClearLog(){
+  const el = document.getElementById('manualTestLog');
+  if(el) el.innerHTML = '';
+}
+
+async function _mtSaveReport(extra){
+  try {
+    const mt = window.__manualTestRunner || {};
+    const report = {
+      kind: 'manual_test_runner_report',
+      version: 1,
+      scenario: String(mt.scenario || ''),
+      started_at: mt.startedAt || null,
+      finished_at: (extra && extra.finished_at) || (_now ? _now() : null),
+      duration_ms: (extra && extra.duration_ms) || null,
+      summary: Object.assign({}, (mt.summary || {}), (extra && extra.summary ? extra.summary : {})),
+      events: Array.isArray(mt.events) ? mt.events.slice() : [],
+      ui_state: {
+        provider: ((document.getElementById('provider') || {}).value || ''),
+        model: ((document.getElementById('model') || {}).value || ''),
+        answer_language: ((document.getElementById('anslang') || {}).value || ''),
+      }
+    };
+    const res = await _apiCall('panel_action', ['save_manual_test_report', {report: report}], 20000);
+    if(res && res.ok !== false){
+      const path = (res.path || (res.result && res.result.path) || '');
+      if(path) _mtLog('REPORT saved: ' + path, 'ok');
+      else _mtLog('REPORT saved.', 'ok');
+      return res;
+    }
+    _mtWarn('REPORT save failed: ' + String((res && res.error) || 'unknown'));
+    return res;
+  } catch(e) {
+    _mtWarn('REPORT save failed: ' + String(e && e.message ? e.message : e));
+    return null;
+  }
+}
+
+function _mtSetButtons(running){
+  const a = document.getElementById('manualTestStartBtn');
+  const b = document.getElementById('manualTestStopBtn');
+  if(a) a.disabled = !!running;
+  if(b) b.disabled = !running;
+}
+
+function _mtStripHtml(html){
+  try{
+    const d = document.createElement('div');
+    d.innerHTML = String(html || '');
+    return (d.textContent || d.innerText || '').replace(/\\u00a0/g, ' ');
+  }catch(e){ return String(html || ''); }
+}
+
+function _mtHasCompleteQcFooter(html){
+  const txt = _mtStripHtml(html);
+  const idxMatrix = txt.lastIndexOf('QC-Matrix:');
+  const idxQC = txt.lastIndexOf('QC:');
+  const idx = Math.max(idxMatrix, idxQC);
+  if(idx < 0) return false;
+  let qc = txt.slice(idx);
+  const tsIdx = qc.search(/\\bResponse at\\b/i);
+  if(tsIdx >= 0) qc = qc.slice(0, tsIdx);
+  qc = qc.replace(/\\s+/g, ' ').trim();
+  const en = ['Clarity','Brevity','Evidence','Empathy','Consistency','Neutrality'];
+  const de = ['Klarheit','Evidenz','Empathie','Konsistenz'];
+  const hasEN = en.every(k => qc.includes(k + ' '));
+  const hasDE = de.every(k => qc.includes(k + ' ')) &&
+                (qc.includes('Kürze ') || qc.includes('Kuerze ')) &&
+                (qc.includes('Neutralität ') || qc.includes('Neutralitaet '));
+  return !!(hasEN || hasDE);
+}
+
+function _mtHasSelfDebunkingBox(html){
+  const h = String(html || '').toLowerCase();
+  return h.includes('self-debunking') && (h.includes('class=\"self-debunk') || h.includes(\"class='self-debunk\") || h.includes('selbst-debunking') && h.includes('background'));
+}
+
+function _mtHasSciTraceStructure(html){
+  const txt = _mtStripHtml(html);
+  if(!/SCI Trace/i.test(txt)) return false;
+  // Accept numbered or bullet-style step labels (models/renderers vary).
+  const hasNumbered = /\\b1\\.\\s*(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic)/i.test(txt);
+  const hasBulletLabels = /(?:^|\\n)\\s*(?:[-•*]\\s*)?(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic(?:_[0-9]+_[A-Za-z]+)?)\\s*:/im.test(txt);
+  return !!(hasNumbered || hasBulletLabels);
+}
+
+function _mtIncludesProviderLimitLabel(htmlOrText, providerLabel){
+  const t = _mtStripHtml(htmlOrText);
+  return t.toLowerCase().includes(String(providerLabel || '').toLowerCase()) &&
+         /(limit|guthaben|credits|rate)/i.test(t);
+}
+
+function _mtEnsureRunning(){
+  if(!window.__manualTestRunner || !window.__manualTestRunner.running) throw new Error('manual_test_not_running');
+  if(window.__manualTestRunner.stop) throw new Error('manual_test_stopped');
+}
+
+async function _mtSleep(ms){
+  await new Promise(r => setTimeout(r, ms||0));
+}
+
+function _mtAskTimeoutForCurrentProvider(timeoutMs){
+  const base = Number(timeoutMs || 180000) || 180000;
+  // In manual GUI regression runs, even command-like asks (profile/SCI menu selections)
+  // may trigger provider roundtrips and exceed 60s on OpenRouter/HF. Use a robust floor.
+  if(base < 180000){
+    return Math.max(base, 180000);
+  }
+  return base;
+}
+
+async function _mtAsk(text, timeoutMs){
+  _mtEnsureRunning();
+  const t = String(text || '').trim();
+  if(!t) return {html:'', csc:null};
+  const askTimeout = _mtAskTimeoutForCurrentProvider(timeoutMs);
+  _mtLog('ASK > ' + t);
+  let res = null;
+  try {
+    res = await _apiCall('ask', [t], askTimeout);
+  } catch(e) {
+    const msg = String(e && e.message ? e.message : e);
+    if(/pywebview api method not available:\\s*ask/i.test(msg)){
+      try {
+        const mt = window.__manualTestRunner || {};
+        if(!mt.askFallbackNoted){
+          mt.askFallbackNoted = true;
+          _mtLog('INFO: api.ask nicht verfuegbar -> Fallback auf panel_action(ask)', 'info');
+        }
+      } catch(_e) {}
+      res = await _apiCall('panel_action', ['ask', {text: t}], askTimeout);
+      if(res && res.result && typeof res.result === 'object'){
+        res = res.result;
+      }
+    } else {
+      throw e;
+    }
+  }
+  _mtEnsureRunning();
+  const html = (res && res.html) ? String(res.html) : '';
+  _mtLog('ASK < done (' + (html.length||0) + ' html chars)');
+  await _mtSleep(150);
+  try { await buildUI(); } catch(e) {}
+  return res || {html:'', csc:null};
+}
+
+async function _mtPanelAction(action, payload, timeoutMs){
+  _mtEnsureRunning();
+  const res = await _apiCall('panel_action', [action, payload || {}], timeoutMs || 120000);
+  _mtEnsureRunning();
+  if(!res || res.ok === false){
+    throw new Error((res && res.error) ? res.error : ('panel_action failed: ' + action));
+  }
+  return res;
+}
+
+async function _mtSetProvider(provider){
+  const p = String(provider || '').trim().toLowerCase();
+  _mtLog('SET provider = ' + p);
+  // OpenRouter/Hugging Face can be slower due provider API latency / remote catalogs.
+  const _setProviderTimeout = (p === 'openrouter' || p === 'huggingface') ? 45000 : 30000;
+  const _refreshTimeout = (p === 'openrouter' || p === 'huggingface') ? 120000 : 60000;
+  await _mtPanelAction('set_provider', {provider:p}, _setProviderTimeout);
+  await _mtPanelAction('refresh_models', {provider:p}, _refreshTimeout);
+  await _mtSleep(250);
+  await buildUI();
+}
+
+async function _mtSetAnswerLanguage(lang){
+  const l = String(lang || 'de').trim().toLowerCase();
+  _mtLog('SET answer_language = ' + l);
+  await _mtPanelAction('set_answer_language', {lang:l}, 10000);
+  await _mtSleep(100);
+}
+
+async function _mtApplyQcOverride(values){
+  _mtEnsureRunning();
+  _mtLog('QC Override apply: ' + JSON.stringify(values || {}));
+  const api = _api();
+  if(api && typeof api.qc_override_apply === 'function'){
+    const res = await api.qc_override_apply(values || {});
+    if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_apply failed');
+    await _mtSleep(120);
+    return;
+  }
+  _mtWarn('qc_override_apply nicht direkt verfuegbar -> Fallback auf panel_action');
+  const res = await _apiCall('panel_action', ['qc_override_apply', {values: values || {}}], 10000);
+  if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_apply failed');
+  await _mtSleep(120);
+}
+
+async function _mtClearQcOverride(){
+  _mtEnsureRunning();
+  _mtLog('QC Override clear');
+  const api = _api();
+  if(api && typeof api.qc_override_clear === 'function'){
+    const res = await api.qc_override_clear({});
+    if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_clear failed');
+    await _mtSleep(120);
+    return;
+  }
+  _mtWarn('qc_override_clear nicht direkt verfuegbar -> Fallback auf panel_action');
+  const res = await _apiCall('panel_action', ['qc_override_clear', {}], 10000);
+  if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_clear failed');
+  await _mtSleep(120);
+}
+
+function _mtCheck(cond, okMsg, failMsg){
+  if(cond){
+    _mtLog('PASS: ' + okMsg, 'ok');
+    return true;
+  }
+  _mtLog('FAIL: ' + failMsg, 'err');
+  return false;
+}
+
+function _mtWarn(msg){
+  _mtLog('WARN: ' + msg, 'warn');
+}
+
+function _mtParseErrorTextFromAskResult(res){
+  try{
+    const txt = _mtStripHtml((res && res.html) || '');
+    if(/(error|limit|guthaben|credits|rate)/i.test(txt)) return txt;
+  }catch(e){}
+  return '';
+}
+
+async function _mtScenarioSmokeShort(){
+  let fails = 0;
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetAnswerLanguage('de');
+  await _mtAsk('Standard', 30000);
+  await _mtAsk('SCI off', 30000);
+  const r1 = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasCompleteQcFooter(r1.html), 'QC-Footer bei Basisantwort vollstaendig', 'QC-Footer bei Basisantwort fehlt/ist unvollstaendig')) fails++;
+  if(!_mtCheck(_mtStripHtml(r1.html).includes('Self-Debunking') || _mtStripHtml(r1.html).includes('Selbst-Debunking'),
+      'Self-Debunking vorhanden', 'Self-Debunking fehlt')) fails++;
+  return {fails};
+}
+
+async function _mtScenarioProviderSwitch(){
+  let fails = 0;
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetAnswerLanguage('de');
+  await _mtSetProvider('gemini');
+  await _mtAsk('Standard', 30000);
+  let rg = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasCompleteQcFooter(rg.html), 'Gemini: QC-Footer ok', 'Gemini: QC-Footer fehlt/unvollstaendig')) fails++;
+
+  await _mtSetProvider('openrouter');
+  let ro = await _mtAsk('Was ist Zeit?', 180000);
+  const txtOR = _mtStripHtml(ro.html);
+  if(/(insufficient credits|Nicht genügend Guthaben|rate limit|Limit erreicht)/i.test(txtOR)){
+    _mtWarn('OpenRouter lieferte Limit/Credit-Fehler (Test trotzdem ok, Providerpfad verifiziert).');
+    if(!_mtCheck(_mtIncludesProviderLimitLabel(ro.html, 'OpenRouter'), 'OpenRouter-Fehlerlabel korrekt', 'OpenRouter-Fehlerlabel unklar/falsch')) fails++;
+  } else {
+    if(!_mtCheck(_mtHasCompleteQcFooter(ro.html), 'OpenRouter: QC-Footer ok', 'OpenRouter: QC-Footer fehlt/unvollstaendig')) fails++;
+    if(!_mtCheck(_mtHasSelfDebunkingBox(ro.html), 'OpenRouter: Self-Debunking-Box erkannt', 'OpenRouter: Self-Debunking nicht als Box erkannt')) fails++;
+  }
+
+  await _mtSetProvider('huggingface');
+  let rhf = await _mtAsk('Was ist Zeit?', 180000);
+  const txtHF = _mtStripHtml(rhf.html);
+  if(/(insufficient credits|Nicht genügend Guthaben|rate limit|Limit erreicht|quota)/i.test(txtHF)){
+    _mtWarn('Hugging Face lieferte Limit/Credit-Fehler (optional).');
+    if(!_mtCheck(_mtIncludesProviderLimitLabel(rhf.html, 'Hugging Face'), 'HF-Fehlerlabel korrekt', 'HF-Fehler wurde nicht als Hugging Face gekennzeichnet')) fails++;
+  } else {
+    if(!_mtCheck(_mtHasCompleteQcFooter(rhf.html), 'HF: QC-Footer ok', 'HF: QC-Footer fehlt/unvollstaendig')) fails++;
+  }
+  return {fails};
+}
+
+async function _mtScenarioSciFormat(){
+  let fails = 0;
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetProvider('gemini');
+  await _mtAsk('Expert', 30000);
+  await _mtAsk('SCI menu', 30000);
+  await _mtAsk('A', 30000);
+  const rA = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasSciTraceStructure(rA.html), 'SCI A: SCI-Trace-Struktur erkannt', 'SCI A: SCI-Trace-Struktur fehlt/unsauber')) fails++;
+  if(!_mtCheck(_mtHasCompleteQcFooter(rA.html), 'SCI A: QC-Footer ok', 'SCI A: QC-Footer fehlt/unvollstaendig')) fails++;
+
+  await _mtAsk('SCI menu', 30000);
+  await _mtAsk('B', 30000);
+  const rB = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasSciTraceStructure(rB.html), 'SCI B: SCI-Trace-Struktur erkannt', 'SCI B: SCI-Trace-Struktur fehlt/unsauber')) fails++;
+  if(!_mtCheck(_mtHasCompleteQcFooter(rB.html), 'SCI B: QC-Footer ok', 'SCI B: QC-Footer fehlt/unvollstaendig')) fails++;
+  return {fails};
+}
+
+async function _mtScenarioQcOverrideFooter(){
+  let fails = 0;
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetProvider('openrouter');
+  await _mtAsk('Expert', 30000);
+  await _mtAsk('SCI menu', 30000);
+  await _mtAsk('B', 30000);
+  await _mtApplyQcOverride({Clarity:3,Brevity:0,Evidence:3,Empathy:3,Consistency:3,Neutrality:3});
+  const r = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(_mtHasCompleteQcFooter(r.html), 'SCI B + QC-Override: QC-Footer vollstaendig', 'SCI B + QC-Override: QC-Footer fehlt/unvollstaendig')) fails++;
+  if(!_mtCheck(_mtHasSelfDebunkingBox(r.html), 'SCI B + QC-Override: Self-Debunking-Box erkannt', 'SCI B + QC-Override: Self-Debunking nicht als Box erkannt')) fails++;
+  try { await _mtClearQcOverride(); } catch(e) { _mtWarn('QC-Override clear fehlgeschlagen: ' + String(e && e.message ? e.message : e)); }
+  return {fails};
+}
+
+async function _mtScenarioFullRegressionLight(){
+  let fails = 0;
+  for(const fn of [_mtScenarioSmokeShort, _mtScenarioProviderSwitch, _mtScenarioSciFormat, _mtScenarioQcOverrideFooter]){
+    _mtEnsureRunning();
+    const r = await fn();
+    fails += (r && r.fails) ? r.fails : 0;
+  }
+  try {
+    _mtLog('EXPORT > Chat/Audit');
+    await _apiCall('export', [], 20000);
+    _mtLog('PASS: Export ausgefuehrt', 'ok');
+  } catch(e) {
+    _mtWarn('Export nicht ausgefuehrt: ' + String(e && e.message ? e.message : e));
+  }
+  return {fails};
+}
+
+function stopManualTestRunner(){
+  if(!window.__manualTestRunner) return;
+  window.__manualTestRunner.stop = true;
+  _mtLog('Stop angefordert.');
+}
+
+async function startManualTestRunner(){
+  const mt = window.__manualTestRunner || (window.__manualTestRunner = { running:false, stop:false, runId:0 });
+  if(mt.running){
+    _mtWarn('Ein Testlauf laeuft bereits.');
+    return;
+  }
+  mt.running = true;
+  mt.stop = false;
+  mt.runId = (mt.runId || 0) + 1;
+  mt.events = [];
+  mt.summary = null;
+  mt.monitorEnabled = _mtMonitorEnabled();
+  mt.askFallbackNoted = false;
+  const myRun = mt.runId;
+  _mtSetButtons(true);
+  _mtClearLog();
+  const sel = document.getElementById('manualTestScenario');
+  const scenario = (sel && sel.value) ? sel.value : 'smoke_short';
+  mt.scenario = scenario;
+  mt.startedAt = (_now ? _now() : null);
+  try {
+    if(mt.monitorEnabled){
+      await _apiCall('panel_action', ['manual_test_monitor_show', {}], 8000);
+      await _apiCall('panel_action', ['manual_test_monitor_reset', {scenario: scenario, status: 'running', summary: '-'}], 8000);
+    }
+  } catch(e) {
+    _mtWarn('Manual-Test-Monitor konnte nicht initialisiert werden: ' + String(e && e.message ? e.message : e));
+  }
+  _mtLog('Manual-Test gestartet: ' + scenario);
+  const t0 = Date.now();
+  try {
+    let result = {fails: 0};
+    if(scenario === 'smoke_short') result = await _mtScenarioSmokeShort();
+    else if(scenario === 'provider_switch') result = await _mtScenarioProviderSwitch();
+    else if(scenario === 'sci_format') result = await _mtScenarioSciFormat();
+    else if(scenario === 'qc_override_footer') result = await _mtScenarioQcOverrideFooter();
+    else if(scenario === 'full_regression_light') result = await _mtScenarioFullRegressionLight();
+    else throw new Error('unknown scenario: ' + scenario);
+    _mtEnsureRunning();
+    const ms = Date.now() - t0;
+    if((result && result.fails) > 0){
+      mt.summary = { status: 'FAIL', fails: Number(result.fails||0) };
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'FAIL', summary: mt.summary}], 4000); } catch(e) {}
+      _mtLog('SUMMARY: FAILS=' + result.fails + ' · Dauer=' + ms + 'ms', 'err');
+      _setStatus('Manual Test fertig: ' + result.fails + ' Fehler', 'err');
+    } else {
+      mt.summary = { status: 'PASS', fails: 0 };
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'PASS', summary: mt.summary}], 4000); } catch(e) {}
+      _mtLog('SUMMARY: PASS · Dauer=' + ms + 'ms', 'ok');
+      _setStatus('Manual Test fertig: PASS', 'ok');
+    }
+    await _mtSaveReport({ duration_ms: ms, summary: mt.summary, finished_at: (_now ? _now() : null) });
+  } catch(e) {
+    const stopped = (String(e && e.message ? e.message : e).indexOf('manual_test_stopped') >= 0);
+    if(stopped){
+      mt.summary = { status: 'STOPPED' };
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'STOPPED', summary: mt.summary}], 4000); } catch(e) {}
+      _mtLog('SUMMARY: STOPPED', 'warn');
+      _setStatus('Manual Test gestoppt', 'err');
+      await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
+    } else {
+      mt.summary = { status: 'ERROR', error: String(e && e.message ? e.message : e) };
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'ERROR', summary: mt.summary}], 4000); } catch(e) {}
+      _mtLog('ERROR: ' + String(e && e.message ? e.message : e), 'err');
+      _setStatus('Manual Test error: ' + String(e && e.message ? e.message : e), 'err');
+      await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
+    }
+  } finally {
+    if(window.__manualTestRunner && window.__manualTestRunner.runId === myRun){
+      window.__manualTestRunner.running = false;
+      window.__manualTestRunner.stop = false;
+    }
+    _mtSetButtons(false);
+    try { await buildUI(); } catch(e) {}
+  }
+}
+</script>
+</body>
+</html>

@@ -174,6 +174,24 @@ class GovernanceService:
             state.comm_active = False
         except Exception:
             pass
+        for _k, _v in (
+            ('sci_pending', False),
+            ('sci_active', False),
+            ('sci_variant', ''),
+            ('sci_pending_turns', 0),
+            ('sci_recursion_one_shot', False),
+            ('sci_recursion_parent_variant', ''),
+            ('dynamic_one_shot_active', False),
+            ('dynamic_nudge', ''),
+        ):
+            try:
+                setattr(state, _k, _v)
+            except Exception:
+                pass
+        try:
+            state.qc_overrides = {}
+        except Exception:
+            pass
 
     def apply_legacy_command(self, *, cmd: str, state: Any, ruleset_data: Any) -> bool:
         """Apply deterministic legacy command state transitions.

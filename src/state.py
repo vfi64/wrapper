@@ -44,7 +44,7 @@ def _norm_blocked_severities(value: Any) -> list[str]:
 
 @dataclass
 class WrapperState:
-    comm_active: bool = False
+    comm_active: bool = True
     active_profile: str = "Standard"
     overlay: str = ""
     color: str = "on"
@@ -140,7 +140,7 @@ def init_state_from_ruleset(
         (enforcement_cfg.get("blocked_severities") if isinstance(enforcement_cfg, dict) else ["critical"])
     )
     return WrapperState(
-        comm_active=False,
+        comm_active=True,
         active_profile=default_profile,
         overlay=overlay,
         color="on",

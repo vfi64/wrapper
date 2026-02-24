@@ -280,6 +280,8 @@ def test_mixed_command_is_not_executed():
     mod = load_fix_module()
     data = load_ruleset_data()
     api, state = make_api_and_state(data=data, sci_pending=False)
+    # Mixed-command parsing is only meaningful while Comm is active.
+    state.comm_active = True
 
     cmd = get_any_profile_command(data)
     assert cmd is not None
@@ -1325,14 +1327,21 @@ def test_panel_get_ui_returns_minimum_keys():
     assert 'current_model' in ui
     assert 'available_models' in ui
 
-    # When the ruleset is primed, UI must include command sections for the Panel buttons.
+    # Minimum panel sections must exist even if Comm is off (they may be hidden/emptied).
     assert isinstance(ui.get('comm'), list)
     assert len(ui.get('comm')) > 0
     assert isinstance(ui.get('profiles'), list)
-    assert len(ui.get('profiles')) > 0
+    # Under strict Comm-off gating, command sections are hidden until Comm Start.
+    assert isinstance(ui.get('profiles'), list)
+
+    # When Comm is active, the command sections must be populated.
+    api.gov_state.comm_active = True
+    ui_on = api.get_ui()
+    assert isinstance(ui_on.get('profiles'), list)
+    assert len(ui_on.get('profiles')) > 0
 
     # Log list keys must exist (may be empty in tests, but must not crash).
-    assert 'chat_logs' in ui
+    assert 'chat_logs' in ui_on
 
 
 def test_panel_get_ui_safe_without_priming():
@@ -1369,6 +1378,7 @@ def test_panel_action_cmd_executes_local_command_without_model_call():
     mod = load_fix_module()
     _prime_module_gov(mod)
     api = mod.Api()
+    api.gov_state.comm_active = True
     # Guard: if the implementation accidentally tries to call the model, we'd see a send_message call.
     api.chat_session = DummySession(['LLM'])  # type: ignore[attr-defined]
     out = api.panel_action('cmd', {'text': 'Comm State'})
@@ -1497,6 +1507,7 @@ def test_panel_bridge_forwards_ping_get_ui_and_panel_action():
     assert 'providers' in ui and 'current_provider' in ui
 
     # Local command via panel_action must not call model
+    api.gov_state.comm_active = True
     api.chat_session = DummySession(['SHOULD NOT BE USED'])
     out = pb.panel_action('cmd', {'text': 'Comm State'})
     assert isinstance(out, dict)
@@ -2108,7 +2119,8 @@ def test_comm_stop_disables_governance_postprocessing():
         "Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ-7)"
     )
 
-    # With governance enabled, deltas must be corrected.
+    # With governance enabled (and Comm on), deltas must be corrected.
+    api.gov_state.comm_active = True
     api.session_with_governance = True
     dummy1 = DummySession([bad_qc])
     api.chat_session = dummy1
@@ -2117,7 +2129,7 @@ def test_comm_stop_disables_governance_postprocessing():
     assert 'Clarity 3 (Δ0)' in text1
     assert 'Δ+9' not in text1
 
-    # Now disable governance via Comm Stop -> no correction should happen.
+    # Comm Stop disables governance enforcement, but content calls still pass through to the model.
     api.chat_session = DummySession([bad_qc])
     api.ask("Comm Stop")
     out2 = api.ask("Hello")
@@ -2826,6 +2838,31 @@ def test_normalize_known_markdown_control_headings_converts_generic_subheadings(
     assert "<strong>Physikalische Perspektive:</strong>" in out
     assert "<strong>Subsection:</strong>" in out
     assert "<strong>Another one:</strong>" in out
+
+
+def test_unwrap_accidental_full_text_codefence_unwraps_governance_output():
+    mod = load_fix_module()
+    raw = (
+        "```text\n"
+        "Profile Standard\n\n"
+        "<span style=\"color:#f9a825; font-weight:600;\">🟡</span> Test.\n\n"
+        "Self-Debunking:\n"
+        "1. **Schwäche**: Punkt.\n"
+        "QC-Matrix: Clarity 2 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ0)\n"
+        "```"
+    )
+    out = mod.unwrap_accidental_full_text_codefence(raw)
+    assert not out.lstrip().startswith("```")
+    assert "Profile Standard" in out
+    assert "Self-Debunking:" in out
+    assert "QC-Matrix:" in out
+
+
+def test_unwrap_accidental_full_text_codefence_keeps_regular_code_sample():
+    mod = load_fix_module()
+    raw = "```text\nprint('hello')\nfor i in range(3):\n    print(i)\n```"
+    out = mod.unwrap_accidental_full_text_codefence(raw)
+    assert out == raw
 
 
 def test_html_number_self_debunking_numbers_weakness_lines_in_box():
@@ -3749,3 +3786,154 @@ def test_html_number_self_debunking_ol_handles_sibling_p_secondary_labels_and_mi
     out = mod.html_number_self_debunking(html_in, lang="de")
     assert "<p><strong>Warum das wichtig ist</strong>: Relevanz.</p>" in out
     assert "<p><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test.</p>" in out
+
+
+def test_detect_probable_truncation_flags_abrupt_cut():
+    mod = load_fix_module()
+    raw = "SCI Trace:\\nDialectic_2_Antithesis: Zeit ist ein subjektives Er"
+    ok, msg = mod._detect_probable_truncation(raw, "<div>SCI Trace</div>")
+    assert ok is True
+    assert "unvollständig" in msg
+
+
+def test_panel_asset_static_selftest_ok_accepts_required_markers():
+    mod = load_fix_module()
+    html = """
+    <html><body>
+    <select id="provider"></select>
+    <select id="model"></select>
+    <select id="answer-language"></select>
+    <select id="manual-test-scenario"></select>
+    <select id="monitor-visibility"></select>
+    <div class="comm-core-grid"></div><div class="profiles-grid"></div>
+    <div class="sci-grid"></div><div class="modes-grid"></div><div class="tools-grid"></div>
+    <script>
+    function panelAction() {}
+    function buildUI() {}
+    const x = window.pywebview;
+    </script>
+    </body></html>
+    """
+    assert mod._panel_asset_static_selftest_ok(html) is True
+
+
+def test_panel_asset_static_selftest_ok_rejects_missing_markers():
+    mod = load_fix_module()
+    html = "<html><body><script>function buildUI() {}</script></body></html>"
+    assert mod._panel_asset_static_selftest_ok(html) is False
+
+
+def test_route_input_passes_through_chat_when_comm_inactive_except_comm_start():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    state = types.SimpleNamespace(comm_active=False, sci_pending=False, answer_language='de', conversation_language='de')
+    api = types.SimpleNamespace(gov=mod.gov)
+
+    r_chat = mod.route_input('Was ist Zeit?', state, api, api.gov)
+    assert r_chat.get('kind') == 'chat'
+    assert r_chat.get('txt') == 'Was ist Zeit?'
+
+    r_cmd = mod.route_input('Comm State', state, api, api.gov)
+    assert r_cmd.get('kind') == 'chat'
+    assert r_cmd.get('txt') == 'Comm State'
+
+    r_start = mod.route_input('Comm Start', state, api, api.gov)
+    assert r_start.get('kind') == 'command'
+    assert r_start.get('canonical_cmd') == 'Comm Start'
+
+
+def test_comm_stop_resets_sci_and_qc_state_via_intent_path():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.chat_session = DummySession(['OK'])
+    # Avoid backend/session side effects in this unit test.
+    api._recreate_chat_session = lambda *a, **k: None
+    api._ensure_governance_pinned = lambda *a, **k: None
+    api._send_state_update_to_model = lambda *a, **k: None
+
+    api.gov_state.comm_active = True
+    api.gov_state.sci_pending = True
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = 'B'
+    api.gov_state.sci_pending_turns = 2
+    api.gov_state.sci_recursion_one_shot = True
+    api.gov_state.dynamic_one_shot_active = True
+    api.gov_state.dynamic_nudge = 'one-shot'
+    api.gov_state.qc_overrides = {'Brevity': 0}
+
+    out = api.ask('Comm Stop')
+    assert isinstance(out, dict)
+    assert api.gov_state.comm_active is False
+    assert api.gov_state.sci_pending is False
+    assert api.gov_state.sci_active is False
+    assert api.gov_state.sci_variant == ''
+    assert int(getattr(api.gov_state, 'sci_pending_turns', -1)) == 0
+    assert bool(getattr(api.gov_state, 'sci_recursion_one_shot', True)) is False
+    assert bool(getattr(api.gov_state, 'dynamic_one_shot_active', True)) is False
+    assert dict(getattr(api.gov_state, 'qc_overrides', {}) or {}) == {}
+
+
+def test_panel_get_ui_hides_rule_sections_when_comm_off():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = False
+    ui = api.get_ui()
+    assert ui.get('comm_active') is False
+    assert ui.get('manual_test_visible') is False
+    assert ui.get('qc_override_visible') is False
+    assert isinstance(ui.get('comm'), list) and any((isinstance(x, dict) and x.get('cmd') == 'Comm Start') or x == 'Comm Start' for x in ui.get('comm'))
+    assert ui.get('profiles') == []
+    assert ui.get('sci') == []
+    assert ui.get('overlays') == []
+    assert ui.get('tools') == []
+    assert ui.get('logs') == []
+
+
+def test_manual_test_monitor_closed_callback_clears_window_ref():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.manual_test_monitor_win = object()
+    api.on_manual_test_monitor_closed()
+    assert getattr(api, 'manual_test_monitor_win', None) is None
+
+
+def test_panel_action_blocks_stale_rule_actions_when_comm_off():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = False
+
+    r_mt = api.panel_action('manual_test_monitor_show', {})
+    assert isinstance(r_mt, dict)
+    assert r_mt.get('ok') is False
+    assert r_mt.get('error') == 'comm_off_blocked'
+
+    r_ask = api.panel_action('ask', {'text': 'Was ist Zeit?'})
+    assert isinstance(r_ask, dict)
+    assert r_ask.get('ok') is False
+    assert r_ask.get('error') == 'comm_off_blocked'
+
+    r_start = api.panel_action('ask', {'text': 'Comm Start'})
+    assert isinstance(r_start, dict)
+    # The panel_action gate must not block Comm Start (actual execution path may still fail in isolated test).
+    assert r_start.get('error') != 'comm_off_blocked'
+
+
+def test_comm_start_via_input_line_refreshes_panel_ui_state():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = False
+
+    calls = {"panel_refresh": 0}
+    api._ui_refresh_panel = lambda: calls.__setitem__("panel_refresh", calls["panel_refresh"] + 1) or True  # type: ignore[assignment]
+    api._recreate_chat_session = lambda *a, **k: None  # type: ignore[assignment]
+    api._ensure_governance_pinned = lambda *a, **k: None  # type: ignore[assignment]
+    api._send_state_update_to_model = lambda *a, **k: None  # type: ignore[assignment]
+
+    out = api.ask("Comm Start")
+    assert isinstance(out, dict)
+    assert api.gov_state.comm_active is True
+    assert calls["panel_refresh"] >= 1
