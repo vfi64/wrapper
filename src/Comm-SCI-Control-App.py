@@ -113,6 +113,11 @@ try:
 except Exception:
     _panel_html_source_mod = None  # type: ignore
 
+try:
+    import panel_lifecycle_seam as _panel_lifecycle_seam_mod  # type: ignore
+except Exception:
+    _panel_lifecycle_seam_mod = None  # type: ignore
+
 # Stage 3e (CI): strict module mode. If enabled, missing extracted modules is a hard error.
 _STRICT_MODULES = (os.environ.get('WRAPPER_STRICT_MODULES', '') or '').strip().lower() in ('1', 'true', 'yes', 'on')
 if _STRICT_MODULES:
@@ -2364,6 +2369,53 @@ def strip_sci_trace_line_when_inactive(
         return text
 
 
+def strip_governance_scaffolding_when_comm_inactive(text: str) -> str:
+    """Remove visible governance formatting blocks from normal answers when Comm is OFF.
+
+    Rule intent for `Comm Stop`: rule system is inactive (Safety Core may stay active), so
+    content answers should not display Comm-SCI governance formatting such as SCI Trace,
+    Self-Debunking, QC footer lines, or wrapper status headers.
+
+    This is a deterministic display cleanup on raw model text before Markdown/HTML rendering.
+    """
+    try:
+        if not text:
+            return text
+        out = str(text)
+
+        # Remove explicit wrapper/governance status header lines if they leak into model output.
+        out = re.sub(
+            r"(?im)^\s*Active profile\s*:\s*.*(?:Control Layer\s*:\s*on|QC\s*:\s*on|CGI\s*:\s*on).*$\n?",
+            "",
+            out,
+        )
+
+        # Remove plain-text SCI Trace blocks entirely (section style).
+        out = re.sub(
+            r"(?is)(?:^|\n)\s*(?:#+\s*)?SCI\s*Trace\s*:?\s*\n.*?(?=\n\s*(?:#+\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking|QC(?:-Matrix)?\s*:)\b|\Z)",
+            "\n",
+            out,
+        )
+        # Also remove single leaked SCI Trace lines (conservative fallback).
+        out = re.sub(r"(?im)^\s*SCI\s*Trace\s*:\s*.*$\n?", "", out)
+
+        # Remove Self-Debunking sections (EN/DE) up to the next QC footer or end.
+        out = re.sub(
+            r"(?is)(?:^|\n)\s*(?:#+\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:?\s*\n.*?(?=\n\s*QC(?:-Matrix)?\s*:|\Z)",
+            "\n",
+            out,
+        )
+
+        # Remove QC footer / summary lines.
+        out = re.sub(r"(?im)^\s*QC(?:-Matrix)?\s*:.*$\n?", "", out)
+
+        # Collapse excessive blank lines created by removals.
+        out = re.sub(r"\n{3,}", "\n\n", out).strip()
+        return out
+    except Exception:
+        return text
+
+
 def strip_internal_scaffolding_status_html(html_text: str) -> str:
     """Fallback cleanup: remove leaked scaffold status lines from rendered HTML blocks.
 
@@ -2949,6 +3001,24 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                         cleaned,
                         flags=re.IGNORECASE,
                     )
+                # If a logical list item was split into "</li><p>Why...</p><p>Next check...</p>",
+                # merge those secondary paragraphs back into the preceding <li> using <br>.
+                split_li_paras = re.compile(
+                    rf"(?is)</li>((?:\s*<p[^>]*>\s*(?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:.*?</p>)+)"
+                )
+
+                def _merge_split_li_paras(mm: re.Match) -> str:
+                    paras_blob = mm.group(1) or ""
+                    parts = []
+                    for pm in re.finditer(r"(?is)<p[^>]*>\s*(.*?)\s*</p>", paras_blob):
+                        inner = (pm.group(1) or "").strip()
+                        if inner:
+                            parts.append(inner)
+                    if not parts:
+                        return mm.group(0)
+                    return "".join(f"<br>{p}" for p in parts) + "</li>"
+
+                cleaned = split_li_paras.sub(_merge_split_li_paras, cleaned)
                 return cleaned
 
             # Drop standalone marker lines ("1.", "2.") that cause visible double numbering.
@@ -8011,6 +8081,10 @@ class CSCRefiner:
                 try:
                     raw_response = unwrap_accidental_full_text_codefence(raw_response or "")
                     raw_response = normalize_known_markdown_control_headings(raw_response or "")
+                    try:
+                        raw_response = strip_governance_scaffolding_when_comm_inactive(raw_response or "")
+                    except Exception:
+                        pass
                     if _rendering_pipeline_v192 is not None:
                         try:
                             rctx = _rendering_pipeline_v192.RenderContext(
@@ -10531,7 +10605,10 @@ class CSCRefiner:
 
                         # --- Normalize RAW model output for validation (plain text only) ---
             repaired_raw = raw_resp
-            governance_enabled_now = bool(getattr(self, 'session_with_governance', True))
+            governance_enabled_now = (
+                bool(getattr(self, 'session_with_governance', True))
+                and bool(getattr(self.gov_state, 'comm_active', False))
+            )
             repaired_raw = self._normalize_raw_output_contracts(
                 repaired_raw,
                 governance_enabled=governance_enabled_now,
@@ -12135,9 +12212,9 @@ class CSCRefiner:
         return ""
 
     def _panel_select_html_for_window(self):
-        if _panel_html_source_mod is not None:
+        if _panel_lifecycle_seam_mod is not None:
             try:
-                return _panel_html_source_mod.select_panel_html_for_window(
+                return _panel_lifecycle_seam_mod.panel_window_html_plan(
                     force_embedded_html=bool(getattr(self, "_panel_force_embedded_html", False)),
                     html_panel=globals().get("HTML_PANEL"),
                     html_panel_embedded=globals().get("HTML_PANEL_EMBEDDED"),
@@ -12145,6 +12222,7 @@ class CSCRefiner:
                 )
             except Exception:
                 pass
+
         if bool(getattr(self, "_panel_force_embedded_html", False)):
             return self._panel_get_embedded_html(), "embedded"
         try:
@@ -12154,45 +12232,55 @@ class CSCRefiner:
         except Exception:
             txt = self._panel_get_embedded_html()
         try:
-            meta = globals().get("PANEL_HTML_ASSET_META") or {}
-            if not isinstance(meta, dict):
-                meta = {}
+            meta = globals().get("PANEL_HTML_ASSET_META")
+            src = "external" if isinstance(meta, dict) and str(meta.get("source") or "") == "external" and bool(txt) else "embedded"
         except Exception:
-            meta = {}
-        src = str(meta.get("source") or "embedded")
-        if not txt:
             src = "embedded"
-        return txt, ("external" if src == "external" else "embedded")
+        return txt, src
 
     def _panel_begin_bootstrap_probe(self, source: str) -> None:
         src = str(source or "embedded")
-        now_iso = None
         try:
             now_iso = datetime.now().isoformat()
         except Exception:
             now_iso = None
+
+        plan = None
+        if _panel_lifecycle_seam_mod is not None:
+            try:
+                plan = _panel_lifecycle_seam_mod.panel_bootstrap_probe_plan(src, now_iso=now_iso)
+            except Exception:
+                plan = None
+
+        if not isinstance(plan, dict):
+            _status = ("pending" if src == "external" else "skipped")
+            plan = {
+                "source": src,
+                "event_action": ("clear" if src == "external" else "set"),
+                "bootstrap_state": {
+                    "status": _status,
+                    "source": src,
+                    "reason": "",
+                    "created_at": now_iso,
+                    "reported_at": None,
+                },
+            }
+
         try:
             ev = getattr(self, "_panel_bootstrap_ready_event", None)
             if ev is None:
                 ev = threading.Event()
                 self._panel_bootstrap_ready_event = ev
-            if src == "external":
+            if str(plan.get("event_action") or "") == "clear":
                 ev.clear()
             else:
                 ev.set()
         except Exception:
             pass
-        if _panel_bootstrap_state_mod is not None:
-            try:
-                self.panel_bootstrap_state = _panel_bootstrap_state_mod.panel_bootstrap_probe_state(src, now_iso=now_iso)
-            except Exception:
-                self.panel_bootstrap_state = {
-                    "status": ("pending" if src == "external" else "skipped"),
-                    "source": src,
-                    "reason": "",
-                    "created_at": now_iso,
-                    "reported_at": None,
-                }
+
+        _st = plan.get("bootstrap_state") if isinstance(plan, dict) else None
+        if isinstance(_st, dict):
+            self.panel_bootstrap_state = _st
         else:
             self.panel_bootstrap_state = {
                 "status": ("pending" if src == "external" else "skipped"),
@@ -12201,7 +12289,7 @@ class CSCRefiner:
                 "created_at": now_iso,
                 "reported_at": None,
             }
-        self.panel_html_source = src
+        self.panel_html_source = str(plan.get("source") or src)
 
     def _panel_accept_bootstrap_report(self, payload=None) -> dict:
         payload = payload or {}
@@ -12281,76 +12369,83 @@ class CSCRefiner:
 
     def _panel_swap_to_embedded_fallback(self, reason: str = "runtime_selftest_failed") -> bool:
         """Replace a pending/failed external panel with the embedded fallback before showing it."""
+        _plan = None
+        old_win = getattr(self, "panel_win", None)
+        _current_ignore = getattr(self, "_panel_closed_ignore_count", 0)
         try:
-            state = getattr(self, "panel_bootstrap_state", None)
-            try:
-                now_iso = datetime.now().isoformat()
-            except Exception:
-                now_iso = None
+            now_iso = datetime.now().isoformat()
+        except Exception:
+            now_iso = None
 
-            marked = False
-            if _panel_bootstrap_state_mod is not None:
-                try:
+        if _panel_lifecycle_seam_mod is not None:
+            try:
+                _plan = _panel_lifecycle_seam_mod.panel_embedded_fallback_swap_plan(
+                    state=getattr(self, "panel_bootstrap_state", None),
+                    reason=str(reason or "runtime_selftest_failed"),
+                    now_iso=now_iso,
+                    old_window_exists=(old_win is not None),
+                    ignore_count=_current_ignore,
+                )
+            except Exception:
+                _plan = None
+
+        if not isinstance(_plan, dict):
+            try:
+                state = getattr(self, "panel_bootstrap_state", None)
+                if _panel_bootstrap_state_mod is not None:
                     state = _panel_bootstrap_state_mod.panel_bootstrap_mark_failed_for_fallback(
                         state,
                         reason=str(reason or "runtime_selftest_failed"),
                         now_iso=now_iso,
                     )
-                    marked = True
-                except Exception:
-                    marked = False
-
-            if not marked:
                 if not isinstance(state, dict):
                     state = {}
                 state["status"] = "failed"
                 state["reason"] = str(reason or "runtime_selftest_failed")
                 state["source"] = "external"
                 state["reported_at"] = now_iso
+            except Exception:
+                state = {"status": "failed", "reason": str(reason or "runtime_selftest_failed"), "source": "external", "reported_at": now_iso}
+            _plan = {
+                "bootstrap_state": (state if isinstance(state, dict) else {}),
+                "ready_event_action": "set",
+                "log_event": {"event": "fallback_to_embedded", "reason": str(reason or "runtime_selftest_failed")},
+                "recreate_plan": None,
+            }
 
-            self.panel_bootstrap_state = state
+        try:
+            self.panel_bootstrap_state = dict(_plan.get("bootstrap_state") or {})
+        except Exception:
+            pass
+        try:
             ev = getattr(self, "_panel_bootstrap_ready_event", None)
-            if ev is not None:
+            if ev is not None and str(_plan.get("ready_event_action") or "") == "set":
                 ev.set()
         except Exception:
             pass
-
         try:
-            self.log_event("panel_bootstrap", {
-                "event": "fallback_to_embedded",
-                "reason": str(reason or "runtime_selftest_failed"),
-            })
+            _evt = _plan.get("log_event") if isinstance(_plan, dict) else None
+            if isinstance(_evt, dict):
+                self.log_event("panel_bootstrap", dict(_evt))
         except Exception:
             pass
 
-        old_win = getattr(self, "panel_win", None)
         try:
             self._remember_window_geom(old_win, "panel")
         except Exception:
             pass
-        _current_ignore = getattr(self, "_panel_closed_ignore_count", 0)
-        if _panel_window_fallback_mod is not None:
-            try:
-                _plan = _panel_window_fallback_mod.panel_embedded_fallback_recreate_plan(
-                    old_window_exists=(old_win is not None),
-                    ignore_count=_current_ignore,
-                )
-            except Exception:
-                _plan = None
-        else:
-            _plan = None
-
-        self.panel_win = None if not isinstance(_plan, dict) or _plan.get("clear_panel_window", True) else self.panel_win
-        self.panel_hidden = (False if not isinstance(_plan, dict) else bool(_plan.get("panel_hidden", False)))
-        self._panel_force_embedded_html = (True if not isinstance(_plan, dict) else bool(_plan.get("force_embedded_html", True)))
+        _recreate_plan = (_plan.get("recreate_plan") if isinstance(_plan, dict) else None)
+        self.panel_win = None if not isinstance(_recreate_plan, dict) or _recreate_plan.get("clear_panel_window", True) else self.panel_win
+        self.panel_hidden = (False if not isinstance(_recreate_plan, dict) else bool(_recreate_plan.get("panel_hidden", False)))
+        self._panel_force_embedded_html = (True if not isinstance(_recreate_plan, dict) else bool(_recreate_plan.get("force_embedded_html", True)))
         try:
             # Create replacement panel first (hidden), then retire the old one.
             # The old window closed callback is ignored once below.
             self._create_panel()
             if old_win is not None:
-                if isinstance(_plan, dict):
+                if isinstance(_recreate_plan, dict):
                     try:
-                        self._panel_closed_ignore_count = int(_plan.get("next_ignore_count", 1) or 1)
+                        self._panel_closed_ignore_count = int(_recreate_plan.get("next_ignore_count", 1) or 1)
                     except Exception:
                         self._panel_closed_ignore_count = 1
                 else:
@@ -12374,15 +12469,7 @@ class CSCRefiner:
             return False
 
     def _panel_wait_bootstrap_or_fallback(self, timeout_s=None) -> bool:
-        def _runtime_ready_and_reason(st):
-            if _panel_bootstrap_state_mod is not None:
-                try:
-                    if _panel_bootstrap_state_mod.panel_bootstrap_is_runtime_ready(st):
-                        return True, None
-                    return False, _panel_bootstrap_state_mod.panel_bootstrap_fallback_reason(st)
-                except Exception:
-                    pass
-
+        def _local_ready_and_reason(st):
             if not isinstance(st, dict):
                 return True, None
             status = str(st.get("status") or "")
@@ -12394,7 +12481,25 @@ class CSCRefiner:
             return False, reason
 
         state = getattr(self, "panel_bootstrap_state", None)
-        ready, _ = _runtime_ready_and_reason(state)
+        if _panel_lifecycle_seam_mod is not None:
+            try:
+                _initial = _panel_lifecycle_seam_mod.panel_bootstrap_ready_and_reason(state)
+            except Exception:
+                _initial = None
+        else:
+            _initial = None
+
+        if isinstance(_initial, tuple):
+            ready = bool(_initial[0])
+        else:
+            if _panel_bootstrap_state_mod is not None:
+                try:
+                    ready = bool(_panel_bootstrap_state_mod.panel_bootstrap_is_runtime_ready(state))
+                except Exception:
+                    ready, _ = _local_ready_and_reason(state)
+            else:
+                ready, _ = _local_ready_and_reason(state)
+
         if ready:
             return True
 
@@ -12404,23 +12509,57 @@ class CSCRefiner:
                 wait_s = float(getattr(self, "panel_bootstrap_timeout_s", 2.5) or 2.5)
             except Exception:
                 wait_s = 2.5
-        try:
-            if _panel_bootstrap_state_mod is not None:
-                wait_s = _panel_bootstrap_state_mod.panel_bootstrap_timeout_seconds(wait_s, default=2.5)
-            else:
-                wait_s = max(0.0, float(wait_s))
-        except Exception:
-            wait_s = 2.5
+        _wait_plan = None
+        if _panel_lifecycle_seam_mod is not None:
+            try:
+                _wait_plan = _panel_lifecycle_seam_mod.panel_bootstrap_wait_plan(
+                    state,
+                    timeout_s=wait_s,
+                    default_timeout_s=2.5,
+                )
+            except Exception:
+                _wait_plan = None
+        if isinstance(_wait_plan, dict):
+            try:
+                wait_s = float(_wait_plan.get("wait_seconds", 2.5))
+            except Exception:
+                wait_s = 2.5
+        else:
+            try:
+                if _panel_bootstrap_state_mod is not None:
+                    wait_s = _panel_bootstrap_state_mod.panel_bootstrap_timeout_seconds(wait_s, default=2.5)
+                else:
+                    wait_s = max(0.0, float(wait_s))
+            except Exception:
+                wait_s = 2.5
 
         try:
             ev = getattr(self, "_panel_bootstrap_ready_event", None)
-            if ev is not None and isinstance(state, dict) and str(state.get("status") or "") == "pending":
+            _should_wait = (
+                bool(_wait_plan.get("should_wait"))
+                if isinstance(_wait_plan, dict)
+                else bool(isinstance(state, dict) and str(state.get("status") or "") == "pending")
+            )
+            if ev is not None and _should_wait:
                 ev.wait(wait_s)
         except Exception:
             pass
 
         state = getattr(self, "panel_bootstrap_state", None)
-        ready, reason = _runtime_ready_and_reason(state)
+        if _panel_lifecycle_seam_mod is not None:
+            try:
+                ready, reason = _panel_lifecycle_seam_mod.panel_bootstrap_ready_and_reason(state)
+            except Exception:
+                ready, reason = True, None
+        else:
+            if _panel_bootstrap_state_mod is not None:
+                try:
+                    ready = bool(_panel_bootstrap_state_mod.panel_bootstrap_is_runtime_ready(state))
+                    reason = (None if ready else _panel_bootstrap_state_mod.panel_bootstrap_fallback_reason(state))
+                except Exception:
+                    ready, reason = _local_ready_and_reason(state)
+            else:
+                ready, reason = _local_ready_and_reason(state)
         if ready or not reason:
             return True
         self._panel_swap_to_embedded_fallback(str(reason))
@@ -12900,28 +13039,44 @@ class CSCRefiner:
     def on_panel_closed(self):
         # S7 fallback can destroy a retired panel after a replacement panel already exists.
         # Ignore that one late closed event so it does not clear the replacement handle.
+        _closed_plan = None
         try:
-            _panel_exists = (getattr(self, "panel_win", None) is not None)
-            _ignore_count = getattr(self, "_panel_closed_ignore_count", 0)
-            _ignore = False
-            _next_n = None
-            if _panel_window_fallback_mod is not None:
-                try:
-                    _ignore, _next_n = _panel_window_fallback_mod.panel_closed_retired_event_decision(
-                        panel_window_exists=bool(_panel_exists),
-                        ignore_count=_ignore_count,
-                    )
-                except Exception:
-                    _next_n = None
-            if _next_n is not None:
-                self._panel_closed_ignore_count = _next_n
-                if _ignore:
+            if _panel_lifecycle_seam_mod is not None:
+                _closed_plan = _panel_lifecycle_seam_mod.panel_closed_event_plan(
+                    panel_window_exists=(getattr(self, "panel_win", None) is not None),
+                    ignore_count=getattr(self, "_panel_closed_ignore_count", 0),
+                    panel_html_source=getattr(self, "panel_html_source", "embedded"),
+                )
+        except Exception:
+            _closed_plan = None
+
+        try:
+            if isinstance(_closed_plan, dict):
+                self._panel_closed_ignore_count = int(_closed_plan.get("next_ignore_count", 0) or 0)
+                if bool(_closed_plan.get("ignore_event")):
                     return
-            elif _panel_exists:
-                _n = int(getattr(self, "_panel_closed_ignore_count", 0) or 0)
-                if _n > 0:
-                    self._panel_closed_ignore_count = _n - 1
-                    return
+            else:
+                _panel_exists = (getattr(self, "panel_win", None) is not None)
+                _ignore_count = getattr(self, "_panel_closed_ignore_count", 0)
+                _ignore = False
+                _next_n = None
+                if _panel_window_fallback_mod is not None:
+                    try:
+                        _ignore, _next_n = _panel_window_fallback_mod.panel_closed_retired_event_decision(
+                            panel_window_exists=bool(_panel_exists),
+                            ignore_count=_ignore_count,
+                        )
+                    except Exception:
+                        _next_n = None
+                if _next_n is not None:
+                    self._panel_closed_ignore_count = _next_n
+                    if _ignore:
+                        return
+                elif _panel_exists:
+                    _n = int(getattr(self, "_panel_closed_ignore_count", 0) or 0)
+                    if _n > 0:
+                        self._panel_closed_ignore_count = _n - 1
+                        return
         except Exception:
             pass
         # remember last geometry if possible
@@ -12930,27 +13085,39 @@ class CSCRefiner:
         except Exception:
             pass
         try:
-            _src = str(getattr(self, "panel_html_source", "embedded") or "embedded")
-            _closed_state = {
-                "status": "idle",
-                "source": _src,
-                "reason": "window_closed",
-                "created_at": None,
-                "reported_at": None,
-            }
-            if _panel_bootstrap_state_mod is not None:
-                try:
-                    _closed_state = _panel_bootstrap_state_mod.panel_bootstrap_closed_state(_src)
-                except Exception:
-                    pass
+            if isinstance(_closed_plan, dict):
+                _closed_state = dict(_closed_plan.get("bootstrap_state") or {})
+            else:
+                _src = str(getattr(self, "panel_html_source", "embedded") or "embedded")
+                _closed_state = {
+                    "status": "idle",
+                    "source": _src,
+                    "reason": "window_closed",
+                    "created_at": None,
+                    "reported_at": None,
+                }
+                if _panel_bootstrap_state_mod is not None:
+                    try:
+                        _closed_state = _panel_bootstrap_state_mod.panel_bootstrap_closed_state(_src)
+                    except Exception:
+                        pass
             self.panel_bootstrap_state = _closed_state
             ev = getattr(self, "_panel_bootstrap_ready_event", None)
-            if ev is not None:
+            _ev_action = (
+                str(_closed_plan.get("ready_event_action") or "")
+                if isinstance(_closed_plan, dict)
+                else "set"
+            )
+            if ev is not None and _ev_action == "set":
                 ev.set()
         except Exception:
             pass
-        self.panel_win = None
-        self.panel_hidden = False
+        if isinstance(_closed_plan, dict):
+            self.panel_win = (None if bool(_closed_plan.get("clear_panel_window", True)) else self.panel_win)
+            self.panel_hidden = bool(_closed_plan.get("panel_hidden", False))
+        else:
+            self.panel_win = None
+            self.panel_hidden = False
 
 
     def export(self, audit_event=None, audit_only: bool = False, extra_audit=None):

@@ -1,4 +1,4 @@
-# Comm-SCI-Control-App v1.0.3
+# Comm-SCI-Control-App v1.0.4
 
 # Runtime
 pywebview>=5.0

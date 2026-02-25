@@ -2,6 +2,13 @@
 
 All notable changes are documented in this file.
 
+## 1.0.4 - 2026-02-25
+
+- Synced wrapper runtime/tests to the current private-repo `main` state after S11 seam extraction closure (monolith reduction continues; no planned S12 changes included yet).
+- Included the post-S11 `Comm Stop` hardening fix: with `Comm off`, governance formatting scaffolding (e.g. SCI Trace, Self-Debunking, QC footer) is suppressed while the safety core remains active.
+- Normalized Self-Debunking ordered-list HTML rendering so split secondary labels (`Warum relevant`, `Pruefen/Widerlegen ...`) are merged back into the same `<li>` (consistent spacing in point 1 vs. point 2+).
+- Updated/added Self-Debunking regression tests to match the canonical `<li> + <br>` rendering behavior.
+
 ## 1.0.3 - 2026-02-25
 
 - Completed S10 monolith-thinning pass (no behavior change): further compacted panel fallback/report/wait/close cleanup paths in `src/Comm-SCI-Control-App.py` while preserving S7/S8/S9 fallback behavior and panel contracts.

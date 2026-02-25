@@ -935,6 +935,33 @@ def test_html_number_self_debunking_does_not_double_number_inside_ol():
     assert "2. Weakness" not in html_out
 
 
+def test_html_number_self_debunking_merges_split_secondary_paragraphs_in_ol():
+    """Regression: split secondary SD fields must not remain as <p> siblings after the first <li>,
+    otherwise browser paragraph margins create inconsistent spacing in item 1 vs 2+.
+    """
+    mod = load_fix_module()
+
+    html_in = (
+        '<div class="self-debunking"><div>Selbst-Debunking:</div><ol>\n'
+        '<li><strong>Schwäche</strong>: A.</li>\n'
+        '<p><strong>Warum relevant</strong>: B.</p>\n'
+        '<p><strong>Prüfen/Widerlegen (nächster Schritt)</strong>: C.</p>\n'
+        '<li><strong>Schwäche</strong>: D.<br><strong>Warum relevant</strong>: E.<br>'
+        '<strong>Prüfen/Widerlegen (nächster Schritt)</strong>: F.</li>\n'
+        '</ol></div>'
+    )
+
+    out = mod.html_number_self_debunking(html_in, lang="de")
+
+    # The split <p> rows should be folded into the previous <li> as <br> lines.
+    assert "<p><strong>Warum relevant</strong>" not in out
+    assert "<p><strong>Prüfen/Widerlegen (nächster Schritt)</strong>" not in out
+    assert "<br><strong>Warum relevant</strong>:" in out
+    assert "<br><strong>Prüfen/Widerlegen (nächster Schritt)</strong>:" in out
+    # Keep two logical list items (no accidental extra numbering rows).
+    assert out.lower().count("<li") == 2
+
+
 def test_apply_color_spans_handles_white_circle_and_multi_suffix():
     """Regression: Color spans must be applied for Evidence-Linker tokens even with
     ⚪/⚪️ emoji variants and multi-part suffixes like -WEB-CHECK.
@@ -2115,6 +2142,9 @@ def test_comm_stop_disables_governance_postprocessing():
 
     bad_qc = (
         "Answer\n"
+        "Self-Debunking:\n"
+        "1. Weakness: x\n"
+        "2. Weakness: y\n"
         "QC-Matrix: Clarity 3 (Δ+9) · Brevity 1 (Δ0) · Evidence 2 (Δ0) · "
         "Empathy 2 (Δ0) · Consistency 2 (Δ0) · Neutrality 2 (Δ-7)"
     )
@@ -2129,13 +2159,19 @@ def test_comm_stop_disables_governance_postprocessing():
     assert 'Clarity 3 (Δ0)' in text1
     assert 'Δ+9' not in text1
 
-    # Comm Stop disables governance enforcement, but content calls still pass through to the model.
+    # Comm Stop disables rule-system formatting on content answers (Safety Core may still stay active).
     api.chat_session = DummySession([bad_qc])
     api.ask("Comm Stop")
+    # Simulate a provider/model reconnect bug: session still marked as governance-enabled
+    # while Comm is already OFF. The wrapper must still suppress Comm-SCI formatting.
+    api.session_with_governance = True
     out2 = api.ask("Hello")
     text2 = _extract_text(out2)
-    assert 'Clarity 3 (Δ+9)' in text2
-    assert 'Δ+9' in text2
+    assert 'Answer' in text2
+    assert 'QC-Matrix:' not in text2
+    assert 'Δ+9' not in text2
+    assert 'Self-Debunking' not in text2 and 'Selbst-Debunking' not in text2
+    assert 'SCI Trace' not in text2
 
 
 
@@ -3830,8 +3866,13 @@ def test_html_number_self_debunking_ol_handles_sibling_p_secondary_labels_and_mi
         '</div>'
     )
     out = mod.html_number_self_debunking(html_in, lang="de")
-    assert "<p><strong>Warum das wichtig ist</strong>: Relevanz.</p>" in out
-    assert "<p><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test.</p>" in out
+    # New canonical behavior: merge split sibling <p> rows back into the first <li>
+    # so browser paragraph margins do not create inconsistent spacing in item 1.
+    assert "<p><strong>Warum das wichtig ist</strong>: Relevanz.</p>" not in out
+    assert "<p><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test.</p>" not in out
+    assert "<li>" in out and "</li>" in out
+    assert "<br><strong>Warum das wichtig ist</strong>: Relevanz." in out
+    assert "<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test." in out
 
 
 def test_detect_probable_truncation_flags_abrupt_cut():
