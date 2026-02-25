@@ -118,6 +118,21 @@ try:
 except Exception:
     _panel_lifecycle_seam_mod = None  # type: ignore
 
+try:
+    import qc_override_window_seam as _qc_override_window_seam_mod  # type: ignore
+except Exception:
+    _qc_override_window_seam_mod = None  # type: ignore
+
+try:
+    from qc_bridge import QCBridge as _QCBridge  # type: ignore
+except Exception:
+    _QCBridge = None  # type: ignore
+
+try:
+    from panel_bridge import PanelBridge as _PanelBridge  # type: ignore
+except Exception:
+    _PanelBridge = None  # type: ignore
+
 # Stage 3e (CI): strict module mode. If enabled, missing extracted modules is a hard error.
 _STRICT_MODULES = (os.environ.get('WRAPPER_STRICT_MODULES', '') or '').strip().lower() in ('1', 'true', 'yes', 'on')
 if _STRICT_MODULES:
@@ -2938,6 +2953,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 non_weak_labels = (
                     "Why it matters",
                     "Warum relevant",
+                    "Warum es wichtig ist",
                     "Warum das wichtig ist",
                     "What would verify/falsify (next check)",
                     "What would verify or falsify (next check)",
@@ -2956,13 +2972,19 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 )
                 # Keep secondary field labels on a new visual line inside list items.
                 secondary_labels = (
-                    "Why it matters", "Warum relevant", "Warum das wichtig ist",
+                    "Why it matters", "Warum relevant", "Warum es wichtig ist", "Warum das wichtig ist",
                     "What would verify/falsify (next check)", "What would verify or falsify (next check)",
                     "Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)",
                     "Next check", "Nächster Check", "Nächste Prüfung",
                     "Prüfen/Widerlegen (nächster Schritt)",
                 )
                 sec_rx = "|".join(re.escape(x) for x in secondary_labels)
+                # Self-Debunking boxes should not show CGI color bullets or isolated markdown debris.
+                cleaned = re.sub(r"(?is)<span[^>]*>\s*[🟢🟡🔴]\s*</span>", "", cleaned)
+                cleaned = re.sub(r"(?is)<(p|li)[^>]*>\s*[🟢🟡🔴]\s*</\1>", "", cleaned)
+                cleaned = re.sub(r"(?is)<(p|li)[^>]*>\s*(?:\*+\s*:?\s*|:\s*)</\1>", "", cleaned)
+                cleaned = re.sub(r"(?is)<em>\s*\*?\s*(Schwäche|Weakness)\s*\*?\s*</em>\s*\*?", r"\1", cleaned)
+                cleaned = re.sub(r"(?is)>\s*\*\s*(?=<br)", ">", cleaned)
                 cleaned = re.sub(
                     rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:?)",
                     r"\1<br>",
@@ -2973,6 +2995,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 canonical_sec = [
                     ("Why it matters", "Why it matters"),
                     ("Warum relevant", "Warum relevant"),
+                    ("Warum es wichtig ist", "Warum das wichtig ist"),
                     ("Warum das wichtig ist", "Warum das wichtig ist"),
                     ("What would verify/falsify (next check)", "What would verify/falsify (next check)"),
                     ("What would verify or falsify (next check)", "What would verify or falsify (next check)"),
@@ -2983,6 +3006,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                     ("Nächste Prüfung", "Nächste Prüfung"),
                     ("Prüfen/Widerlegen (nächster Schritt)", "Prüfen/Widerlegen (nächster Schritt)"),
                 ]
+                sec_canon_map = {str(_pat).lower(): _canon for _pat, _canon in canonical_sec}
                 for _pat, _canon in canonical_sec:
                     cleaned = re.sub(
                         rf"(?is)(?<!\()(?:(?:<strong>\s*)?{re.escape(_pat)}(?:\s*</strong>)?)\s*:?\s*",
@@ -3001,6 +3025,64 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                         cleaned,
                         flags=re.IGNORECASE,
                     )
+                # Handle fragmented primary items from weak markdown conversion:
+                # "<li>*Schwäche</li><p>*:</p><p>🟡</p><p>Text...</p>" -> one canonical <li>.
+                split_primary_li = re.compile(
+                    rf"(?is)<li[^>]*>\s*(?:<strong>\s*)?\*?\s*(Schwäche|Weakness)\s*\*?(?:\s*</strong>)?\s*</li>"
+                    rf"(?:\s*<p[^>]*>\s*(?:\*+\s*:?\s*|:\s*)</p>)*"
+                    rf"(?:\s*<p[^>]*>\s*[🟢🟡🔴]\s*</p>)*"
+                    rf"\s*<p[^>]*>\s*(?!\s*(?:<strong>\s*)?(?:{sec_rx})\b)(.*?)\s*</p>"
+                )
+
+                def _merge_split_primary_li(mm: re.Match) -> str:
+                    _label = (mm.group(1) or "").strip()
+                    _txt = (mm.group(2) or "").strip()
+                    if not _txt:
+                        return mm.group(0)
+                    return f"<li><strong>{_label}</strong>: {_txt}</li>"
+
+                cleaned = split_primary_li.sub(_merge_split_primary_li, cleaned)
+                # Merge sibling secondary rows back into the preceding item:
+                #   </li><li>Warum ...</li><p>Text</p>  ->  <br><strong>Warum ...</strong>: Text</li>
+                #   </li><p><strong>Nächster Check</strong>:</p><p>Text</p> -> same
+                split_secondary_rows = re.compile(
+                    rf"(?is)</li>\s*<(?:li|p)[^>]*>\s*(?:<strong>\s*)?(?P<label>{sec_rx})(?:\s*</strong>)?\s*:?\s*</(?:li|p)>"
+                    rf"(?:\s*<p[^>]*>\s*(?:\*+\s*:?\s*|:\s*)</p>)*"
+                    rf"(?:\s*<p[^>]*>\s*[🟢🟡🔴]\s*</p>)*"
+                    rf"\s*<p[^>]*>\s*(?P<txt>.*?)\s*</p>"
+                )
+
+                def _merge_split_secondary_rows(mm: re.Match) -> str:
+                    _lab_raw = re.sub(r"(?is)<[^>]+>", "", mm.group("label") or "").strip()
+                    _lab = sec_canon_map.get(_lab_raw.lower(), _lab_raw)
+                    _txt = (mm.group("txt") or "").strip()
+                    if not _lab or not _txt:
+                        return mm.group(0)
+                    return f"<br><strong>{_lab}</strong>: {_txt}</li>"
+
+                for _ in range(8):
+                    _new = split_secondary_rows.sub(_merge_split_secondary_rows, cleaned)
+                    if _new == cleaned:
+                        break
+                    cleaned = _new
+                # If a secondary label became a separate <li>, merge it into the previous weakness item.
+                split_secondary_li = re.compile(
+                    rf"(?is)</li>\s*<li([^>]*)>\s*((?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:.*?)(?=</li>)</li>"
+                )
+
+                def _merge_split_secondary_li(mm: re.Match) -> str:
+                    _inner = (mm.group(2) or "").strip()
+                    if not _inner:
+                        return mm.group(0)
+                    return f"<br>{_inner}</li>"
+
+                for _ in range(8):
+                    _new = split_secondary_li.sub(_merge_split_secondary_li, cleaned)
+                    if _new == cleaned:
+                        break
+                    cleaned = _new
+                cleaned = re.sub(r"(?is)(<strong>[^<]+</strong>:)\s*</strong>", r"\1", cleaned)
+                cleaned = re.sub(r"(?is)<(p|li)[^>]*>\s*\*\s*</\1>", "", cleaned)
                 # If a logical list item was split into "</li><p>Why...</p><p>Next check...</p>",
                 # merge those secondary paragraphs back into the preceding <li> using <br>.
                 split_li_paras = re.compile(
@@ -3055,7 +3137,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 # Bold known labels (formatting only).
                 for lab in (
                     'Weakness', 'Schwäche',
-                    'Why it matters', 'Warum relevant', 'Warum das wichtig ist',
+                    'Why it matters', 'Warum relevant', 'Warum es wichtig ist', 'Warum das wichtig ist',
                     'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
                     'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
                     'Next check', 'Nächster Check',
@@ -3069,7 +3151,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 # Force secondary field labels onto a new visual line if they leaked inline after
                 # the Weakness sentence (common with weaker models / compact HTML rendering).
                 secondary_labels = (
-                    'Why it matters', 'Warum relevant', 'Warum das wichtig ist',
+                    'Why it matters', 'Warum relevant', 'Warum es wichtig ist', 'Warum das wichtig ist',
                     'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
                     'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
                     'Next check', 'Nächster Check', 'Nächste Prüfung',
@@ -3087,7 +3169,7 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 plain = re.sub(r'<[^>]+>', '', ln).strip()
                 # Non-Weakness field labels must not carry list numbering.
                 if re.match(
-                    r"(?i)^(?:\d+\.\s*)(Why it matters|Warum relevant|Warum das wichtig ist|What would verify/falsify \(next check\)|What would verify or falsify \(next check\)|Was würde verifizieren/falsifizieren \(nächster Check\)|Was würde verifizieren oder falsifizieren \(nächster Check\)|Next check|Nächster Check|Nächste Prüfung|Prüfen/Widerlegen \(nächster Schritt\))\s*:",
+                    r"(?i)^(?:\d+\.\s*)(Why it matters|Warum relevant|Warum es wichtig ist|Warum das wichtig ist|What would verify/falsify \(next check\)|What would verify or falsify \(next check\)|Was würde verifizieren/falsifizieren \(nächster Check\)|Was würde verifizieren oder falsifizieren \(nächster Check\)|Next check|Nächster Check|Nächste Prüfung|Prüfen/Widerlegen \(nächster Schritt\))\s*:",
                     plain,
                 ):
                     ln = re.sub(r'(?i)(<div[^>]*>\s*)\d+\.\s*', r'\1', ln, count=1)
@@ -3189,6 +3271,39 @@ def normalize_hash_subheadings_in_html(html_text: str) -> str:
         return "\n".join(lines)
     except Exception:
         return html_text
+
+
+def _repair_violation_is_format_only(vio: str) -> bool:
+    """True for cosmetic/ordering-only repair violations (banner can stay hidden)."""
+    try:
+        s = re.sub(r"\s+", " ", str(vio or "")).strip().lower()
+        if not s:
+            return False
+        if s in {
+            "self-debunking placed after qc footer.",
+            "self-debunking placed after qc footer",
+            "selbst-debunking nach qc-footer platziert.",
+            "selbst-debunking nach qc-footer platziert",
+        }:
+            return True
+        if re.match(r"^self-?debunking must contain 2(?:-|–|—)3 numbered points \(found \d+\)\.?$", s):
+            return True
+        if re.match(r"^selbst-?debunking muss 2(?:-|–|—)3 nummerierte punkte enthalten \(gefunden \d+\)\.?$", s):
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _should_show_repair_pass_banner(violations: list[str] | None) -> bool:
+    """Show UI banner only if at least one repair violation is not format-only."""
+    try:
+        vios = [str(v).strip() for v in (violations or []) if str(v or "").strip()]
+        if not vios:
+            return False
+        return any(not _repair_violation_is_format_only(v) for v in vios)
+    except Exception:
+        return True
 
 
 def detect_self_debunking_numbered_html(html_text: str) -> bool:
@@ -8674,6 +8789,7 @@ class CSCRefiner:
                     pass
                 if _raw_qc_line:
                     _plain_html = re.sub(r"<[^>]+>", "", str(final_html_body or ""))
+                    _html_any_qc_lines = re.findall(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$", _plain_html)
                     _html_qc_lines = re.findall(r"(?im)^\s*QC-Matrix:\s*.*$", _plain_html)
                     _html_qc_last = (_html_qc_lines[-1].strip() if _html_qc_lines else "")
                     # Use the whole suffix from the last footer marker because renderers can fragment
@@ -8699,15 +8815,18 @@ class CSCRefiner:
                         ("Klarheit " in _qc_probe and ("Kürze " in _qc_probe or "Kuerze " in _qc_probe) and "Evidenz " in _qc_probe and
                          "Empathie " in _qc_probe and "Konsistenz " in _qc_probe and ("Neutralität " in _qc_probe or "Neutralitaet " in _qc_probe))
                     )
-                    if not _qc_complete:
+                    # If the renderer kept multiple footer variants (e.g. model-emitted localized "QC:" plus
+                    # the wrapper's canonical "QC-Matrix:"), collapse them to exactly one canonical footer.
+                    _has_duplicate_qc_footer_lines = len(_html_any_qc_lines) > 1
+                    if (not _qc_complete) or _has_duplicate_qc_footer_lines:
                         final_html_body = re.sub(
-                            r"(?is)<p>\s*QC-Matrix:\s*.*?</p>\s*",
+                            r"(?is)<p>\s*QC(?:-Matrix)?\s*:.*?</p>\s*",
                             "",
                             str(final_html_body or ""),
                         ).rstrip()
                         # Also remove common fragmented QC footer wrappers if present.
                         final_html_body = re.sub(
-                            r"(?is)<div[^>]*>\s*QC-Matrix:\s*.*?</div>\s*",
+                            r"(?is)<div[^>]*>\s*QC(?:-Matrix)?\s*:.*?</div>\s*",
                             "",
                             str(final_html_body or ""),
                         ).rstrip()
@@ -9016,6 +9135,18 @@ class CSCRefiner:
                         sci_now = False
                     if sci_now and isinstance(b, int) and b <= 0:
                         lines.append("[SCI TRACE DETAIL] Brevity=0 is active: write at least two substantive sentences per SCI Trace step.")
+            else:
+                try:
+                    _qc_reset_pending = bool(getattr(self, '_qc_override_prompt_reset_pending', False))
+                except Exception:
+                    _qc_reset_pending = False
+                if _qc_reset_pending:
+                    lines.append("[QC OVERRIDES] Cleared. Use profile defaults only.")
+                    lines.append("[QC BEHAVIOR] Ignore any previous temporary QC override instructions from earlier turns.")
+                    try:
+                        self._qc_override_prompt_reset_pending = False
+                    except Exception:
+                        pass
             lines.append("")
             return "\n".join(lines) + raw
         except Exception:
@@ -10721,13 +10852,16 @@ class CSCRefiner:
 
                         # Banner (visible; does not claim perfection beyond one pass)
                         try:
-                            items = "".join([f"<li>{html.escape(str(v))}</li>" for v in hard_vios])
-                            repair_banner_html = (
-                                "<div style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
-                                "border-radius:10px; margin:8px 0; color:#92400e;'>"
-                                "<b>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
-                                f"<ul style='margin:6px 0 0 18px; padding:0;'>{items}</ul></div>"
-                            )
+                            if _should_show_repair_pass_banner(hard_vios):
+                                items = "".join([f"<li>{html.escape(str(v))}</li>" for v in hard_vios])
+                                repair_banner_html = (
+                                    "<div style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
+                                    "border-radius:10px; margin:8px 0; color:#92400e;'>"
+                                    "<b>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
+                                    f"<ul style='margin:6px 0 0 18px; padding:0;'>{items}</ul></div>"
+                                )
+                            else:
+                                repair_banner_html = ""
                         except Exception:
                             repair_banner_html = (
                                 "<div style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
@@ -12568,46 +12702,32 @@ class CSCRefiner:
 
 
     def _create_panel(self):
-        # Geometry: prefer persisted config; fallback to current defaults
-        geom = self.panel_geom or {}
-        def _safe_int(v, default):
-            try:
-                return int(v)
-            except Exception:
-                return int(default)
-
-        panel_x = _safe_int(geom.get('x', 1100), 1100)
-        panel_y = _safe_int(geom.get('y', 0), 0)
-        panel_w = _safe_int(geom.get('width', 340), 340)
-        panel_h = _safe_int(geom.get('height', 1000), 1000)
-
-        # macOS/pywebview: a persisted off-screen position makes the panel look 'missing'.
-        # Keep values in a sane corridor; otherwise reset to defaults near top-left.
-        if panel_w < 250:
-            panel_w = 250
-        if panel_h < 300:
-            panel_h = 300
-        if panel_x < 0 or panel_x > 5000:
-            panel_x = 50
-        if panel_y < 0 or panel_y > 3000:
-            panel_y = 50
-
         panel_html, panel_html_source = self._panel_select_html_for_window()
-
-        # Panel window must receive the same js_api object as the main window.
-        # (Secondary windows can otherwise miss methods like get_ui/ping on some backends.)
-        kwargs = dict(
-            title=PANEL_WINDOW_TITLE,
-            html=panel_html,
-            js_api=(self.panel_bridge or self),
-            width=panel_w,
-            height=panel_h,
-            on_top=False
-        )
-
-        # Only set x/y if we have something sensible
-        if panel_x is not None and panel_y is not None:
-            kwargs.update(dict(x=panel_x, y=panel_y))
+        _create_plan = None
+        try:
+            if _panel_lifecycle_seam_mod is not None:
+                _create_plan = _panel_lifecycle_seam_mod.panel_create_window_kwargs_plan(
+                    panel_geom=(self.panel_geom or {}),
+                    panel_window_title=PANEL_WINDOW_TITLE,
+                    panel_html=panel_html,
+                    js_api_obj=(self.panel_bridge or self),
+                )
+        except Exception:
+            _create_plan = None
+        if isinstance(_create_plan, dict) and isinstance(_create_plan.get("kwargs"), dict):
+            kwargs = dict(_create_plan.get("kwargs") or {})
+        else:
+            # Fallback: safe defaults if seam planning is unavailable.
+            kwargs = dict(
+                title=PANEL_WINDOW_TITLE,
+                html=panel_html,
+                js_api=(self.panel_bridge or self),
+                width=340,
+                height=1000,
+                on_top=False,
+                x=50,
+                y=50,
+            )
 
         # Pre-create hidden (best effort): avoids Cocoa bridge issues and prevents a 'flash' at startup.
         win = None
@@ -12644,16 +12764,30 @@ class CSCRefiner:
         except Exception:
             self.qc_bridge = None
         try:
-            self.qc_win = webview.create_window(
-                "Temporary QC override – Profile: ?",
-                html=HTML_QC_OVERRIDE,
-                width=450,
-                height=550,
-                resizable=False,
-                hidden=True,
-                on_top=True,
-                js_api=getattr(self, 'qc_bridge', None) or self
-            )
+            _qc_create_plan = None
+            try:
+                if _qc_override_window_seam_mod is not None:
+                    _qc_create_plan = _qc_override_window_seam_mod.qc_override_window_create_kwargs_plan(
+                        html_qc_override=HTML_QC_OVERRIDE,
+                        js_api_obj=(getattr(self, 'qc_bridge', None) or self),
+                    )
+            except Exception:
+                _qc_create_plan = None
+            if isinstance(_qc_create_plan, dict) and isinstance(_qc_create_plan.get("kwargs"), dict):
+                _kw = dict(_qc_create_plan.get("kwargs") or {})
+                _title = _kw.pop("title", "Temporary QC override – Profile: ?")
+                self.qc_win = webview.create_window(_title, **_kw)
+            else:
+                self.qc_win = webview.create_window(
+                    "Temporary QC override – Profile: ?",
+                    html=HTML_QC_OVERRIDE,
+                    width=450,
+                    height=550,
+                    resizable=False,
+                    hidden=True,
+                    on_top=True,
+                    js_api=getattr(self, 'qc_bridge', None) or self
+                )
         except Exception:
             try:
                 self.qc_win = None
@@ -12663,21 +12797,47 @@ class CSCRefiner:
     def show_qc_override(self):
         """Show QC Override dialog window."""
         try:
+            _show_plan = None
+            try:
+                if _qc_override_window_seam_mod is not None:
+                    _show_plan = _qc_override_window_seam_mod.qc_override_show_plan(
+                        window_exists=(getattr(self, 'qc_win', None) is not None)
+                    )
+            except Exception:
+                _show_plan = None
             win = getattr(self, 'qc_win', None)
-            if win is None:
+            _create_if_missing = (
+                bool(_show_plan.get("create_if_missing"))
+                if isinstance(_show_plan, dict)
+                else (win is None)
+            )
+            if win is None and _create_if_missing:
                 self._create_qc_override()
                 win = getattr(self, 'qc_win', None)
             if win is None:
-                return {'ok': False, 'error': 'qc_win unavailable'}
-            try:
-                win.show()
-            except Exception:
-                pass
-            try:
-                win.bring_to_front()
-            except Exception:
-                pass
-            return {'ok': True}
+                _err = (
+                    str(_show_plan.get("error_if_unavailable") or "qc_win unavailable")
+                    if isinstance(_show_plan, dict)
+                    else "qc_win unavailable"
+                )
+                return {'ok': False, 'error': _err}
+            _methods = (
+                tuple(_show_plan.get("window_methods") or ())
+                if isinstance(_show_plan, dict)
+                else ("show", "bring_to_front")
+            )
+            for _meth in _methods:
+                try:
+                    if hasattr(win, _meth):
+                        getattr(win, _meth)()
+                except Exception:
+                    pass
+            _ok = (
+                _show_plan.get("success_result")
+                if isinstance(_show_plan, dict) and isinstance(_show_plan.get("success_result"), dict)
+                else {'ok': True}
+            )
+            return dict(_ok)
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
@@ -12747,13 +12907,28 @@ class CSCRefiner:
                     setattr(gov_obj, 'runtime_state', self.gov_state)
             except Exception:
                 pass
+            try:
+                self._qc_override_prompt_reset_pending = False
+            except Exception:
+                pass
 
-            msg_parts = []
-            disp = {'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'}
-            for key in ['clarity','brevity','evidence','empathy','consistency','neutrality']:
-                if key in clean:
-                    msg_parts.append(f"{disp.get(key, key)}={clean[key]}")
-            msg = "QC-Overrides gesetzt: " + (", ".join(msg_parts) if msg_parts else "(leer)")
+            _ui_plan = None
+            try:
+                if _qc_override_window_seam_mod is not None:
+                    _ui_plan = _qc_override_window_seam_mod.qc_override_apply_ui_plan(
+                        clean_overrides=dict(clean),
+                        qc_window_exists=(getattr(self, 'qc_win', None) is not None),
+                    )
+            except Exception:
+                _ui_plan = None
+            msg = (
+                str(_ui_plan.get("history_message"))
+                if isinstance(_ui_plan, dict) and _ui_plan.get("history_message") is not None
+                else ("QC-Overrides gesetzt: " + (", ".join(
+                    [f"{ {'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'}.get(k, k)}={clean[k]}"
+                     for k in ['clarity','brevity','evidence','empathy','consistency','neutrality'] if k in clean]
+                ) if clean else "(leer)"))
+            )
 
             try:
                 self.history.append({'role': 'sys', 'content': msg, 'ts': datetime.now().isoformat()})
@@ -12763,26 +12938,48 @@ class CSCRefiner:
             try:
                 if getattr(self, 'main_win', None) is not None:
                     import json as _json
-                    js_msg = _json.dumps(msg, ensure_ascii=False)
+                    _ui_msg = (
+                        str(_ui_plan.get("main_ui_message"))
+                        if isinstance(_ui_plan, dict) and _ui_plan.get("main_ui_message") is not None
+                        else msg
+                    )
+                    js_msg = _json.dumps(_ui_msg, ensure_ascii=False)
                     self.main_win.evaluate_js(f"addMsg('sys', {js_msg});")
             except Exception:
                 pass
 
             try:
-                if getattr(self, 'qc_win', None) is not None:
-                    try:
-                        self.qc_win.hide()
-                    except Exception:
-                        pass
+                _win = getattr(self, 'qc_win', None)
+                _methods = (
+                    tuple(_ui_plan.get("qc_window_methods") or ())
+                    if isinstance(_ui_plan, dict)
+                    else (("hide",) if _win is not None else ())
+                )
+                for _meth in _methods:
+                    if _win is not None and hasattr(_win, _meth):
+                        try:
+                            getattr(_win, _meth)()
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
-            return {'ok': True, 'overrides': clean}
+            _ok = (
+                _ui_plan.get("success_result")
+                if isinstance(_ui_plan, dict) and isinstance(_ui_plan.get("success_result"), dict)
+                else {'ok': True, 'overrides': clean}
+            )
+            return dict(_ok)
         except Exception as e:
             try:
                 if getattr(self, 'main_win', None) is not None:
                     import json as _json
-                    js_msg = _json.dumps(f"[WARN] QC Override Apply failed: {type(e).__name__}: {e}", ensure_ascii=False)
+                    _warn_prefix = (
+                        str(_ui_plan.get("warn_prefix") or "[WARN] QC Override Apply failed: ")
+                        if isinstance(locals().get("_ui_plan"), dict)
+                        else "[WARN] QC Override Apply failed: "
+                    )
+                    js_msg = _json.dumps(f"{_warn_prefix}{type(e).__name__}: {e}", ensure_ascii=False)
                     self.main_win.evaluate_js(f"addMsg('sys', {js_msg});")
             except Exception:
                 pass
@@ -12791,6 +12988,7 @@ class CSCRefiner:
     def qc_override_clear(self, _payload=None):
         """Clear QC overrides."""
         try:
+            _ui_plan = None
             try:
                 self.gov_state.qc_overrides = {}
             except Exception:
@@ -12806,7 +13004,22 @@ class CSCRefiner:
                     setattr(gov_obj, 'runtime_state', self.gov_state)
             except Exception:
                 pass
-            msg = "QC-Overrides zurückgesetzt"
+            try:
+                self._qc_override_prompt_reset_pending = True
+            except Exception:
+                pass
+            try:
+                if _qc_override_window_seam_mod is not None:
+                    _ui_plan = _qc_override_window_seam_mod.qc_override_clear_ui_plan(
+                        qc_window_exists=(getattr(self, 'qc_win', None) is not None)
+                    )
+            except Exception:
+                _ui_plan = None
+            msg = (
+                str(_ui_plan.get("history_message"))
+                if isinstance(_ui_plan, dict) and _ui_plan.get("history_message") is not None
+                else "QC-Overrides zurückgesetzt"
+            )
             try:
                 self.history.append({'role': 'sys', 'content': msg, 'ts': datetime.now().isoformat()})
             except Exception:
@@ -12814,23 +13027,68 @@ class CSCRefiner:
             try:
                 if getattr(self, 'main_win', None) is not None:
                     import json as _json
-                    js_msg = _json.dumps(msg, ensure_ascii=False)
+                    _ui_msg = (
+                        str(_ui_plan.get("main_ui_message"))
+                        if isinstance(_ui_plan, dict) and _ui_plan.get("main_ui_message") is not None
+                        else msg
+                    )
+                    js_msg = _json.dumps(_ui_msg, ensure_ascii=False)
                     self.main_win.evaluate_js(f"addMsg('sys', {js_msg});")
             except Exception:
                 pass
-            return {'ok': True}
+            try:
+                _win = getattr(self, 'qc_win', None)
+                _methods = (
+                    tuple(_ui_plan.get("qc_window_methods") or ())
+                    if isinstance(_ui_plan, dict)
+                    else (("hide",) if _win is not None else ())
+                )
+                for _meth in _methods:
+                    if _win is not None and hasattr(_win, _meth):
+                        try:
+                            getattr(_win, _meth)()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            _ok = (
+                _ui_plan.get("success_result")
+                if isinstance(_ui_plan, dict) and isinstance(_ui_plan.get("success_result"), dict)
+                else {'ok': True}
+            )
+            return dict(_ok)
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
     def qc_override_cancel(self, _payload=None):
         """Close QC dialog without changes."""
         try:
+            _cancel_plan = None
             try:
-                if getattr(self, 'qc_win', None) is not None:
-                    self.qc_win.hide()
+                if _qc_override_window_seam_mod is not None:
+                    _cancel_plan = _qc_override_window_seam_mod.qc_override_cancel_plan(
+                        window_exists=(getattr(self, 'qc_win', None) is not None)
+                    )
+            except Exception:
+                _cancel_plan = None
+            try:
+                _win = getattr(self, 'qc_win', None)
+                _methods = (
+                    tuple(_cancel_plan.get("window_methods") or ())
+                    if isinstance(_cancel_plan, dict)
+                    else (("hide",) if _win is not None else ())
+                )
+                for _meth in _methods:
+                    if _win is not None and hasattr(_win, _meth):
+                        getattr(_win, _meth)()
             except Exception:
                 pass
-            return {'ok': True}
+            _ok = (
+                _cancel_plan.get("success_result")
+                if isinstance(_cancel_plan, dict) and isinstance(_cancel_plan.get("success_result"), dict)
+                else {'ok': True}
+            )
+            return dict(_ok)
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
@@ -12877,16 +13135,36 @@ class CSCRefiner:
         evaluate_js refreshes. Recreating the panel window is the most reliable fix.
         Preserves the user's last panel position/size when possible.
         """
+        _rebuild_plan = None
+        try:
+            if _panel_lifecycle_seam_mod is not None:
+                _rebuild_plan = _panel_lifecycle_seam_mod.panel_rebuild_plan(
+                    reason=reason,
+                    panel_window_exists=(getattr(self, "panel_win", None) is not None),
+                )
+        except Exception:
+            _rebuild_plan = None
+
         try:
             # remember geometry before destroying
-            if self.panel_win:
+            _should_remember = (
+                bool(_rebuild_plan.get("remember_geometry_before_destroy"))
+                if isinstance(_rebuild_plan, dict)
+                else bool(self.panel_win)
+            )
+            if _should_remember and self.panel_win:
                 self._remember_window_geom(self.panel_win, "panel")
         except Exception:
             pass
 
         # Try to destroy existing panel window
         try:
-            if self.panel_win:
+            _should_destroy = (
+                bool(_rebuild_plan.get("destroy_old_window"))
+                if isinstance(_rebuild_plan, dict)
+                else bool(self.panel_win)
+            )
+            if _should_destroy and self.panel_win:
                 self.panel_win.destroy()
         except Exception:
             pass
@@ -12896,27 +13174,90 @@ class CSCRefiner:
             self.panel_bridge = PanelBridge(self)
         except Exception:
             self.panel_bridge = None
-        self.panel_hidden = False
+        self.panel_hidden = (
+            bool(_rebuild_plan.get("reset_panel_hidden", False))
+            if isinstance(_rebuild_plan, dict)
+            else False
+        )
 
         # Recreate and bring to front
         try:
             self._create_panel()
             # best-effort focus
             try:
-                if hasattr(self.panel_win, "focus"):
-                    self.panel_win.focus()
-                if hasattr(self.panel_win, "restore"):
-                    self.panel_win.restore()
+                _methods = (
+                    tuple(_rebuild_plan.get("post_create_window_methods") or ())
+                    if isinstance(_rebuild_plan, dict)
+                    else ("focus", "restore")
+                )
+                for _meth in _methods:
+                    if hasattr(self.panel_win, _meth):
+                        getattr(self.panel_win, _meth)()
             except Exception:
                 pass
             if self.main_win:
-                self.main_win.evaluate_js(f"addMsg('sys', 'Panel rebuilt ({reason}).')")
+                _msg = (
+                    str(_rebuild_plan.get("success_main_message") or f"Panel rebuilt ({reason}).")
+                    if isinstance(_rebuild_plan, dict)
+                    else f"Panel rebuilt ({reason})."
+                )
+                self.main_win.evaluate_js(f"addMsg('sys', '{_msg}')")
         except Exception as e:
             if self.main_win:
                 safe = str(e).replace("'", "'").replace('"', '\"')
-                self.main_win.evaluate_js(f"addMsg('sys', 'Panel rebuild failed: {safe}')")
+                _prefix = (
+                    str(_rebuild_plan.get("failure_main_message_prefix") or "Panel rebuild failed: ")
+                    if isinstance(_rebuild_plan, dict)
+                    else "Panel rebuild failed: "
+                )
+                self.main_win.evaluate_js(f"addMsg('sys', '{_prefix}{safe}')")
 
     def _hide_panel(self):
+        _win = getattr(self, "panel_win", None)
+        _hide_plan = None
+        try:
+            if _panel_lifecycle_seam_mod is not None:
+                _hide_plan = _panel_lifecycle_seam_mod.panel_hide_plan(
+                    panel_window_exists=(_win is not None),
+                    has_hide=bool(_win is not None and hasattr(_win, "hide")),
+                    has_minimize=bool(_win is not None and hasattr(_win, "minimize")),
+                )
+        except Exception:
+            _hide_plan = None
+
+        if isinstance(_hide_plan, dict):
+            _action = str(_hide_plan.get("action") or "noop")
+            if _action == "noop":
+                return
+            if bool(_hide_plan.get("remember_geometry")):
+                try:
+                    self._remember_window_geom(_win, "panel")
+                except Exception:
+                    pass
+            if _action == "hide":
+                try:
+                    _win.hide()
+                    self.panel_hidden = bool(_hide_plan.get("panel_hidden", True))
+                    return
+                except Exception:
+                    pass
+            elif _action == "minimize":
+                try:
+                    _win.minimize()
+                    self.panel_hidden = bool(_hide_plan.get("panel_hidden", True))
+                    return
+                except Exception:
+                    pass
+            elif _action == "destroy":
+                try:
+                    _win.destroy()
+                except Exception:
+                    pass
+                if bool(_hide_plan.get("clear_panel_window", True)):
+                    self.panel_win = None
+                self.panel_hidden = bool(_hide_plan.get("panel_hidden", False))
+                return
+
         if not self.panel_win:
             return
         # remember geometry before hiding
@@ -12946,6 +13287,37 @@ class CSCRefiner:
         self.panel_hidden = False
 
     def _show_panel(self):
+        _show_plan = None
+        try:
+            if _panel_lifecycle_seam_mod is not None:
+                _show_plan = _panel_lifecycle_seam_mod.panel_show_plan(
+                    panel_window_exists=(getattr(self, "panel_win", None) is not None),
+                )
+        except Exception:
+            _show_plan = None
+        if isinstance(_show_plan, dict):
+            _action = str(_show_plan.get("action") or "")
+            if _action == "create_panel":
+                self._create_panel()
+                return
+            if bool(_show_plan.get("wait_bootstrap_before_show")):
+                try:
+                    # S7: external panel.html is only shown after a runtime self-test callback.
+                    # If it never arrives, rebuild hidden with the embedded fallback first.
+                    self._panel_wait_bootstrap_or_fallback()
+                except Exception:
+                    pass
+            try:
+                _win = getattr(self, "panel_win", None)
+                for _meth in tuple(_show_plan.get("window_methods") or ()):
+                    if _win is not None and hasattr(_win, _meth):
+                        getattr(_win, _meth)()
+            except Exception:
+                pass
+            if _show_plan.get("panel_hidden") is not None:
+                self.panel_hidden = bool(_show_plan.get("panel_hidden"))
+            return
+
         if not self.panel_win:
             self._create_panel()
             return
@@ -12969,6 +13341,32 @@ class CSCRefiner:
     def ensure_panel_visible(self):
         """Called from JS once the main UI is ready: show the panel automatically."""
         try:
+            _plan = None
+            try:
+                if _panel_lifecycle_seam_mod is not None:
+                    _plan = _panel_lifecycle_seam_mod.panel_ensure_visible_plan(
+                        panel_window_exists=(getattr(self, "panel_win", None) is not None),
+                        panel_hidden=bool(getattr(self, "panel_hidden", False)),
+                    )
+            except Exception:
+                _plan = None
+            if isinstance(_plan, dict):
+                _action = str(_plan.get("action") or "")
+                if _action == "create_panel":
+                    self._create_panel()
+                    return
+                if _action == "show_panel":
+                    self._show_panel()
+                    return
+                if _action == "focus_existing":
+                    try:
+                        _win = getattr(self, "panel_win", None)
+                        for _meth in tuple(_plan.get("window_methods") or ()):
+                            if _win is not None and hasattr(_win, _meth):
+                                getattr(_win, _meth)()
+                    except Exception:
+                        pass
+                    return
             if not self.panel_win:
                 self._create_panel()
             else:
@@ -12988,6 +13386,26 @@ class CSCRefiner:
 
     def settings(self):
         """Toggle panel visibility."""
+        _plan = None
+        try:
+            if _panel_lifecycle_seam_mod is not None:
+                _plan = _panel_lifecycle_seam_mod.panel_settings_toggle_plan(
+                    panel_window_exists=(getattr(self, "panel_win", None) is not None),
+                    panel_hidden=bool(getattr(self, "panel_hidden", False)),
+                )
+        except Exception:
+            _plan = None
+        if isinstance(_plan, dict):
+            _action = str(_plan.get("action") or "")
+            if _action == "create_panel":
+                self._create_panel()
+                return
+            if _action == "show_panel":
+                self._show_panel()
+                return
+            if _action == "hide_panel":
+                self._hide_panel()
+                return
         if not self.panel_win:
             self._create_panel()
             return
@@ -12999,17 +13417,38 @@ class CSCRefiner:
 
     def on_panel_closing(self):
         """Intercept the panel close action ("X") and hide instead of destroying when possible."""
+        _closing_plan = None
+        try:
+            if _panel_lifecycle_seam_mod is not None:
+                _w = getattr(self, "panel_win", None)
+                _closing_plan = _panel_lifecycle_seam_mod.panel_on_closing_plan(
+                    panel_window_exists=(_w is not None),
+                    has_hide=bool(_w is not None and hasattr(_w, "hide")),
+                )
+        except Exception:
+            _closing_plan = None
         try:
             self._hide_panel()
         except Exception:
             # best-effort hide
             try:
-                if self.panel_win and hasattr(self.panel_win, "hide"):
+                _fallback_action = (
+                    str(_closing_plan.get("fallback_action") or "")
+                    if isinstance(_closing_plan, dict)
+                    else "direct_hide"
+                )
+                if _fallback_action == "direct_hide" and self.panel_win and hasattr(self.panel_win, "hide"):
                     self.panel_win.hide()
-                    self.panel_hidden = True
+                    self.panel_hidden = bool(
+                        _closing_plan.get("fallback_sets_panel_hidden", True)
+                        if isinstance(_closing_plan, dict)
+                        else True
+                    )
             except Exception:
                 pass
         # Returning False cancels the close on backends that support it (best-effort).
+        if isinstance(_closing_plan, dict):
+            return bool(_closing_plan.get("return_value", False))
         return False
 
     def _bind_panel_window_events(self, win):
@@ -13021,16 +13460,37 @@ class CSCRefiner:
         if not win:
             return
         evs = getattr(win, "events", None)
+        _bind_plan = None
+        try:
+            if _panel_lifecycle_seam_mod is not None:
+                _bind_plan = _panel_lifecycle_seam_mod.panel_bind_window_events_plan(
+                    window_exists=bool(win),
+                    has_events=(evs is not None),
+                    has_closing_event=(getattr(evs, "closing", None) is not None),
+                    has_closed_event=(getattr(evs, "closed", None) is not None),
+                )
+        except Exception:
+            _bind_plan = None
 
         closing_ev = getattr(evs, "closing", None)
-        if closing_ev is not None:
+        _bind_closing = (
+            bool(_bind_plan.get("bind_closing"))
+            if isinstance(_bind_plan, dict)
+            else (closing_ev is not None)
+        )
+        if _bind_closing and closing_ev is not None:
             try:
                 closing_ev += self.on_panel_closing
             except Exception:
                 pass
 
         closed_ev = getattr(evs, "closed", None)
-        if closed_ev is not None:
+        _bind_closed = (
+            bool(_bind_plan.get("bind_closed"))
+            if isinstance(_bind_plan, dict)
+            else (closed_ev is not None)
+        )
+        if _bind_closed and closed_ev is not None:
             try:
                 closed_ev += self.on_panel_closed
             except Exception:
@@ -15714,6 +16174,7 @@ class Api(CSCRefiner):
         self.main_win = None
         self.panel_win = None
         self.panel_hidden = False
+        self._qc_override_prompt_reset_pending = False
 
         # Panel API bridge (small surface to avoid pywebview method enumeration issues)
         try:
@@ -16026,67 +16487,58 @@ class Api(CSCRefiner):
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
 
-class QCBridge:
-    """Minimal JS bridge for the QC Override dialog."""
-    def __init__(self, api):
-        self._api = api
+if _QCBridge is not None:
+    QCBridge = _QCBridge
+else:
+    class QCBridge:
+        """Minimal JS bridge for the QC Override dialog (fallback local implementation)."""
 
-    def ping(self, _payload=None):
-        try:
-            import time as _time
-            return {"ok": True, "ts": _time.time()}
-        except Exception:
-            return {"ok": True}
+        def __init__(self, api):
+            self._api = api
 
-    def qc_get_state(self, _payload=None):
-        try:
-            return self._api.qc_get_state()
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        def ping(self, _payload=None):
+            try:
+                import time as _time
+                return {"ok": True, "ts": _time.time()}
+            except Exception:
+                return {"ok": True}
 
-    def qc_override_apply(self, values):
-        try:
-            return self._api.qc_override_apply(values)
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        def _call(self, fn_name: str, *args):
+            try:
+                return getattr(self._api, fn_name)(*args)
+            except Exception as e:
+                return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    def qc_override_clear(self, _payload=None):
-        try:
-            return self._api.qc_override_clear()
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        def qc_get_state(self, _payload=None):
+            return self._call("qc_get_state")
 
-    def qc_override_cancel(self, _payload=None):
-        try:
-            return self._api.qc_override_cancel()
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        def qc_override_apply(self, values):
+            return self._call("qc_override_apply", values)
+
+        def qc_override_clear(self, _payload=None):
+            return self._call("qc_override_clear")
+
+        def qc_override_cancel(self, _payload=None):
+            return self._call("qc_override_cancel")
 
 
-class PanelBridge:
-    """Separate JS-API bridge for the Panel window.
+if _PanelBridge is not None:
+    PanelBridge = _PanelBridge
+else:
+    class PanelBridge:
+        """Separate JS-API bridge for the Panel window (fallback local implementation)."""
 
-    Some pywebview backends expose only a subset of methods for secondary windows
-    when reusing a large js_api surface. This bridge keeps the Panel stable by
-    exposing only a tiny, deterministic API and forwarding to the main Api.
+        def __init__(self, api):
+            self._api = api
 
-    Exposed methods:
-      - ping()
-      - get_ui()
-      - panel_action(action, payload)
-    """
+        def ping(self, _payload=None):
+            return self._api.ping()
 
-    def __init__(self, api):
-        self._api = api
+        def get_ui(self):
+            return self._api.get_ui()
 
-    def ping(self, _payload=None):
-        return self._api.ping()
-
-    def get_ui(self):
-        return self._api.get_ui()
-
-    def panel_action(self, action, payload=None):
-        return self._api.panel_action(action, payload)
+        def panel_action(self, action, payload=None):
+            return self._api.panel_action(action, payload)
 
 
 class MainBridge:

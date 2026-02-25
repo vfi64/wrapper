@@ -443,6 +443,59 @@ def test_one_repair_pass_is_applied_once_when_validator_reports_hard_violations(
     assert 'REPAIRED RESPONSE' in text
 
 
+def test_repair_pass_banner_classifier_hides_format_only_self_debunking_repairs():
+    mod = load_fix_module()
+    only_format = [
+        "Self-Debunking placed after QC footer.",
+        "Self-Debunking must contain 2–3 numbered points (found 0).",
+    ]
+    mixed = list(only_format) + [
+        "Verification Route Gate: strong-claim heuristic triggered, but no verification route markers found (Source/Measurement/Contrast/Web Check)."
+    ]
+    assert mod._should_show_repair_pass_banner(only_format) is False
+    assert mod._should_show_repair_pass_banner(mixed) is True
+
+
+def test_repair_pass_banner_is_hidden_for_format_only_self_debunking_repairs():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api._apply_csc_strict = lambda text, user_raw=None, is_command=False: (text, None)
+
+    class DummyValidator:
+        def __init__(self):
+            self.validate_calls = 0
+
+        def _required_trace_steps_for_variant(self, vk: str):
+            return []
+
+        def validate(self, *, text, state, expect_menu, expect_trace, is_command, user_prompt):
+            self.validate_calls += 1
+            return [
+                "Self-Debunking placed after QC footer.",
+                "Self-Debunking must contain 2–3 numbered points (found 0).",
+            ], []
+
+        def build_repair_prompt(self, *, user_prompt, raw_response, state, hard_violations, soft_violations):
+            return "REPAIR: format only"
+
+    api.validator = DummyValidator()
+    api.chat_session = DummySession([
+        "BAD",
+        "REPAIRED RESPONSE\nQC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)",
+    ])
+
+    out = api.ask("Was ist Zeit?")
+    text = _extract_text(out)
+
+    assert len(api.chat_session.calls) == 2
+    assert api.validator.validate_calls >= 1
+    assert api.session_repair_passes >= 1
+    assert "REPAIRED RESPONSE" in text
+    assert "CONTROL LAYER NOTE" not in text
+
+
 
 def test_repair_pass_is_rate_limited_counts_as_second_call():
     mod = load_fix_module()
@@ -752,6 +805,27 @@ def test_qc_override_injects_prompt_behavior_directives():
     assert "Evidence=3" in sent
     assert "[QC BEHAVIOR]" in sent
 
+
+
+def test_qc_override_clear_injects_one_time_prompt_reset_directive():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.gov_state.comm_active = True
+
+    api.qc_override_apply({"Brevity": 0, "Evidence": 3})
+    api.qc_override_clear({})
+
+    first = api._apply_output_prefs_to_user_message("Was ist Zeit?")
+    assert "[QC OVERRIDES] Cleared. Use profile defaults only." in first
+    assert "Ignore any previous temporary QC override instructions" in first
+    assert "Active temporary targets override profile defaults" not in first
+
+    second = api._apply_output_prefs_to_user_message("Was ist Zeit?")
+    assert "[QC OVERRIDES] Cleared. Use profile defaults only." not in second
+    assert "Ignore any previous temporary QC override instructions" not in second
+    assert "Active temporary targets override profile defaults" not in second
 
 
 def test_expected_qc_deltas_respects_runtime_overrides():
@@ -2566,6 +2640,28 @@ def test_normalization_summary_meta_is_present_for_content_answers():
     assert "self_debunking_boxed" in ns
 
 
+def test_apply_csc_strict_collapses_mixed_qc_and_qc_matrix_footers_to_single_canonical_footer():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    api.gov_state.comm_active = True
+    api.gov_state.color = "off"
+
+    raw = (
+        "Antworttext\n\n"
+        "QC: Klarheit 3 (Δ0) · Kürze 0 (Δ-2) · Evidenz 3 (Δ+1) · Empathie 2 (Δ0) · Konsistenz 3 (Δ0) · Neutralität 2 (Δ0)\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 0 (Δ0) · Evidence 3 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)"
+    )
+
+    html_out, _ = api._apply_csc_strict(raw_response=raw, user_raw="Was ist Zeit?", is_command=False)
+    plain = re.sub(r"<[^>]+>", "\n", str(html_out or ""))
+    qc_lines = [ln.strip() for ln in plain.splitlines() if re.match(r"(?i)^QC(?:-Matrix)?\s*:", (ln or "").strip())]
+
+    assert sum(1 for ln in qc_lines if re.match(r"(?i)^QC-Matrix\s*:", ln)) == 1
+    assert not any(re.match(r"(?i)^QC\s*:", ln) for ln in qc_lines)
+
+
 def test_session_render_counters_increment_on_fallback():
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -3873,6 +3969,36 @@ def test_html_number_self_debunking_ol_handles_sibling_p_secondary_labels_and_mi
     assert "<li>" in out and "</li>" in out
     assert "<br><strong>Warum das wichtig ist</strong>: Relevanz." in out
     assert "<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test." in out
+
+
+def test_html_number_self_debunking_ol_repairs_fragmented_markdown_and_color_noise():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li>*Schwäche</li>'
+        '<p>*:</p>'
+        '<p>🟡</p>'
+        '<p>Die psychologische Erfahrung von Zeit wurde nur kurz angeschnitten.</p>'
+        '<li>Warum es wichtig ist:</li>'
+        '<p>🟡</p>'
+        '<p>Die subjektive Wahrnehmung von Zeit beeinflusst unser Verhalten.</p>'
+        '<p>*</p>'
+        '<p><strong>Nächster Check</strong>: </p>'
+        '<p>🟡</p>'
+        '<p>Psychologische Studien zur Zeitwahrnehmung untersuchen.</p>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert out.count("<li>") == 1
+    assert "<strong>Schwäche</strong>:" in out
+    assert "<strong>Warum das wichtig ist</strong>:" in out
+    assert "<strong>Nächster Check</strong>:" in out
+    assert "🟡" not in out
+    assert "<p>*</p>" not in out
+    assert "*Schwäche" not in out
 
 
 def test_detect_probable_truncation_flags_abrupt_cut():
