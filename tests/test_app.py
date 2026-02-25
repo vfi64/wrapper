@@ -3621,6 +3621,52 @@ def test_render_sci_trace_runtime_handles_complex_step_labels_variant_g():
     assert "Mitigations/controls:</div>" in out
 
 
+def test_render_sci_trace_runtime_accepts_dialectic_syntheses2_alias_for_variant_b_step6():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "B"
+
+    def _variant_def(_v):
+        return ({}, ["Dialectic_6_Synthesis2", "Learn"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "SCI Trace:\n"
+        "- Dialectic_6_Synthesis2\n"
+        "- Learn\n\n"
+        "**Dialectic_6_Syntheses_2:** Alias-Step erkannt.\n"
+        "**Learn:** Learn-Inhalt bleibt erhalten.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "Missing SCI Trace step content" not in out
+    # Canonical rendering label must stay canonical even if input alias drifted.
+    assert "Dialectic_6_Synthesis2:</div>" in out
+    assert "Alias-Step erkannt." in out
+    assert "Learn-Inhalt bleibt erhalten." in out
+
+
+def test_validate_sci_trace_accepts_dialectic_syntheses2_alias_for_canonical_step():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, mod.cfg)
+
+    validator._required_trace_steps_for_variant = lambda _v: ["Dialectic_6_Synthesis2", "Learn"]  # type: ignore[assignment]
+
+    raw = (
+        "SCI Trace:\n"
+        "Dialectic_6_Syntheses_2: Alias-Stepinhalt.\n"
+        "Learn: Lerninhalt.\n"
+    )
+    vios = validator.validate_sci_trace(raw, "B")
+    assert not any("Missing SCI Trace step: Dialectic_6_Synthesis2" in v for v in vios)
+    assert not any("Missing SCI Trace step: Learn" in v for v in vios)
+    assert not any("has no content" in v for v in vios)
+
+
 def test_normalize_sci_trace_numbering_handles_complex_step_labels():
     mod = load_fix_module()
 

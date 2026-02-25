@@ -191,6 +191,68 @@ Current S9 verification snapshot (2026-02-24):
 - Extract only pure decisions/state transitions first; verify with focused tests before touching window-lifecycle calls.
 - Use the existing S7/S8 manual fallback test procedure as the S9 manual gate.
 
+### S10 — Monolith thinning (visible size reduction, no behavior change)
+**Goal:** make `src/Comm-SCI-Control-App.py` visibly smaller after S9 by removing now-redundant helper/fallback duplication while preserving runtime behavior.
+- Reduce S9 delegation duplicates in the monolith (keep only compact emergency shims where needed).
+- Keep pywebview window operations and panel lifecycle behavior unchanged.
+- Preserve all `panel_action(...)` names/payloads and S7/S8/S9 panel fallback behavior.
+- Keep the private-first workflow: refactor + tests/manual gates in private repo, then sync to public wrapper.
+
+**Out of scope (S10 must not do this)**
+- No feature additions or UI changes.
+- No provider/governance/rendering behavior changes.
+- No pywebview timing optimization (timeouts/fallback frequency analysis is separate work).
+- No broad orchestrator/service rewrite outside the panel/fallback seam.
+
+#### S10 acceptance checklist (completed)
+- [x] S10a baseline measured and documented (current monolith size + hotspot references).
+- [x] `Comm-SCI-Control-App.py` is materially smaller after S10 (documented delta vs S10a baseline: **-50 lines** after S10d).
+- [x] S9 helper-module delegations in the monolith are reduced to compact shims / direct module calls where safe (S10b first pass: `_panel_accept_bootstrap_report`, `_panel_swap_to_embedded_fallback`).
+- [x] No change in `panel_action(...)` route names or response payload schemas (S10 touched panel fallback/wait/close cleanup paths only; panel route subset regressions remained green).
+- [x] S9 module tests remain green (`tests/test_panel_asset_loader.py`, `tests/test_panel_bootstrap_state.py`, `tests/test_panel_window_fallback.py`, `tests/test_panel_html_source.py`) after S10b (`22 PASS`).
+- [x] Targeted panel regression subset in `tests/test_app.py` remains green after S10b (`6 PASS`).
+- [x] Manual pywebview runtime-fallback re-test passes (broken `panel_bootstrap_selftest` callback -> embedded fallback, no duplicate panel).
+- [x] Manual panel/manual-test smoke checks re-run (`qc_override_footer`, `full_regression_light`).
+
+Current S10 baseline snapshot (2026-02-24, S10a):
+- Monolith size: `src/Comm-SCI-Control-App.py` = **16,188 lines** (`wc -l`).
+- Remaining panel/fallback hotspot methods still in the monolith:
+  - `_panel_get_embedded_html(...)` (`src/Comm-SCI-Control-App.py:12070`)
+  - `_panel_select_html_for_window(...)` (`src/Comm-SCI-Control-App.py:12093`)
+  - `_panel_begin_bootstrap_probe(...)` (`src/Comm-SCI-Control-App.py:12123`)
+  - `_panel_accept_bootstrap_report(...)` (`src/Comm-SCI-Control-App.py:12162`)
+  - `_panel_swap_to_embedded_fallback(...)` (`src/Comm-SCI-Control-App.py:12255`)
+  - `_panel_wait_bootstrap_or_fallback(...)` (`src/Comm-SCI-Control-App.py:12358`)
+  - `on_panel_closed(...)` (`src/Comm-SCI-Control-App.py:12898`)
+- S10 focus: shrink these monolith methods by removing duplicated fallback logic that now exists in `panel_asset_loader`, `panel_bootstrap_state`, `panel_window_fallback`, and `panel_html_source`.
+
+#### S10 execution notes
+- Prefer small, behavior-preserving deletions/compactions over moving additional pywebview calls into modules.
+- After each S10 sub-step, run the focused panel test gates before touching another hotspot.
+- Keep manual fallback smoke (`panel_bootstrap_selftest` broken callback) as the final gate before marking S10 complete.
+
+S10b progress snapshot (2026-02-25):
+- Monolith size after first S10b compaction: `src/Comm-SCI-Control-App.py` = **16,162 lines** (`wc -l`) => **-26 lines** vs S10a baseline (16,188).
+- First visible compaction completed in `_panel_accept_bootstrap_report(...)` and `_panel_swap_to_embedded_fallback(...)` (duplicate side-effect and fallback-state paths reduced; no contract changes).
+- Focused gates run after S10b: `py_compile` OK, S9 panel helper tests `22 PASS`, targeted panel regression subset `6 PASS`.
+
+S10c progress snapshot (2026-02-25):
+- Monolith size after second S10c compaction: `src/Comm-SCI-Control-App.py` = **16,154 lines** (`wc -l`) => **-34 lines** vs S10a baseline (16,188).
+- `on_panel_closed(...)` compacted (retired-panel close-event race-guard fallback path + closed-state reset path deduplicated; behavior preserved).
+- Focused gates re-run after S10c: `py_compile` OK, S9 panel helper tests `22 PASS`, targeted panel regression subset `6 PASS`.
+
+S10d progress snapshot (2026-02-25):
+- Monolith size after third S10d compaction: `src/Comm-SCI-Control-App.py` = **16,138 lines** (`wc -l`) => **-50 lines** vs S10a baseline (16,188).
+- `_panel_wait_bootstrap_or_fallback(...)` compacted via shared local ready/reason helper (module path + fallback shim logic deduplicated; wait/fallback behavior preserved).
+- Focused gates re-run after S10d: `py_compile` OK, S9 panel helper tests `22 PASS`, targeted panel regression subset `6 PASS`.
+
+S10e completion snapshot (2026-02-25):
+- Manual pywebview fallback re-test (broken `panel_bootstrap_selftest` callback) passed after S10d: delayed panel open OK, embedded fallback OK, no duplicate panel on `Panel` button (user-verified; `panel.html` restored afterwards).
+- Manual smoke re-runs passed:
+  - `Logs/ManualTests/ManualTest_20260225_073852_862939_full_regression_light.json` -> `PASS` (including `PASS: OpenRouter: Self-Debunking-Box erkannt`)
+  - `Logs/ManualTests/ManualTest_20260225_073943_015319_qc_override_footer.json` -> `PASS`
+- S10 status: **complete** (S10a-S10e).
+
 ---
 
 ## Contribution workflow (recommended)

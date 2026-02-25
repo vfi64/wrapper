@@ -3687,6 +3687,13 @@ def match_required_sci_step_header(line: str, required_steps: list[str]):
         if not s or not isinstance(required_steps, list):
             return None, None
         prefix = r"^\s*(?:[*+-]|•)?\s*(?:\d+\.)?\s*"
+        def _norm_step_label(v: str) -> str:
+            t = re.sub(r"<[^>]+>", "", str(v or ""))
+            t = t.strip().strip("*_").strip().lower()
+            # Common model drift in SCI-B step 6: "Syntheses_2" vs canonical "Synthesis2"
+            t = t.replace("syntheses", "synthesis")
+            t = re.sub(r"[^a-z0-9]+", "", t)
+            return t
         steps = sorted(
             [str(x).strip() for x in required_steps if str(x or "").strip()],
             key=len,
@@ -3701,6 +3708,18 @@ def match_required_sci_step_header(line: str, required_steps: list[str]):
             m = pat.match(s)
             if m:
                 return step, (m.group("rest") or "").strip()
+        # Fallback: tolerate minor label-variant drift (e.g. Synthesis2 vs Syntheses_2)
+        m_any = re.match(
+            prefix + r"(?:\*\*|__)?(?P<label>[^:\n]{1,200}?)(?:\*\*|__)?\s*:\s*(?P<rest>.*)$",
+            s,
+            flags=re.IGNORECASE,
+        )
+        if m_any:
+            got = _norm_step_label(m_any.group("label"))
+            if got:
+                for step in steps:
+                    if got == _norm_step_label(step):
+                        return step, (m_any.group("rest") or "").strip()
         return None, None
     except Exception:
         return None, None
@@ -5117,7 +5136,11 @@ function _mtHasCompleteQcFooter(html){
 
 function _mtHasSelfDebunkingBox(html){
   const h = String(html || '').toLowerCase();
-  return h.includes('self-debunking') && (h.includes('class=\"self-debunk') || h.includes(\"class='self-debunk\") || h.includes('selbst-debunking') && h.includes('background'));
+  const hasDebunkLabel = h.includes('self-debunking') || h.includes('selbst-debunking');
+  const hasDebunkClass = h.includes('class=\"self-debunk') || h.includes(\"class='self-debunk\");
+  const hasBoxStyle = (h.includes('background') || h.includes('background-color')) &&
+                      (h.includes('border-left') || h.includes('border-radius'));
+  return hasDebunkLabel && (hasDebunkClass || hasBoxStyle);
 }
 
 function _mtHasSciTraceStructure(html){
@@ -5904,8 +5927,25 @@ class OutputComplianceValidator:
 
 
     def _label_regex(self, label: str):
+        def _word_pat(w: str) -> str:
+            wl = str(w or "").strip().lower()
+            if wl == "synthesis":
+                # Allow common pluralized model drift: "Syntheses" for canonical "Synthesis"
+                return r"(?:synthesis|syntheses)"
+            return re.escape(str(w or ""))
+
+        def _part_pat(p: str) -> str:
+            p = str(p or "").strip()
+            if not p:
+                return ""
+            m = re.fullmatch(r"([A-Za-z]+)(\d+)", p)
+            if m:
+                # Accept optional separators before trailing digits (Synthesis2 vs Synthesis_2)
+                return _word_pat(m.group(1)) + r"[_\s\-]*" + re.escape(m.group(2))
+            return _word_pat(p)
+
         parts = re.split(r"[_\s]+", label.strip())
-        core = r"[_\s\-]*".join([re.escape(p) for p in parts if p])
+        core = r"[_\s\-]*".join([_part_pat(p) for p in parts if p])
         return re.compile(
             rf"(?im)^(?:\s*(?:[-*]|\d+\.)\s+)?(?:\s*#+\s+)?\s*\*{{0,2}}{core}\*{{0,2}}\s*(?:[:\-–—]|$)"
         )
@@ -5951,7 +5991,11 @@ class OutputComplianceValidator:
                 if line_end == -1:
                     line_end = len(section_text)
                 header_line = section_text[m.start():line_end]
-                inline = re.sub(rf"(?im)^\s*(?:[-*]|\d+\.)?\s*\*{{0,2}}{re.escape(s)}\*{{0,2}}\s*[:\-–—]\s*", "", header_line).strip()
+                _mh_step, _mh_rest = match_required_sci_step_header(header_line, [s])
+                if _mh_step:
+                    inline = str(_mh_rest or "").strip()
+                else:
+                    inline = re.sub(rf"(?im)^\s*(?:[-*]|\d+\.)?\s*\*{{0,2}}{re.escape(s)}\*{{0,2}}\s*[:\-–—]\s*", "", header_line).strip()
                 if inline:
                     continue
                 nxt = len(section_text)
@@ -12162,13 +12206,13 @@ class CSCRefiner:
     def _panel_accept_bootstrap_report(self, payload=None) -> dict:
         payload = payload or {}
         state = getattr(self, "panel_bootstrap_state", None)
+        result = None
 
         if _panel_bootstrap_state_mod is not None:
             try:
                 _default_source = str(getattr(self, "panel_html_source", "embedded") or "embedded")
                 state = _panel_bootstrap_state_mod.panel_bootstrap_ensure_state(state, default_source=_default_source)
                 self.panel_bootstrap_state = state
-                now_iso = None
                 try:
                     now_iso = datetime.now().isoformat()
                 except Exception:
@@ -12180,57 +12224,40 @@ class CSCRefiner:
                     now_iso=now_iso,
                 )
                 self.panel_bootstrap_state = state
-                if result.get("ignored"):
-                    try:
-                        ev = getattr(self, "_panel_bootstrap_ready_event", None)
-                        if ev is not None:
-                            ev.set()
-                    except Exception:
-                        pass
-                    return result
+            except Exception:
+                result = None
 
-                try:
-                    self.panel_bootstrap_last_report = dict(payload) if isinstance(payload, dict) else {"raw": str(payload)}
-                except Exception:
-                    self.panel_bootstrap_last_report = {"raw": "<unserializable>"}
+        if result is None:
+            if not isinstance(state, dict):
+                state = {}
+                self.panel_bootstrap_state = state
+            if str(state.get("source") or "embedded") != "external":
                 try:
                     ev = getattr(self, "_panel_bootstrap_ready_event", None)
                     if ev is not None:
                         ev.set()
                 except Exception:
                     pass
-                try:
-                    self.log_event("panel_bootstrap", {
-                        "event": "runtime_selftest_report",
-                        "ok": bool(result.get("runtime_ok")),
-                        "reason": str(result.get("reason") or ""),
-                        "source": "external",
-                    })
-                except Exception:
-                    pass
-                return result
-            except Exception:
-                pass
+                return {"accepted": False, "ignored": True, "reason": "panel_source_not_external"}
 
-        if not isinstance(state, dict):
-            state = {}
-            self.panel_bootstrap_state = state
-        if str(state.get("source") or "embedded") != "external":
+            ok, why = _panel_runtime_selftest_payload_ok(payload)
+            state["status"] = "passed" if ok else "failed"
+            state["reason"] = ("" if ok else str(why or "invalid_runtime_selftest"))
+            try:
+                state["reported_at"] = datetime.now().isoformat()
+            except Exception:
+                state["reported_at"] = None
+            result = {"accepted": True, "runtime_ok": bool(ok), "reason": ("" if ok else str(why or ""))}
+
+        if result.get("ignored"):
             try:
                 ev = getattr(self, "_panel_bootstrap_ready_event", None)
                 if ev is not None:
                     ev.set()
             except Exception:
                 pass
-            return {"accepted": False, "ignored": True, "reason": "panel_source_not_external"}
+            return result
 
-        ok, why = _panel_runtime_selftest_payload_ok(payload)
-        state["status"] = "passed" if ok else "failed"
-        state["reason"] = ("" if ok else str(why or "invalid_runtime_selftest"))
-        try:
-            state["reported_at"] = datetime.now().isoformat()
-        except Exception:
-            state["reported_at"] = None
         try:
             self.panel_bootstrap_last_report = dict(payload) if isinstance(payload, dict) else {"raw": str(payload)}
         except Exception:
@@ -12244,53 +12271,44 @@ class CSCRefiner:
         try:
             self.log_event("panel_bootstrap", {
                 "event": "runtime_selftest_report",
-                "ok": bool(ok),
-                "reason": ("" if ok else str(why or "")),
+                "ok": bool(result.get("runtime_ok")),
+                "reason": str(result.get("reason") or ""),
                 "source": "external",
             })
         except Exception:
             pass
-        return {"accepted": True, "runtime_ok": bool(ok), "reason": ("" if ok else str(why or ""))}
+        return result
 
     def _panel_swap_to_embedded_fallback(self, reason: str = "runtime_selftest_failed") -> bool:
         """Replace a pending/failed external panel with the embedded fallback before showing it."""
         try:
             state = getattr(self, "panel_bootstrap_state", None)
+            try:
+                now_iso = datetime.now().isoformat()
+            except Exception:
+                now_iso = None
+
+            marked = False
             if _panel_bootstrap_state_mod is not None:
                 try:
-                    now_iso = None
-                    try:
-                        now_iso = datetime.now().isoformat()
-                    except Exception:
-                        now_iso = None
                     state = _panel_bootstrap_state_mod.panel_bootstrap_mark_failed_for_fallback(
                         state,
                         reason=str(reason or "runtime_selftest_failed"),
                         now_iso=now_iso,
                     )
-                    self.panel_bootstrap_state = state
+                    marked = True
                 except Exception:
-                    if not isinstance(state, dict):
-                        state = {}
-                        self.panel_bootstrap_state = state
-                    state["status"] = "failed"
-                    state["reason"] = str(reason or "runtime_selftest_failed")
-                    state["source"] = "external"
-                    try:
-                        state["reported_at"] = datetime.now().isoformat()
-                    except Exception:
-                        pass
-            else:
+                    marked = False
+
+            if not marked:
                 if not isinstance(state, dict):
                     state = {}
-                    self.panel_bootstrap_state = state
                 state["status"] = "failed"
                 state["reason"] = str(reason or "runtime_selftest_failed")
                 state["source"] = "external"
-                try:
-                    state["reported_at"] = datetime.now().isoformat()
-                except Exception:
-                    pass
+                state["reported_at"] = now_iso
+
+            self.panel_bootstrap_state = state
             ev = getattr(self, "_panel_bootstrap_ready_event", None)
             if ev is not None:
                 ev.set()
@@ -12327,7 +12345,7 @@ class CSCRefiner:
         self._panel_force_embedded_html = (True if not isinstance(_plan, dict) else bool(_plan.get("force_embedded_html", True)))
         try:
             # Create replacement panel first (hidden), then retire the old one.
-            # The old window's delayed "closed" callback is ignored once below.
+            # The old window closed callback is ignored once below.
             self._create_panel()
             if old_win is not None:
                 if isinstance(_plan, dict):
@@ -12356,20 +12374,29 @@ class CSCRefiner:
             return False
 
     def _panel_wait_bootstrap_or_fallback(self, timeout_s=None) -> bool:
+        def _runtime_ready_and_reason(st):
+            if _panel_bootstrap_state_mod is not None:
+                try:
+                    if _panel_bootstrap_state_mod.panel_bootstrap_is_runtime_ready(st):
+                        return True, None
+                    return False, _panel_bootstrap_state_mod.panel_bootstrap_fallback_reason(st)
+                except Exception:
+                    pass
+
+            if not isinstance(st, dict):
+                return True, None
+            status = str(st.get("status") or "")
+            if str(st.get("source") or "embedded") != "external" or status == "passed":
+                return True, None
+            reason = str(st.get("reason") or "").strip()
+            if not reason:
+                reason = ("runtime_selftest_timeout" if status == "pending" else "runtime_selftest_failed")
+            return False, reason
+
         state = getattr(self, "panel_bootstrap_state", None)
-        if _panel_bootstrap_state_mod is not None:
-            try:
-                if _panel_bootstrap_state_mod.panel_bootstrap_is_runtime_ready(state):
-                    return True
-            except Exception:
-                pass
-        else:
-            if not isinstance(state, dict):
-                return True
-            if str(state.get("source") or "embedded") != "external":
-                return True
-            if str(state.get("status") or "") == "passed":
-                return True
+        ready, _ = _runtime_ready_and_reason(state)
+        if ready:
+            return True
 
         wait_s = timeout_s
         if wait_s is None:
@@ -12377,19 +12404,13 @@ class CSCRefiner:
                 wait_s = float(getattr(self, "panel_bootstrap_timeout_s", 2.5) or 2.5)
             except Exception:
                 wait_s = 2.5
-        if _panel_bootstrap_state_mod is not None:
-            try:
+        try:
+            if _panel_bootstrap_state_mod is not None:
                 wait_s = _panel_bootstrap_state_mod.panel_bootstrap_timeout_seconds(wait_s, default=2.5)
-            except Exception:
-                try:
-                    wait_s = max(0.0, float(wait_s))
-                except Exception:
-                    wait_s = 2.5
-        else:
-            try:
+            else:
                 wait_s = max(0.0, float(wait_s))
-            except Exception:
-                wait_s = 2.5
+        except Exception:
+            wait_s = 2.5
 
         try:
             ev = getattr(self, "_panel_bootstrap_ready_event", None)
@@ -12399,31 +12420,12 @@ class CSCRefiner:
             pass
 
         state = getattr(self, "panel_bootstrap_state", None)
-        if _panel_bootstrap_state_mod is not None:
-            try:
-                if _panel_bootstrap_state_mod.panel_bootstrap_is_runtime_ready(state):
-                    return True
-                reason = _panel_bootstrap_state_mod.panel_bootstrap_fallback_reason(state)
-                if not reason:
-                    return True
-                self._panel_swap_to_embedded_fallback(str(reason))
-                return False
-            except Exception:
-                pass
-
-        if not isinstance(state, dict):
+        ready, reason = _runtime_ready_and_reason(state)
+        if ready or not reason:
             return True
-        if str(state.get("status") or "") == "passed":
-            return True
-
-        reason = str(state.get("reason") or "").strip()
-        if not reason:
-            if str(state.get("status") or "") == "pending":
-                reason = "runtime_selftest_timeout"
-            else:
-                reason = "runtime_selftest_failed"
-        self._panel_swap_to_embedded_fallback(reason)
+        self._panel_swap_to_embedded_fallback(str(reason))
         return False
+
 
 
     def _create_panel(self):
@@ -12901,27 +12903,25 @@ class CSCRefiner:
         try:
             _panel_exists = (getattr(self, "panel_win", None) is not None)
             _ignore_count = getattr(self, "_panel_closed_ignore_count", 0)
+            _ignore = False
+            _next_n = None
             if _panel_window_fallback_mod is not None:
                 try:
                     _ignore, _next_n = _panel_window_fallback_mod.panel_closed_retired_event_decision(
                         panel_window_exists=bool(_panel_exists),
                         ignore_count=_ignore_count,
                     )
-                    self._panel_closed_ignore_count = _next_n
-                    if _ignore:
-                        return
                 except Exception:
-                    if _panel_exists:
-                        _n = int(getattr(self, "_panel_closed_ignore_count", 0) or 0)
-                        if _n > 0:
-                            self._panel_closed_ignore_count = _n - 1
-                            return
-            else:
-                if _panel_exists:
-                    _n = int(getattr(self, "_panel_closed_ignore_count", 0) or 0)
-                    if _n > 0:
-                        self._panel_closed_ignore_count = _n - 1
-                        return
+                    _next_n = None
+            if _next_n is not None:
+                self._panel_closed_ignore_count = _next_n
+                if _ignore:
+                    return
+            elif _panel_exists:
+                _n = int(getattr(self, "_panel_closed_ignore_count", 0) or 0)
+                if _n > 0:
+                    self._panel_closed_ignore_count = _n - 1
+                    return
         except Exception:
             pass
         # remember last geometry if possible
@@ -12931,25 +12931,19 @@ class CSCRefiner:
             pass
         try:
             _src = str(getattr(self, "panel_html_source", "embedded") or "embedded")
+            _closed_state = {
+                "status": "idle",
+                "source": _src,
+                "reason": "window_closed",
+                "created_at": None,
+                "reported_at": None,
+            }
             if _panel_bootstrap_state_mod is not None:
                 try:
-                    self.panel_bootstrap_state = _panel_bootstrap_state_mod.panel_bootstrap_closed_state(_src)
+                    _closed_state = _panel_bootstrap_state_mod.panel_bootstrap_closed_state(_src)
                 except Exception:
-                    self.panel_bootstrap_state = {
-                        "status": "idle",
-                        "source": _src,
-                        "reason": "window_closed",
-                        "created_at": None,
-                        "reported_at": None,
-                    }
-            else:
-                self.panel_bootstrap_state = {
-                    "status": "idle",
-                    "source": _src,
-                    "reason": "window_closed",
-                    "created_at": None,
-                    "reported_at": None,
-                }
+                    pass
+            self.panel_bootstrap_state = _closed_state
             ev = getattr(self, "_panel_bootstrap_ready_event", None)
             if ev is not None:
                 ev.set()
@@ -12957,7 +12951,7 @@ class CSCRefiner:
             pass
         self.panel_win = None
         self.panel_hidden = False
-    
+
 
     def export(self, audit_event=None, audit_only: bool = False, extra_audit=None):
         """Export chat + audit logs deterministically.

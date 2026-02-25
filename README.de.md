@@ -2,13 +2,13 @@
 
 Deterministische Python-Runtime fuer Comm-SCI-Governance-Workflows.
 
-Aktuelle App-Version: **1.0.2**  
+Aktuelle App-Version: **1.0.3**  
 Standardmaessig geladenes Regelwerk beim Start: **`JSON/Comm-SCI-v20.0.3.json`**
 
 ## DOI (aktuelle Zenodo-Records)
 
 - Wrapper (Concept DOI / alle Versionen): [10.5281/zenodo.18445672](https://doi.org/10.5281/zenodo.18445672)
-- Wrapper (Versions-DOI / aktuelles oeffentliches Release `v1.0.0 (JSON-v20.0.3)`): [10.5281/zenodo.18759479](https://doi.org/10.5281/zenodo.18759479)
+- Wrapper (Versions-DOI / SemVer-Startrelease `v1.0.0 (JSON-v20.0.3)`): [10.5281/zenodo.18759479](https://doi.org/10.5281/zenodo.18759479)
 - Regelwerk (Concept DOI / alle Versionen): [10.5281/zenodo.17928357](https://doi.org/10.5281/zenodo.17928357)
 - Regelwerk (Versions-DOI / aktuell gepflegter Zenodo-Release): [10.5281/zenodo.18154098](https://doi.org/10.5281/zenodo.18154098)
 

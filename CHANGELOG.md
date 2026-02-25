@@ -2,6 +2,12 @@
 
 All notable changes are documented in this file.
 
+## 1.0.3 - 2026-02-25
+
+- Completed S10 monolith-thinning pass (no behavior change): further compacted panel fallback/report/wait/close cleanup paths in `src/Comm-SCI-Control-App.py` while preserving S7/S8/S9 fallback behavior and panel contracts.
+- Fixed a manual-test false positive in `full_regression_light` by relaxing the Self-Debunking box detector for localized/inline-styled box variants (OpenRouter path).
+- Hardened SCI Trace step recognition against common model label drift for the B-variant dialectic step (`Dialectic_6_Synthesis2` aliases such as `Dialectic_6_Syntheses_2` / `Dialectic_6_Synthesis_2`) and added regression tests.
+
 ## 1.0.2 - 2026-02-24
 
 - Reduced noisy false-positive `CONTROL LAYER ALERTS (Python)` messages for CSC marker visibility by rendering the CSC transparency marker visibly in the header (policy-conform) instead of checking raw model text only.

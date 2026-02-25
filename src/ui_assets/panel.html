@@ -871,7 +871,11 @@ function _mtHasCompleteQcFooter(html){
 
 function _mtHasSelfDebunkingBox(html){
   const h = String(html || '').toLowerCase();
-  return h.includes('self-debunking') && (h.includes('class=\"self-debunk') || h.includes(\"class='self-debunk\") || h.includes('selbst-debunking') && h.includes('background'));
+  const hasDebunkLabel = h.includes('self-debunking') || h.includes('selbst-debunking');
+  const hasDebunkClass = h.includes('class=\"self-debunk') || h.includes(\"class='self-debunk\");
+  const hasBoxStyle = (h.includes('background') || h.includes('background-color')) &&
+                      (h.includes('border-left') || h.includes('border-radius'));
+  return hasDebunkLabel && (hasDebunkClass || hasBoxStyle);
 }
 
 function _mtHasSciTraceStructure(html){
