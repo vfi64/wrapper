@@ -2,6 +2,19 @@
 
 All notable changes are documented in this file.
 
+## 1.0.4-s12 - 2026-02-26
+
+- Synced wrapper runtime/tests/docs to the private-repo S12 completion state (panel/QC seam expansion + post-S12 hardening fixes).
+- Included S12 seam modules in `src/` and their dedicated tests:
+  - `panel_lifecycle_seam`, `qc_override_window_seam`, `qc_bridge`, `panel_bridge`
+- Included post-S12 runtime fixes from private:
+  - QC override clear one-shot prompt reset hint (prevents stale override carry-over)
+  - Self-Debunking HTML fragment repair for malformed ordered-list output
+  - mixed `QC:` + `QC-Matrix:` footer dedupe to one canonical footer
+  - hidden `CONTROL LAYER NOTE` for format-only Self-Debunking repairs (repair/audit remain active)
+- Updated `MODULARIZATION.md` with S12 completion status (functional seam expansion complete; net monolith reduction deferred to S13).
+- Verified after sync via GitHub `tests` CI on wrapper `main`.
+
 ## 1.0.4 - 2026-02-25
 
 - Synced wrapper runtime/tests to the current private-repo `main` state after S11 seam extraction closure (monolith reduction continues; no planned S12 changes included yet).

@@ -253,6 +253,146 @@ S10e completion snapshot (2026-02-25):
   - `Logs/ManualTests/ManualTest_20260225_073943_015319_qc_override_footer.json` -> `PASS`
 - S10 status: **complete** (S10a-S10e).
 
+
+### S11 — Panel lifecycle seam extraction (next visible monolith reduction)
+**Goal:** continue thinning `src/Comm-SCI-Control-App.py` after S10 by extracting the remaining panel lifecycle orchestration seam (HTML source selection, bootstrap probe wiring, fallback swap coordination) while preserving pywebview runtime behavior.
+- Reduce the remaining panel hotspot methods in the monolith to thin pywebview adapters and explicit fail-open shims.
+- Consolidate panel bootstrap source/probe/fallback sequencing into a dedicated helper/controller module (exact module split may be one or two files, depending on testability).
+- Preserve all S7/S8/S9/S10 runtime guarantees (external `panel.html` + runtime self-test + embedded fallback + duplicate-panel race guard).
+- Keep the private-first workflow: plan/implement/test in private repo, then sync to public wrapper.
+
+**Out of scope (S11 must not do this)**
+- No provider/governance/SCI behavior changes (including QC/CSC/repair logic).
+- No `panel_action(...)` contract changes (names, payloads, callback semantics).
+- No pywebview timing/timeout tuning (frequent fallback diagnostics remain separate work).
+- No broad UI controller/orchestrator rewrite outside the panel lifecycle seam.
+
+#### S11 acceptance checklist (completed - functional seam extraction; size-reduction goal deferred)
+- [x] S11a baseline measured and documented (post-S10 + post-SCI-fix monolith size and current hotspot line refs).
+- [ ] `Comm-SCI-Control-App.py` is materially smaller after S11 (documented delta vs S11a baseline). Deferred to S12/S11-follow-up compaction after seam consolidation; S11 completed on functional/architectural acceptance.
+- [x] Remaining panel lifecycle hotspot methods are reduced to thin pywebview adapters / compact fail-open shims.
+- [x] No change in `panel_action(...)` route names or response payload schemas.
+- [x] Focused panel test gates remain green (`tests/test_panel_asset_loader.py`, `tests/test_panel_bootstrap_state.py`, `tests/test_panel_window_fallback.py`, `tests/test_panel_html_source.py`, targeted `tests/test_app.py` subset).
+- [x] Manual pywebview runtime-fallback re-test passes after S11 (broken `panel_bootstrap_selftest` callback -> embedded fallback, no duplicate panel).
+- [x] Manual smoke checks re-run after S11 (`qc_override_footer`, `full_regression_light`).
+- [x] Wrapper sync possible without follow-up hotfixes (pending wrapper sync execution, no private-side hotfix required after S11e gates).
+
+Current S11 baseline snapshot (2026-02-25, S11a):
+- Monolith size: `src/Comm-SCI-Control-App.py` = **16,182 lines** (`wc -l`).
+- Remaining panel lifecycle hotspot methods still in the monolith:
+  - `_panel_get_embedded_html(...)` (`src/Comm-SCI-Control-App.py:12114`)
+  - `_panel_select_html_for_window(...)` (`src/Comm-SCI-Control-App.py:12137`)
+  - `_panel_begin_bootstrap_probe(...)` (`src/Comm-SCI-Control-App.py:12167`)
+  - `_panel_accept_bootstrap_report(...)` (`src/Comm-SCI-Control-App.py:12206`)
+  - `_panel_swap_to_embedded_fallback(...)` (`src/Comm-SCI-Control-App.py:12282`)
+  - `_panel_wait_bootstrap_or_fallback(...)` (`src/Comm-SCI-Control-App.py:12376`)
+  - `on_panel_closed(...)` (`src/Comm-SCI-Control-App.py:12900`)
+- S11 focus: reduce these methods further by moving orchestration/sequencing into a dedicated panel runtime seam while keeping direct pywebview calls behavior-preserving and test-gated.
+
+S11b progress snapshot (2026-02-25):
+- Added new seam helper module `src/panel_lifecycle_seam.py` (HTML source plan + bootstrap probe plan extraction, fail-open via monolith soft-import).
+- Monolith methods `_panel_select_html_for_window(...)` and `_panel_begin_bootstrap_probe(...)` now delegate first to `panel_lifecycle_seam` and retain compact local fallbacks.
+- Added focused seam tests in `tests/test_panel_lifecycle_seam.py` (selection/probe plan behavior).
+- Focused gates after S11b:
+  - `py_compile` OK (`src/Comm-SCI-Control-App.py`, `src/panel_lifecycle_seam.py`, `tests/test_panel_lifecycle_seam.py`)
+  - Panel helper/seam tests: `26 PASS` (`tests/test_panel_lifecycle_seam.py` + S9 helper modules)
+- Targeted panel regression subset in `tests/test_app.py`: `6 PASS`
+- Monolith size after S11b extraction-first pass: `src/Comm-SCI-Control-App.py` = **16,198 lines** (`wc -l`) => **+16 lines** vs S11a baseline (expected for first seam extraction; visible size reduction is deferred to later S11 compaction steps).
+
+S11c progress snapshot (2026-02-25):
+- Extended `src/panel_lifecycle_seam.py` with panel bootstrap/fallback orchestration helpers:
+  - `panel_bootstrap_ready_and_reason(...)`
+  - `panel_bootstrap_wait_plan(...)`
+  - `panel_embedded_fallback_swap_plan(...)`
+- Monolith methods `_panel_wait_bootstrap_or_fallback(...)` and `_panel_swap_to_embedded_fallback(...)` now delegate decision/plan logic first to `panel_lifecycle_seam`, while pywebview operations (`Event.wait`, `_create_panel()`, `destroy()`) remain local.
+- Expanded seam tests in `tests/test_panel_lifecycle_seam.py` (wait-plan + fallback-swap plan coverage).
+- Focused gates after S11c:
+  - `py_compile` OK (`src/Comm-SCI-Control-App.py`, `src/panel_lifecycle_seam.py`, `tests/test_panel_lifecycle_seam.py`)
+  - Panel helper/seam tests: `30 PASS` (`tests/test_panel_lifecycle_seam.py` + S9 helper modules)
+- Targeted panel regression subset in `tests/test_app.py`: `6 PASS`
+- Monolith size after S11c extraction-first pass: `src/Comm-SCI-Control-App.py` = **16,249 lines** (`wc -l`) => **+67 lines** vs S11a baseline (still expected during seam consolidation; visible line reduction is deferred to later S11 compaction steps).
+
+S11d progress snapshot (2026-02-25):
+- Extended `src/panel_lifecycle_seam.py` with `panel_closed_event_plan(...)` to centralize retired-panel closed-event race-guard decision + closed bootstrap-state reset planning.
+- Monolith method `on_panel_closed(...)` now delegates lifecycle decision/reset planning first to `panel_lifecycle_seam`, while geometry capture and direct window-handle cleanup remain local.
+- Expanded seam tests in `tests/test_panel_lifecycle_seam.py` (retired close-event ignore path + normal closed-state path).
+- Focused gates after S11d:
+  - `py_compile` OK (`src/Comm-SCI-Control-App.py`, `src/panel_lifecycle_seam.py`, `tests/test_panel_lifecycle_seam.py`)
+  - Panel helper/seam tests: `32 PASS` (`tests/test_panel_lifecycle_seam.py` + S9 helper modules)
+- Targeted panel regression subset in `tests/test_app.py`: `6 PASS`
+- Monolith size after S11d extraction-first pass: `src/Comm-SCI-Control-App.py` = **16,277 lines** (`wc -l`) => **+95 lines** vs S11a baseline (S11 is still in seam-consolidation mode; compaction/noise reduction remains for S11e or follow-up S11 cleanup before final acceptance).
+
+S11e completion snapshot (2026-02-25):
+- Manual pywebview runtime-fallback re-test (broken `panel_bootstrap_selftest` callback) passed after S11d:
+  - delayed panel opening observed (user-verified)
+  - embedded fallback panel opened successfully (user-verified)
+  - no duplicate panel on `Panel` button (user-verified)
+  - `panel.html` restored after the test
+- Manual smoke re-runs passed:
+  - `Logs/ManualTests/ManualTest_20260225_184043_289386_qc_override_footer.json` -> `summary.status=PASS`, `summary.fails=0`
+  - `Logs/ManualTests/ManualTest_20260225_184314_847161_full_regression_light.json` -> `summary.status=PASS`, `summary.fails=0`
+- Supporting audit trace evidence (panel fallback info events present in session stream):
+  - `Logs/Audit/AuditStream_20260225.jsonl`
+  - `Logs/Audit/Audit_20260225_184446_767756.json`
+- S11 status: **functionally complete (seam extraction accepted)**; visible monolith size reduction deferred to a dedicated follow-up compaction stage.
+
+#### S11 execution notes
+- Prefer extraction of sequencing/orchestration helpers over moving raw pywebview calls on the first pass.
+- Keep fail-open behavior explicit: if the new helper import fails, panel fallback path must still remain usable.
+- Reuse the established S7/S8/S9/S10 manual fallback test procedure as the final gate.
+- Treat SCI/repair fixes (like the `Dialectic_6_Synthesis2` alias hardening) as separate patches, not S11 scope.
+
+### S12 — UI/Bridge orchestration seam expansion + post-S12 hardening (completed)
+**Goal:** continue the post-S11 monolith-thinning path by extracting additional panel/QC orchestration decisions into seam modules while keeping direct pywebview calls in the monolith, then close user-found regressions before sync.
+- Expand panel lifecycle seam coverage beyond bootstrap/fallback into visibility/toggle, closing/binding, and rebuild sequencing.
+- Extract QC override dialog window/apply/clear UI planning into dedicated seam helpers.
+- Extract thin `QCBridge` / `PanelBridge` classes into standalone modules (monolith keeps fail-open import fallback).
+- Preserve `panel_action(...)` contracts and pywebview runtime behavior; treat user-reported rendering/QC issues as separate hardening patches.
+
+#### S12 acceptance checklist (completed - functional seam expansion; net size reduction deferred to S13)
+- [x] S12a post-S11 baseline measured and documented (`src/Comm-SCI-Control-App.py` size + next UI/panel hotspots).
+- [x] Panel visibility/toggle, closing/binding, and rebuild decision/orchestration logic extracted into seam plan helpers with focused tests.
+- [x] QC override dialog window + apply/clear UI planning extracted into seam helpers with focused tests.
+- [x] `QCBridge` and `PanelBridge` extracted to standalone modules with monolith fail-open fallback imports.
+- [x] User-reported regressions after S12 slices were fixed before sync (QC clear prompt-context reset, Self-Debunking HTML fragment repair, mixed QC footer dedupe, repair-banner UX filtering).
+- [x] Manual smoke checks re-run on the private repo (panel toggle/rebuild, QC override apply/clear, content answers) with user verification after fixes.
+- [x] Private repo push + GitHub `tests` CI green, then wrapper sync + wrapper GitHub `tests` CI green.
+- [ ] `Comm-SCI-Control-App.py` is materially smaller after S12. Deferred to S13 composition/wiring compaction; S12 focused on seam coverage + hardening closure.
+
+S12 completion snapshot (2026-02-26):
+- Private-first S12 seam commits (functional extraction):
+  - `26cec03` visibility decision plans
+  - `28ccef8` closing/event-binding plans
+  - `6fc53e4` rebuild orchestration plan
+  - `2aa9900` QC override dialog window plans
+  - `720e92b` QC override apply/clear UI plans
+  - `b62f038` `QCBridge` module extraction
+  - `15139ec` `PanelBridge` module extraction
+- Post-S12 hardening/fixes (user-driven regressions closed before sync):
+  - `5f2b1b9` QC override clear -> one-shot prompt reset directive (prevents stale override carry-over)
+  - `cdaac9c` Self-Debunking HTML normalization hardening for fragmented `<ol>/<li>/<p>` output
+  - `d1a3a5b` mixed `QC:` + `QC-Matrix:` HTML footer dedupe to one canonical footer
+  - `06844f5` suppress `CONTROL LAYER NOTE` for format-only Self-Debunking repair passes (audit/repair preserved)
+- S12 seam modules now present:
+  - `src/panel_lifecycle_seam.py`
+  - `src/qc_override_window_seam.py`
+  - `src/qc_bridge.py`
+  - `src/panel_bridge.py`
+- Monolith size note:
+  - S12a baseline (post-S11): `src/Comm-SCI-Control-App.py` = **16,349 lines** (`wc -l`)
+  - Post-S12 completion + hardening fixes: `src/Comm-SCI-Control-App.py` = **16,801 lines** (`wc -l`)
+  - Net growth is due to seam expansion plus regression hardening; explicit line-count reduction is deferred to S13 compaction/composition work.
+- Verification summary (private + wrapper):
+  - Focused seam and regression tests remained green locally during S12 slices/fixes (panel seam, QC override seam, bridge modules, targeted `tests/test_app.py`)
+  - Private `main` CI green after S12 closure push (`tests` on `06844f5`)
+  - Wrapper synced from private and wrapper `tests` CI green after sync commit
+
+#### S12 execution notes
+- Keep pywebview operations in the monolith until seam behavior is fully stabilized; extract plans/decisions first.
+- Treat user-found rendering/QC regressions as release-blocking follow-up fixes before wrapper sync.
+- S13 should prioritize net monolith reduction (composition/wiring compaction), not only additional seam coverage.
+
+
 ---
 
 ## Contribution workflow (recommended)
