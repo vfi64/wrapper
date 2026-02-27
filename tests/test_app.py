@@ -2947,6 +2947,18 @@ def test_sanitize_self_debunking_markdown_in_html_converts_bold_markers():
     assert "<strong>Weakness</strong>" in out
 
 
+def test_sanitize_self_debunking_markdown_in_html_removes_orphan_star_before_br():
+    mod = load_fix_module()
+    html_in = (
+        "<div class=\"self-debunking\">"
+        "<p><strong>Schwäche:</strong> Satz eins. *<br><strong>Warum das wichtig ist</strong>: Satz zwei.</p>"
+        "</div>"
+    )
+    out = mod.sanitize_self_debunking_markdown_in_html(html_in)
+    assert "*<br>" not in out
+    assert "<br><strong>Warum das wichtig ist</strong>" in out
+
+
 def test_qc_override_runtime_violations_detects_brevity_mismatch():
     mod = load_fix_module()
     short_txt = "Kurze Antwort."
@@ -3556,6 +3568,18 @@ def test_strip_internal_scaffolding_status_lines_removes_isolated_profile_name_l
     assert "Antwortinhalt bleibt sichtbar." in out
 
 
+def test_strip_internal_scaffolding_status_lines_removes_profile_title_without_separator():
+    mod = load_fix_module()
+    raw = (
+        "Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
+        "Profile Expert:\n"
+        "Antwortinhalt bleibt sichtbar.\n"
+    )
+    out = mod.strip_internal_scaffolding_status_lines(raw)
+    assert "Profile Expert:" not in out
+    assert "Antwortinhalt bleibt sichtbar." in out
+
+
 def test_strip_internal_scaffolding_status_html_removes_profile_block():
     mod = load_fix_module()
     html_in = (
@@ -3591,6 +3615,14 @@ def test_strip_internal_scaffolding_status_html_removes_multiline_profile_overla
     assert "Profile: Standard" not in out
     assert "Overlay: Strict" not in out
     assert "SCI: off" not in out
+    assert "Inhalt bleibt sichtbar." in out
+
+
+def test_strip_internal_scaffolding_status_html_removes_profile_title_without_separator():
+    mod = load_fix_module()
+    html_in = "<p>Profile Standard:</p><p>Inhalt bleibt sichtbar.</p>"
+    out = mod.strip_internal_scaffolding_status_html(html_in)
+    assert "Profile Standard:" not in out
     assert "Inhalt bleibt sichtbar." in out
 
 

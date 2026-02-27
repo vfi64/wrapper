@@ -2319,6 +2319,9 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
         profile_only_pat = re.compile(
             r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
         )
+        profile_title_pat = re.compile(
+            r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
+        )
         compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
 
         def _is_block_scaffold(block_lines):
@@ -2376,6 +2379,9 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
                 i += 1
                 continue
             if profile_only_pat.match(s):
+                i += 1
+                continue
+            if profile_title_pat.match(s):
                 i += 1
                 continue
             starts_status = low.startswith("profile:")
@@ -2522,9 +2528,14 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
             profile_only_pat = re.compile(
                 r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
             )
+            profile_title_pat = re.compile(
+                r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
+            )
             compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
 
             if profile_only_pat.match(txt or ""):
+                return True
+            if profile_title_pat.match(txt or ""):
                 return True
             if len(lines) >= 2:
                 key_hits = sum(1 for ln in lines if compact_keys_pat.match(ln or ""))
@@ -2646,6 +2657,16 @@ def sanitize_self_debunking_markdown_in_html(html_text: str) -> str:
             return html_text
         out = re.sub(r"\*\*([^*\n][^*\n]*?)\*\*", r"<strong>\1</strong>", html_text)
         out = re.sub(r"__([^_\n][^_\n]*?)__", r"<strong>\1</strong>", out)
+        # Remove orphan markdown bullet artifacts like " *<br>" inside Self-Debunking.
+        out = re.sub(
+            r'(?is)(<div[^>]*class=(?:"|\')[^"\']*self-debunking[^"\']*(?:"|\')[^>]*>)(.*?)(</div>)',
+            lambda m: (
+                m.group(1)
+                + re.sub(r"(?im)\s*\*\s*(?=<br\s*/?>)", "", m.group(2) or "")
+                + m.group(3)
+            ),
+            out,
+        )
         return out
     except Exception:
         return html_text
