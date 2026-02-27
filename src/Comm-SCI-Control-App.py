@@ -2309,6 +2309,10 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
         if not text:
             return text
 
+        directive_pat = re.compile(
+            r"(?i)^\s*(?:[-*•]\s*)?\[(?:output language|answer length|qc overrides|qc behavior|sci trace detail)\]"
+        )
+
         out_lines = []
         in_code = False
         for ln in str(text).splitlines():
@@ -2322,6 +2326,8 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
                 continue
 
             low = s.lower()
+            if directive_pat.match(s):
+                continue
             starts_status = low.startswith("profile:")
             starts_comm = low.startswith("comm:")
             has_sep = any(ch in s for ch in ("·", "•", "|"))
@@ -2448,6 +2454,11 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
             txt = html.unescape(txt or "")
             txt = re.sub(r"\s+", " ", txt).strip()
             low = txt.lower()
+            if re.match(
+                r"(?i)^\s*(?:[-*•]\s*)?\[(?:output language|answer length|qc overrides|qc behavior|sci trace detail)\]",
+                txt,
+            ):
+                return True
             starts_status = low.startswith("profile:")
             starts_comm = low.startswith("comm:")
             has_sep = any(ch in txt for ch in ("·", "•", "|"))
@@ -16760,10 +16771,41 @@ def _bootstrap_desktop_windows(api, webview_module):
             title=MAIN_WINDOW_TITLE,
             html_chat=HTML_CHAT,
         )
+    _main_w, _main_h, _main_x, _main_y = 1100, 1000, 0, 0
+    _panel_w, _panel_h, _panel_x, _panel_y = 340, 1000, 1100, 0
+    try:
+        _screens = getattr(webview_module, "screens", None)
+        if _screens:
+            _s0 = _screens[0]
+            _sx = int(getattr(_s0, "x", 0))
+            _sy = int(getattr(_s0, "y", 0))
+            _sw = int(getattr(_s0, "width", 0))
+            _sh = int(getattr(_s0, "height", 0))
+            if _sw >= 800 and _sh >= 500:
+                _panel_w = max(320, min(420, int(round(_sw * 0.26))))
+                if _panel_w > _sw - 480:
+                    _panel_w = max(280, _sw - 480)
+                _panel_w = max(220, min(_panel_w, max(_sw - 220, 220)))
+                _main_w = max(_sw - _panel_w, 220)
+                _panel_w = max(_sw - _main_w, 220)
+                if _main_w + _panel_w > _sw:
+                    _panel_w = max(_sw - _main_w, 1)
+                _main_h = _sh
+                _panel_h = _sh
+                _main_x = _sx
+                _main_y = _sy
+                _panel_x = _sx + _main_w
+                _panel_y = _sy
+    except Exception:
+        pass
+    try:
+        api.panel_geom = {"x": _panel_x, "y": _panel_y, "width": _panel_w, "height": _panel_h}
+    except Exception:
+        pass
     api.main_win = webview_module.create_window(
         MAIN_WINDOW_TITLE, html=HTML_CHAT, js_api=(getattr(api, 'main_bridge', None) or api),
-        width=1100, height=1000,
-        x=0, y=0
+        width=_main_w, height=_main_h,
+        x=_main_x, y=_main_y
     )
     # Pre-create the Panel window *before* webview.start().
     # On macOS/Cocoa, creating secondary windows from a JS->Python callback can leave the JS API bridge uninitialized,

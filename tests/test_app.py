@@ -3530,6 +3530,20 @@ def test_strip_internal_scaffolding_status_lines_keeps_normal_profile_sentence()
     assert out == raw.rstrip("\n")
 
 
+def test_strip_internal_scaffolding_status_lines_removes_prompt_directive_echo_lines():
+    mod = load_fix_module()
+    raw = (
+        "Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
+        "[QC OVERRIDES] Active temporary targets: Clarity=3, Brevity=0, Evidence=3\n"
+        "[QC BEHAVIOR] Brevity=0: be very detailed.\n"
+        "Kerninhalt bleibt erhalten.\n"
+    )
+    out = mod.strip_internal_scaffolding_status_lines(raw)
+    assert "[QC OVERRIDES]" not in out
+    assert "[QC BEHAVIOR]" not in out
+    assert "Kerninhalt bleibt erhalten." in out
+
+
 def test_strip_internal_scaffolding_status_html_removes_profile_block():
     mod = load_fix_module()
     html_in = (
@@ -3540,6 +3554,18 @@ def test_strip_internal_scaffolding_status_html_removes_profile_block():
     out = mod.strip_internal_scaffolding_status_html(html_in)
     assert "Active profile:" in out
     assert "Profile: Expert · Overlay: Strict · SCI: B · Color: on" not in out
+    assert "Inhalt bleibt sichtbar." in out
+
+
+def test_strip_internal_scaffolding_status_html_removes_qc_override_directive_block():
+    mod = load_fix_module()
+    html_in = (
+        "<p>Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on</p>"
+        "<p>[QC OVERRIDES] Active temporary targets: Clarity=3, Brevity=0</p>"
+        "<p>Inhalt bleibt sichtbar.</p>"
+    )
+    out = mod.strip_internal_scaffolding_status_html(html_in)
+    assert "[QC OVERRIDES]" not in out
     assert "Inhalt bleibt sichtbar." in out
 
 

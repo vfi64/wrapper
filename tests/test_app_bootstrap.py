@@ -24,9 +24,18 @@ class _FakeWindow:
         self.events = _FakeEvents(log)
 
 
+class _FakeScreen:
+    def __init__(self, x, y, width, height):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+
 class _FakeWebview:
-    def __init__(self, log):
+    def __init__(self, log, screens=None):
         self._log = log
+        self.screens = list(screens or [])
         self.start_callbacks = []
 
     def create_window(self, title, **kwargs):
@@ -84,6 +93,39 @@ def test_bootstrap_desktop_windows_prefers_main_bridge_for_js_api():
     create_entry = log[0]
     kwargs = create_entry[2]
     assert kwargs["js_api"] is bridge
+
+
+def test_compute_startup_window_layout_is_side_by_side_without_overlap():
+    log = []
+    webview = _FakeWebview(log, screens=[_FakeScreen(20, 30, 1800, 1000)])
+    layout = sut.compute_startup_window_layout(webview)
+    main = layout["main"]
+    panel = layout["panel"]
+    assert main["x"] == 20
+    assert main["y"] == 30
+    assert panel["y"] == 30
+    assert main["width"] + panel["width"] == 1800
+    assert panel["x"] == (main["x"] + main["width"])
+    assert panel["x"] > main["x"]
+    assert main["height"] == 1000
+    assert panel["height"] == 1000
+
+
+def test_bootstrap_desktop_windows_sets_panel_geom_from_split_layout():
+    log = []
+    api = _FakeApi(log)
+    webview = _FakeWebview(log, screens=[_FakeScreen(0, 0, 1720, 960)])
+    sut.bootstrap_desktop_windows(api, webview, title="Main", html_chat="<html/>")
+    create_entry = log[0]
+    kwargs = create_entry[2]
+    panel_geom = getattr(api, "panel_geom", {})
+    assert kwargs["x"] == 0
+    assert kwargs["y"] == 0
+    assert kwargs["height"] == 960
+    assert kwargs["width"] + int(panel_geom["width"]) == 1720
+    assert int(panel_geom["x"]) == kwargs["x"] + kwargs["width"]
+    assert int(panel_geom["y"]) == 0
+    assert int(panel_geom["height"]) == 960
 
 
 @pytest.mark.parametrize(
