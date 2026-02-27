@@ -86,7 +86,7 @@ def panel_create_window_kwargs_plan(
     }
 
 
-def panel_show_plan(*, panel_window_exists: bool) -> dict:
+def panel_show_plan(*, panel_window_exists: bool, activate_panel: bool = True) -> dict:
     if not bool(panel_window_exists):
         return {
             "action": "create_panel",
@@ -94,10 +94,13 @@ def panel_show_plan(*, panel_window_exists: bool) -> dict:
             "window_methods": (),
             "panel_hidden": None,
         }
+    methods = ["show", "restore"]
+    if bool(activate_panel):
+        methods.append("focus")
     return {
         "action": "show_existing",
         "wait_bootstrap_before_show": True,
-        "window_methods": ("show", "restore", "focus"),
+        "window_methods": tuple(methods),
         "panel_hidden": False,
     }
 

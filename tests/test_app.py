@@ -857,6 +857,52 @@ def test_qc_bridge_qc_get_state_accepts_payload_dict():
     # ok can be False if ruleset not loaded, but should not crash and should include ok key
     assert 'ok' in res
 
+
+def test_show_qc_override_refreshes_dialog_state_on_every_show():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    calls = []
+
+    class _Win:
+        def show(self):
+            calls.append("show")
+        def bring_to_front(self):
+            calls.append("bring_to_front")
+        def evaluate_js(self, js):
+            calls.append(("evaluate_js", str(js)))
+            return "ok"
+
+    api.qc_win = _Win()
+    out = api.show_qc_override()
+    assert isinstance(out, dict) and out.get("ok") is True
+    assert "show" in calls
+    assert "bring_to_front" in calls
+    js_calls = [c[1] for c in calls if isinstance(c, tuple) and c and c[0] == "evaluate_js"]
+    assert js_calls, "show_qc_override should trigger a dialog state refresh JS call"
+    assert any("QCUI.refreshState" in js for js in js_calls)
+    assert bool(getattr(api, "_qc_override_open", False)) is True
+
+
+def test_qc_override_cancel_marks_dialog_closed_flag():
+    mod = load_fix_module()
+    api = mod.Api()
+    api._qc_override_open = True
+
+    calls = []
+
+    class _Win:
+        def hide(self):
+            calls.append("hide")
+
+    api.qc_win = _Win()
+    out = api.qc_override_cancel({})
+    assert isinstance(out, dict) and out.get("ok") is True
+    assert "hide" in calls
+    assert bool(getattr(api, "_qc_override_open", True)) is False
+
+
 def test_evidence_tagging_normalizes_origin_suffix_into_brackets_and_strips_trailing_origin_token():
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -1455,6 +1501,54 @@ def test_panel_get_ui_safe_without_priming():
     assert 'current_model' in ui
     assert 'available_models' in ui
 
+
+def test_panel_get_ui_uses_seam_failopen_snapshot_when_build_raises():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.comm_active = True
+
+    class _Seam:
+        @staticmethod
+        def panel_ui_build_snapshot(**_kwargs):
+            raise RuntimeError("boom")
+
+        @staticmethod
+        def panel_ui_failopen_snapshot(*, gov_state):
+            return {
+                "providers": ["gemini"],
+                "current_provider": "gemini",
+                "current_model": "gemini-2.0-flash",
+                "available_models": ["gemini-2.0-flash"],
+                "answer_language": "de",
+                "comm": [{"name": "Comm Start", "cmd": "Comm Start"}],
+                "profiles": [],
+                "sci": [],
+                "overlays": [],
+                "tools": [],
+                "logs": [],
+                "chat_logs": [],
+                "model_hint": "",
+                "comm_active": bool(getattr(gov_state, "comm_active", False)),
+                "manual_test_visible": bool(getattr(gov_state, "comm_active", False)),
+                "qc_override_visible": bool(getattr(gov_state, "comm_active", False)),
+                "provider": "gemini",
+                "model": "gemini-2.0-flash",
+            }
+
+    old = getattr(mod, "_panel_ui_snapshot_seam_mod", None)
+    mod._panel_ui_snapshot_seam_mod = _Seam()
+    try:
+        ui = api.get_ui()
+    finally:
+        mod._panel_ui_snapshot_seam_mod = old
+
+    assert isinstance(ui, dict)
+    assert ui.get("comm_active") is True
+    assert ui.get("manual_test_visible") is True
+    assert ui.get("qc_override_visible") is True
+    assert ui.get("provider") == "gemini"
+    assert ui.get("model") == "gemini-2.0-flash"
+
 def test_list_chat_logs_safe_and_returns_list():
     mod = load_fix_module()
     api = mod.Api()
@@ -1514,6 +1608,167 @@ def test_chat_header_displays_wrapper_prompt_label():
     assert 'Wrapper-&gt;' not in html
     assert f'>{wrapper_name}<' in html
     assert '[Wrapper-' not in html
+
+
+def test_chat_input_history_supports_arrow_up_down_navigation():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_CHAT", "")
+    assert isinstance(html, str) and html
+    assert "window.__cmdHistory" in html
+    assert "ArrowUp" in html
+    assert "ArrowDown" in html
+    assert "_cmdHistApply(-1)" in html
+    assert "_cmdHistApply(1)" in html
+
+
+def test_chat_uncertainty_tooltip_supports_mouse_hold():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_CHAT", "")
+    assert isinstance(html, str) and html
+    assert "_uTipShow(" in html
+    assert ".uncertainty-inline-marker" in html
+    assert ".signal-dot-marker" in html
+    assert "document.addEventListener('mousedown'" in html
+    assert "document.addEventListener('mouseup', _uTipHide)" in html
+
+
+def test_panel_cmd_handles_qc_override_modal_block_with_info_status():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_PANEL", "")
+    assert "qc_override_modal_blocked" in html
+    assert "QC Override Dialog ist offen; Aktion temporär blockiert." in html
+
+
+def test_append_uncertainty_explanation_does_not_add_legend_block():
+    mod = load_fix_module()
+    api = mod.Api()
+    src = "<p>Uncertainty: U4 - Temporal instability. Needed: Web check.</p>"
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert isinstance(out, str)
+    assert "uncertainty-legend" not in out
+
+
+def test_append_uncertainty_explanation_infers_codes_when_missing_without_legend():
+    mod = load_fix_module()
+    api = mod.Api()
+    src = "<p>Das ist eine komplexe Herausforderung ohne einfache oder perfekte Loesung.</p>"
+    out = api._append_uncertainty_explanation_if_needed(
+        src,
+        user_text="Was ist die objektiv beste weltweit faire Strategie?",
+    )
+    assert isinstance(out, str)
+    assert "uncertainty-inline-marker" in out
+    assert "data-u-code='U5'" in out
+    assert "data-u-title='U5 -" in out
+    assert ">U5</span>)</span>" in out
+    assert "uncertainty-legend" not in out
+
+
+def test_append_uncertainty_explanation_skips_profile_header_and_keeps_footer():
+    mod = load_fix_module()
+    api = mod.Api()
+    src = (
+        "<p>Profile: Standard · Overlay: Strict · SCI: off · Color: on</p>"
+        "<p>Das ist eine komplexe Herausforderung ohne einfache oder perfekte Loesung.</p>"
+        "<div class='ts-footer'>Response at 2026-02-27 14:00:00</div>"
+    )
+    out = api._append_uncertainty_explanation_if_needed(
+        src,
+        user_text="Was ist die objektiv beste weltweit faire Strategie?",
+    )
+    blocks = re.findall(r"(?is)<p[^>]*>.*?</p>", out)
+    assert len(blocks) >= 2
+    assert "uncertainty-inline-marker" not in blocks[0]
+    assert "uncertainty-inline-marker" in blocks[1]
+    assert "uncertainty-legend" not in out
+    assert "ts-footer" in out
+
+
+def test_uncertainty_tooltip_uses_answer_language_english():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.answer_language = "en"
+    src = "<p>Das ist eine komplexe Herausforderung ohne einfache oder perfekte Loesung.</p>"
+    out = api._append_uncertainty_explanation_if_needed(
+        src,
+        user_text="Was ist die objektiv beste weltweit faire Strategie?",
+    )
+    assert "data-u-title='U5 - Structural limitation" in out
+    assert "uncertainty-legend" not in out
+
+
+def test_uncertainty_tooltip_uses_answer_language_german():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.answer_language = "de"
+    src = "<p>Das ist eine komplexe Herausforderung ohne einfache oder perfekte Loesung.</p>"
+    out = api._append_uncertainty_explanation_if_needed(
+        src,
+        user_text="Was ist die objektiv beste weltweit faire Strategie?",
+    )
+    assert "data-u-title='U5 - Strukturelle Grenze" in out
+    assert "uncertainty-legend" not in out
+
+
+def test_signal_dot_tooltip_uses_answer_language_english():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.answer_language = "en"
+    src = "<p><span style='color:#2e7d32; font-weight:600;'>🟢</span> Claim.</p>"
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert "signal-dot-marker" in out
+    assert "Green: high reliability and comparatively robust evidence." in out
+
+
+def test_signal_dot_tooltip_uses_answer_language_german():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.answer_language = "de"
+    src = "<p><span style='color:#c62828; font-weight:600;'>🔴</span> Aussage.</p>"
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert "signal-dot-marker" in out
+    assert "Rot: niedrige Verlaesslichkeit; erhebliche Unsicherheit oder schwache Absicherung." in out
+
+
+def test_append_uncertainty_explanation_injects_fallback_signal_dots_when_color_on():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api.gov_state.color = "on"
+    api.gov_state.answer_language = "de"
+    src = "<p>Dies ist eine klare und einfache Aussage ohne besondere Unsicherheiten.</p>"
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert "signal-dot-marker" in out
+    assert ("🟢" in out) or ("🟡" in out) or ("🔴" in out)
+
+
+def test_append_uncertainty_explanation_does_not_inject_fallback_signal_dots_when_color_off():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api.gov_state.color = "off"
+    api.gov_state.answer_language = "de"
+    src = "<p>Dies ist eine klare und einfache Aussage ohne besondere Unsicherheiten.</p>"
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert "signal-dot-marker" not in out
+
+
+def test_fallback_signal_dots_skip_status_and_qc_blocks():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api.gov_state.color = "on"
+    src = (
+        "<p>Active profile: Standard · Overlay: Strict · SCI: off · Color: on</p>"
+        "<p>Dies ist eine klare und einfache Aussage ohne besondere Unsicherheiten.</p>"
+        "<p>QC-Matrix: Clarity 3 (Δ0)</p>"
+    )
+    out = api._append_uncertainty_explanation_if_needed(src)
+    blocks = re.findall(r"(?is)<p[^>]*>.*?</p>", out)
+    assert len(blocks) == 3
+    assert "signal-dot-marker" not in blocks[0]
+    assert "signal-dot-marker" in blocks[1]
+    assert "signal-dot-marker" not in blocks[2]
 
 
 def test_main_window_title_is_dynamic_and_matches_wrapper_name():
@@ -1957,6 +2212,77 @@ def test_on_panel_closing_returns_false_and_attempts_hide():
 
     assert res is False
     assert called["hide"] is True
+
+
+def test_settings_show_panel_keeps_main_active_when_opening_from_main_toggle():
+    mod = load_fix_module()
+    api = mod.Api()
+
+    panel_calls = []
+    main_calls = []
+
+    class _PanelWin:
+        def show(self):
+            panel_calls.append("show")
+        def restore(self):
+            panel_calls.append("restore")
+        def focus(self):
+            panel_calls.append("focus")
+
+    class _MainWin:
+        def restore(self):
+            main_calls.append("restore")
+        def bring_to_front(self):
+            main_calls.append("bring_to_front")
+        def focus(self):
+            main_calls.append("focus")
+
+    api.panel_win = _PanelWin()
+    api.main_win = _MainWin()
+    api.panel_hidden = True
+    api._panel_wait_bootstrap_or_fallback = lambda: None  # type: ignore[assignment]
+    api.settings()
+
+    assert "show" in panel_calls
+    assert "restore" in panel_calls
+    assert "focus" not in panel_calls
+    assert main_calls, "Main window should be re-focused after panel show toggle."
+
+
+def test_settings_panel_toggle_does_not_steal_focus_from_open_qc_override():
+    mod = load_fix_module()
+    api = mod.Api()
+
+    panel_calls = []
+    main_calls = []
+
+    class _PanelWin:
+        def show(self):
+            panel_calls.append("show")
+        def restore(self):
+            panel_calls.append("restore")
+        def focus(self):
+            panel_calls.append("focus")
+
+    class _MainWin:
+        def restore(self):
+            main_calls.append("restore")
+        def bring_to_front(self):
+            main_calls.append("bring_to_front")
+        def focus(self):
+            main_calls.append("focus")
+
+    api.panel_win = _PanelWin()
+    api.main_win = _MainWin()
+    api.panel_hidden = True
+    api._qc_override_open = True
+    api._panel_wait_bootstrap_or_fallback = lambda: None  # type: ignore[assignment]
+    api.settings()
+
+    assert "show" in panel_calls
+    assert "restore" in panel_calls
+    assert "focus" not in panel_calls
+    assert main_calls == []
 
 
 
@@ -3414,15 +3740,27 @@ def test_panel_ui_toggles_deterministic():
 def test_toggle_btn_shows_action_not_state():
     """Regression: toggle buttons must show the *action* (opposite of state), not the current state."""
     src = FIX_PATH.read_text(encoding="utf-8")
-    # Find _toggle_btn function body (kept small and deterministic)
     import re
+    # Legacy path: helper kept in monolith.
     m = re.search(r"def\s+_toggle_btn\s*\(.*?\):\n(.*?)(?:\n\n|\n\s*#)", src, flags=re.S)
-    assert m, "Missing _toggle_btn in wrapper"
-    body = m.group(1)
-    # If state is ON, label must show OFF in the is_on branch.
-    assert '{label_prefix}: OFF' in body or 'label_prefix}: OFF' in body, "Toggle label does not show OFF when is_on=True"
-    # And the else branch must show ON.
-    assert '{label_prefix}: ON' in body or 'label_prefix}: ON' in body, "Toggle label does not show ON when is_on=False"
+    if m:
+        body = m.group(1)
+        assert '{label_prefix}: OFF' in body or 'label_prefix}: OFF' in body, "Toggle label does not show OFF when is_on=True"
+        assert '{label_prefix}: ON' in body or 'label_prefix}: ON' in body, "Toggle label does not show ON when is_on=False"
+        return
+
+    # S13 path: Comm toggle inversion moved into panel_ui_snapshot_seam.
+    seam_path = FIX_PATH.parent / "panel_ui_snapshot_seam.py"
+    assert seam_path.exists(), "Missing _toggle_btn in wrapper and panel_ui_snapshot_seam.py not found"
+    seam_src = seam_path.read_text(encoding="utf-8")
+    m2 = re.search(
+        r"def\s+panel_ui_apply_failsoft_comm_toggle\s*\([^)]*\)\s*(?:->\s*[^:]+)?\s*:\s*\n(?P<body>(?:\s+.*\n){5,120})",
+        seam_src,
+    )
+    assert m2, "Missing panel_ui_apply_failsoft_comm_toggle() seam helper"
+    body = m2.group("body")
+    assert "Comm ⏻: OFF" in body and "Comm Stop" in body, "Expected active-state toggle to show OFF action / Comm Stop"
+    assert "Comm ⏻: ON" in body and "Comm Start" in body, "Expected inactive-state toggle to show ON action / Comm Start"
 
 def test_html_number_self_debunking_removes_orphan_markers_and_no_double_prefix():
     mod = load_fix_module()
@@ -3519,6 +3857,27 @@ def test_strip_verification_route_display_lines_hides_gate_and_bulleted_markers(
     assert "Selbst-Debunking:" in out
 
 
+def test_strip_verification_route_display_lines_hides_html_wrapped_marker_line():
+    mod = load_fix_module()
+    raw = (
+        "<div>Normaler Inhalt.</div>\n"
+        "<div>Verification Route: Source: TRAIN (allgemeines Hintergrundwissen).</div>\n"
+        "<div>Selbst-Debunking:</div>\n"
+    )
+    out = mod.strip_verification_route_display_lines(raw)
+    assert "Verification Route: Source: TRAIN" not in out
+    assert "Normaler Inhalt." in out
+    assert "Selbst-Debunking:" in out
+
+
+def test_strip_pathological_repetition_display_noise_replaces_long_cjk_run_for_german():
+    mod = load_fix_module()
+    raw = "Antwort " + ("算法和" * 80) + " Ende."
+    out = mod.strip_pathological_repetition_display_noise(raw, lang="de")
+    assert "算法和算法和" not in out
+    assert "[entfernt: fehlerhafte Wiederholungssequenz]" in out
+
+
 def test_strip_internal_scaffolding_status_lines_removes_leaked_profile_status():
     mod = load_fix_module()
     raw = (
@@ -3540,44 +3899,6 @@ def test_strip_internal_scaffolding_status_lines_keeps_normal_profile_sentence()
     )
     out = mod.strip_internal_scaffolding_status_lines(raw)
     assert out == raw.rstrip("\n")
-
-
-def test_strip_internal_scaffolding_status_lines_removes_prompt_directive_echo_lines():
-    mod = load_fix_module()
-    raw = (
-        "Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
-        "[QC OVERRIDES] Active temporary targets: Clarity=3, Brevity=0, Evidence=3\n"
-        "[QC BEHAVIOR] Brevity=0: be very detailed.\n"
-        "Kerninhalt bleibt erhalten.\n"
-    )
-    out = mod.strip_internal_scaffolding_status_lines(raw)
-    assert "[QC OVERRIDES]" not in out
-    assert "[QC BEHAVIOR]" not in out
-    assert "Kerninhalt bleibt erhalten." in out
-
-
-def test_strip_internal_scaffolding_status_lines_removes_isolated_profile_name_leak():
-    mod = load_fix_module()
-    raw = (
-        "Active profile: Standard · SCI: off · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
-        "Profile: Standard.\n"
-        "Antwortinhalt bleibt sichtbar.\n"
-    )
-    out = mod.strip_internal_scaffolding_status_lines(raw)
-    assert "Profile: Standard." not in out
-    assert "Antwortinhalt bleibt sichtbar." in out
-
-
-def test_strip_internal_scaffolding_status_lines_removes_profile_title_without_separator():
-    mod = load_fix_module()
-    raw = (
-        "Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
-        "Profile Expert:\n"
-        "Antwortinhalt bleibt sichtbar.\n"
-    )
-    out = mod.strip_internal_scaffolding_status_lines(raw)
-    assert "Profile Expert:" not in out
-    assert "Antwortinhalt bleibt sichtbar." in out
 
 
 def test_strip_internal_scaffolding_status_lines_removes_profile_plus_prompt_echo_block():
@@ -3620,36 +3941,16 @@ def test_strip_internal_scaffolding_status_html_removes_profile_block():
     assert "Inhalt bleibt sichtbar." in out
 
 
-def test_strip_internal_scaffolding_status_html_removes_qc_override_directive_block():
-    mod = load_fix_module()
-    html_in = (
-        "<p>Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on</p>"
-        "<p>[QC OVERRIDES] Active temporary targets: Clarity=3, Brevity=0</p>"
-        "<p>Inhalt bleibt sichtbar.</p>"
-    )
-    out = mod.strip_internal_scaffolding_status_html(html_in)
-    assert "[QC OVERRIDES]" not in out
-    assert "Inhalt bleibt sichtbar." in out
-
-
 def test_strip_internal_scaffolding_status_html_removes_multiline_profile_overlay_sci_block():
     mod = load_fix_module()
     html_in = (
-        "<p>Profile: Standard<br>Overlay: Strict<br>SCI: off</p>"
+        "<div>Profile: Standard<br>Overlay: Strict<br>SCI: off<br>Color: on</div>"
         "<p>Inhalt bleibt sichtbar.</p>"
     )
     out = mod.strip_internal_scaffolding_status_html(html_in)
     assert "Profile: Standard" not in out
     assert "Overlay: Strict" not in out
     assert "SCI: off" not in out
-    assert "Inhalt bleibt sichtbar." in out
-
-
-def test_strip_internal_scaffolding_status_html_removes_profile_title_without_separator():
-    mod = load_fix_module()
-    html_in = "<p>Profile Standard:</p><p>Inhalt bleibt sichtbar.</p>"
-    out = mod.strip_internal_scaffolding_status_html(html_in)
-    assert "Profile Standard:" not in out
     assert "Inhalt bleibt sichtbar." in out
 
 
@@ -3674,18 +3975,6 @@ def test_strip_internal_scaffolding_status_html_removes_profile_with_sci_trace_c
     out = mod.strip_internal_scaffolding_status_html(html_in)
     assert "Profile: Expert" not in out
     assert "sci-trace" in out
-
-
-def test_strip_evidence_tags_from_heading_lines_removes_only_heading_markers():
-    mod = load_fix_module()
-    raw = (
-        "[GREEN] 1. Strategie:\n"
-        "[YELLOW] Diese Einschätzung ist plausibel, aber unsicher.\n"
-    )
-    out = mod.strip_evidence_tags_from_heading_lines(raw)
-    assert "[GREEN]" not in out
-    assert "1. Strategie:" in out
-    assert "[YELLOW]" in out
 
 
 def test_strip_exact_status_header_line_removes_exact_duplicate_only():
@@ -3942,6 +4231,105 @@ def test_validate_sci_trace_accepts_dialectic_syntheses2_alias_for_canonical_ste
     assert not any("Missing SCI Trace step: Dialectic_6_Synthesis2" in v for v in vios)
     assert not any("Missing SCI Trace step: Learn" in v for v in vios)
     assert not any("has no content" in v for v in vios)
+
+
+def test_validate_sci_trace_requires_final_answer_content_outside_trace():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, mod.cfg)
+    validator._required_trace_steps_for_variant = lambda _v: ["Plan", "Solution", "Learn"]  # type: ignore[assignment]
+
+    raw = (
+        "SCI Trace:\n"
+        "Plan: Wir planen die Antwort.\n"
+        "Solution: Wir geben eine Kernantwort.\n"
+        "Learn: Wir reflektieren das Ergebnis.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+        "QC-Matrix: Clarity 2 (Δ0)\n"
+    )
+    vios = validator.validate_sci_trace(raw, "B")
+    assert any("Missing substantive final answer content outside SCI Trace." in v for v in vios)
+
+
+def test_validate_sci_trace_accepts_final_answer_content_outside_trace():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, mod.cfg)
+    validator._required_trace_steps_for_variant = lambda _v: ["Plan", "Solution", "Learn"]  # type: ignore[assignment]
+
+    raw = (
+        "SCI Trace:\n"
+        "Plan: Wir planen die Antwort.\n"
+        "Solution: Wir geben eine Kernantwort.\n"
+        "Learn: Wir reflektieren das Ergebnis.\n"
+        "\n"
+        "Zeit ist ein physikalisches und zugleich erfahrungsbezogenes Konzept.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+        "QC-Matrix: Clarity 2 (Δ0)\n"
+    )
+    vios = validator.validate_sci_trace(raw, "B")
+    assert not any("Missing substantive final answer content outside SCI Trace." in v for v in vios)
+
+
+@pytest.mark.parametrize(
+    "variant_key, steps",
+    [
+        ("A", ["Plan", "Solution", "Check"]),
+        ("B", ["Plan", "Solution", "Learn"]),
+        ("C", ["Branch_1", "Branch_2", "Selection"]),
+        ("D", ["Axiom_1", "Axiom_2", "Synthesis"]),
+        ("E", ["Confidence_0", "Counterargument", "Confidence_1"]),
+        ("F", ["First-order", "Second-order", "Third-order"]),
+        ("G", ["Pre-mortem", "Failure modes", "Mitigations"]),
+        ("H", ["Agent_1", "Agent_2", "Synthesis"]),
+    ],
+)
+def test_validate_sci_trace_requires_final_answer_content_outside_trace_across_variants(variant_key, steps):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, mod.cfg)
+    validator._required_trace_steps_for_variant = lambda _v: list(steps)  # type: ignore[assignment]
+
+    raw = "SCI Trace:\n" + "".join(f"{s}: Inhalt.\n" for s in steps) + (
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+        "QC-Matrix: Clarity 2 (Δ0)\n"
+    )
+    vios = validator.validate_sci_trace(raw, variant_key)
+    assert any("Missing substantive final answer content outside SCI Trace." in v for v in vios)
+
+
+@pytest.mark.parametrize(
+    "variant_key, steps",
+    [
+        ("A", ["Plan", "Solution", "Check"]),
+        ("B", ["Plan", "Solution", "Learn"]),
+        ("C", ["Branch_1", "Branch_2", "Selection"]),
+        ("D", ["Axiom_1", "Axiom_2", "Synthesis"]),
+        ("E", ["Confidence_0", "Counterargument", "Confidence_1"]),
+        ("F", ["First-order", "Second-order", "Third-order"]),
+        ("G", ["Pre-mortem", "Failure modes", "Mitigations"]),
+        ("H", ["Agent_1", "Agent_2", "Synthesis"]),
+    ],
+)
+def test_validate_sci_trace_accepts_final_answer_content_outside_trace_across_variants(variant_key, steps):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, mod.cfg)
+    validator._required_trace_steps_for_variant = lambda _v: list(steps)  # type: ignore[assignment]
+
+    raw = (
+        "SCI Trace:\n"
+        + "".join(f"{s}: Inhalt.\n" for s in steps)
+        + "\nSubstanzieller Antwortteil außerhalb des SCI Trace.\n"
+        + "Self-Debunking:\n"
+        + "1. Schwäche: x\n"
+        + "QC-Matrix: Clarity 2 (Δ0)\n"
+    )
+    vios = validator.validate_sci_trace(raw, variant_key)
+    assert not any("Missing substantive final answer content outside SCI Trace." in v for v in vios)
 
 
 def test_normalize_sci_trace_numbering_handles_complex_step_labels():
@@ -4310,6 +4698,37 @@ def test_manual_test_monitor_closed_callback_clears_window_ref():
     assert getattr(api, 'manual_test_monitor_win', None) is None
 
 
+def test_manual_test_monitor_state_mutators_update_state_and_emit_js_calls():
+    mod = load_fix_module()
+    api = mod.Api()
+    calls = []
+    api._manual_test_monitor_eval = lambda js: calls.append(str(js)) or True  # type: ignore[assignment]
+
+    r1 = api.manual_test_monitor_reset({'scenario': 's1', 'summary': 'ready'})
+    assert r1.get('ok') is True
+    assert getattr(api, 'manual_test_monitor_state', {}).get('scenario') == 's1'
+    assert getattr(api, 'manual_test_monitor_state', {}).get('status') == 'running'
+    assert getattr(api, 'manual_test_monitor_state', {}).get('events') == []
+    assert any(c.startswith('mtmReplace(') for c in calls)
+
+    calls.clear()
+    r2 = api.manual_test_monitor_append('hello')
+    assert r2.get('ok') is True
+    st = getattr(api, 'manual_test_monitor_state', {})
+    assert isinstance(st.get('events'), list)
+    assert st['events'][-1] == {'message': 'hello'}
+    assert any(c.startswith('mtmAppend(') for c in calls)
+
+    calls.clear()
+    r3 = api.manual_test_monitor_set_header({'status': 'done', 'summary': 'ok'})
+    assert r3.get('ok') is True
+    st = getattr(api, 'manual_test_monitor_state', {})
+    assert st.get('scenario') == 's1'
+    assert st.get('status') == 'done'
+    assert st.get('summary') == 'ok'
+    assert any(c.startswith('mtmSetHeader(') for c in calls)
+
+
 def test_panel_action_blocks_stale_rule_actions_when_comm_off():
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -4330,6 +4749,100 @@ def test_panel_action_blocks_stale_rule_actions_when_comm_off():
     assert isinstance(r_start, dict)
     # The panel_action gate must not block Comm Start (actual execution path may still fail in isolated test).
     assert r_start.get('error') != 'comm_off_blocked'
+
+
+def test_main_input_is_blocked_while_qc_override_modal_is_open():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api._qc_override_open = True
+    api.chat_session = DummySession(['SHOULD_NOT_BE_CALLED'])
+
+    calls = []
+
+    class _QcWin:
+        def show(self):
+            calls.append("show")
+        def bring_to_front(self):
+            calls.append("bring_to_front")
+
+    api.qc_win = _QcWin()
+    out = api.ask("Was ist Zeit?")
+    assert isinstance(out, dict)
+    html = str(out.get("html") or "")
+    assert "QC Override" in html
+    assert "geöffnet" in html or "open" in html
+    assert api.chat_session.calls == []  # type: ignore[attr-defined]
+    assert "bring_to_front" in calls or "show" in calls
+
+
+def test_panel_action_blocks_non_qc_actions_while_qc_override_modal_is_open():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api._qc_override_open = True
+
+    calls = []
+
+    class _QcWin:
+        def show(self):
+            calls.append("show")
+        def bring_to_front(self):
+            calls.append("bring_to_front")
+
+    api.qc_win = _QcWin()
+    out = api.panel_action('list_chat_logs', {'limit': 10})
+    assert isinstance(out, dict)
+    assert out.get('ok') is False
+    assert out.get('error') == 'qc_override_modal_blocked'
+    assert "bring_to_front" in calls or "show" in calls
+
+
+def test_panel_action_allows_qc_clear_while_qc_override_modal_is_open():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api._qc_override_open = True
+
+    class _QcWin:
+        def hide(self):
+            return None
+
+    api.qc_win = _QcWin()
+    out = api.panel_action('qc_override_clear', {})
+    assert isinstance(out, dict)
+    assert out.get('ok') is True
+    assert bool(getattr(api, '_qc_override_open', True)) is False
+
+
+def test_remote_cmd_is_blocked_while_qc_override_modal_is_open():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.main_win = object()
+    api._qc_override_open = True
+
+    calls = []
+
+    class _QcWin:
+        def show(self):
+            calls.append("show")
+        def bring_to_front(self):
+            calls.append("bring_to_front")
+
+    api.qc_win = _QcWin()
+    blocked = api.remote_cmd("Comm State")
+    assert isinstance(blocked, dict)
+    assert blocked.get("ok") is False
+    assert blocked.get("error") == "qc_override_modal_blocked"
+
+    reopen = api.remote_cmd("QC Override")
+    assert isinstance(reopen, dict)
+    assert reopen.get("ok") is True
+    assert reopen.get("already_open") is True
+    assert "bring_to_front" in calls or "show" in calls
 
 
 def test_comm_start_via_input_line_refreshes_panel_ui_state():

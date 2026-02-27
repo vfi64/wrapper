@@ -39,6 +39,7 @@
     ['Consistency','consistency'],
     ['Neutrality','neutrality']
   ];
+  let _attached = false;
 
   function readValues(){
     const out = {};
@@ -70,6 +71,35 @@
     }
   }
 
+  function applyState(st){
+    if(!(st && st.ok)){
+      setStatus('Online, aber qc_get_state fehlgeschlagen.', true);
+      return false;
+    }
+    const prof = st.profile || 'Standard';
+    document.title = 'Temporary QC override – Profile: ' + prof;
+    const h = qs('#title');
+    if(h) h.textContent = 'Temporary QC override – Profile: ' + prof;
+
+    const defaults = st.defaults || {};
+    const ovs = st.overrides || {};
+    const base = {};
+    for(const [label, key] of DIMENSIONS){
+      const d = defaults[key];
+      let v = 2;
+      if(Array.isArray(d) && d.length>=2){
+        v = parseInt(d[1],10);
+      }else if(typeof d === 'number'){
+        v = d;
+      }
+      base[label] = v;
+    }
+    setValues(base);
+    setValues(ovs);
+    setStatus(st.note || 'Online.', false);
+    return true;
+  }
+
   async function callApi(fn, payload){
     if(!window.pywebview || !pywebview.api || !pywebview.api[fn]){
       throw new Error('Bridge not ready: ' + fn);
@@ -77,41 +107,24 @@
     return await pywebview.api[fn](payload || {});
   }
 
+  async function refreshState(){
+    const st = await callApi('qc_get_state', {});
+    return applyState(st);
+  }
+
   async function boot(){
     setStatus('Offline (bridge not ready). Trying…', false);
-    attach();
+    if(!_attached){
+      attach();
+      _attached = true;
+    }
 
     for(let i=0;i<40;i++){
       try{
         if(window.pywebview && pywebview.api && pywebview.api.ping){
           const pong = await pywebview.api.ping();
           if(pong && pong.ok){
-            const st = await callApi('qc_get_state', {});
-            if(st && st.ok){
-              const prof = st.profile || 'Standard';
-              document.title = 'Temporary QC override – Profile: ' + prof;
-              const h = qs('#title');
-              if(h) h.textContent = 'Temporary QC override – Profile: ' + prof;
-
-              const defaults = st.defaults || {};
-              const ovs = st.overrides || {};
-              const base = {};
-              for(const [label, key] of DIMENSIONS){
-                const d = defaults[key];
-                let v = 2;
-                if(Array.isArray(d) && d.length>=2){
-                  v = parseInt(d[1],10);
-                }else if(typeof d === 'number'){
-                  v = d;
-                }
-                base[label] = v;
-              }
-              setValues(base);
-              setValues(ovs);
-              setStatus(st.note || 'Online.', false);
-            }else{
-              setStatus('Online, aber qc_get_state fehlgeschlagen.', true);
-            }
+            await refreshState();
             return;
           }
         }
@@ -140,22 +153,7 @@
       const res = await callApi('qc_override_clear', {});
       if(res && res.ok){
         try{
-          const st = await callApi('qc_get_state', {});
-          if(st && st.ok){
-            const defaults = st.defaults || {};
-            const base = {};
-            for(const [label, key] of DIMENSIONS){
-              const d = defaults[key];
-              let v = 2;
-              if(Array.isArray(d) && d.length>=2){
-                v = parseInt(d[1],10);
-              }else if(typeof d === 'number'){
-                v = d;
-              }
-              base[label] = v;
-            }
-            setValues(base);
-          }
+          await refreshState();
         }catch(e){}
         setStatus('Cleared.', false);
       }else{
@@ -183,7 +181,7 @@
     setValues(vals);
   }
 
-  window.QCUI = { boot, onApply, onClear, onCancel, preset };
+  window.QCUI = { boot, refreshState, onApply, onClear, onCancel, preset };
 })();
 </script>
 </head>

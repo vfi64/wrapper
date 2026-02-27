@@ -124,6 +124,21 @@ except Exception:
     _qc_override_window_seam_mod = None  # type: ignore
 
 try:
+    import panel_ui_snapshot_seam as _panel_ui_snapshot_seam_mod  # type: ignore
+except Exception:
+    _panel_ui_snapshot_seam_mod = None  # type: ignore
+
+try:
+    import manual_test_monitor_seam as _manual_test_monitor_seam_mod  # type: ignore
+except Exception:
+    _manual_test_monitor_seam_mod = None  # type: ignore
+
+try:
+    import uncertainty_codes as _uncertainty_codes_mod  # type: ignore
+except Exception:
+    _uncertainty_codes_mod = None  # type: ignore
+
+try:
     from qc_bridge import QCBridge as _QCBridge  # type: ignore
 except Exception:
     _QCBridge = None  # type: ignore
@@ -133,15 +148,34 @@ try:
 except Exception:
     _PanelBridge = None  # type: ignore
 
+try:
+    from main_bridge import MainBridge as _MainBridge  # type: ignore
+except Exception:
+    _MainBridge = None  # type: ignore
+
 # Stage 3e (CI): strict module mode. If enabled, missing extracted modules is a hard error.
 _STRICT_MODULES = (os.environ.get('WRAPPER_STRICT_MODULES', '') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+def _strict_local_module_loaded(mod_obj, module_dir_name: str = 'Module') -> bool:
+    """Return True only when module file is loaded from the local wrapper tree."""
+    try:
+        if mod_obj is None:
+            return False
+        mod_file = Path(getattr(mod_obj, '__file__', '') or '').resolve()
+        if not mod_file:
+            return False
+        local_module_dir = (Path(__file__).resolve().parent / module_dir_name).resolve()
+        return str(mod_file).startswith(str(local_module_dir) + os.sep)
+    except Exception:
+        return False
+
 if _STRICT_MODULES:
     missing = []
-    if _auditstream is None:
+    if not _strict_local_module_loaded(_auditstream):
         missing.append('Module.auditstream')
-    if _rendering_utils is None:
+    if not _strict_local_module_loaded(_rendering_utils):
         missing.append('Module.rendering_utils')
-    if _compliance_scan is None:
+    if not _strict_local_module_loaded(_compliance_scan):
         missing.append('Module.compliance_scan')
     if missing:
         raise SystemExit("WRAPPER_STRICT_MODULES=1: missing required modules: " + ", ".join(missing))
@@ -2288,10 +2322,35 @@ def strip_verification_route_display_lines(text: str) -> str:
             re.compile(r"(?im)^\s*(?:[-*•]\s*)?Web[\s\-]*Prüfung\s*:.*$"),
         ]
         for ln in str(text).splitlines():
-            if any(p.match(ln or "") for p in pats):
+            raw_ln = str(ln or "")
+            plain_ln = re.sub(r"(?is)<[^>]+>", " ", raw_ln)
+            plain_ln = html.unescape(plain_ln or "")
+            plain_ln = re.sub(r"\s+", " ", plain_ln).strip()
+            if any(p.match(plain_ln) for p in pats):
                 continue
-            out_lines.append(ln)
+            out_lines.append(raw_ln)
         return "\n".join(out_lines)
+    except Exception:
+        return text
+
+
+def strip_pathological_repetition_display_noise(text: str, *, lang: str = "de") -> str:
+    """Best-effort display cleanup for obvious malformed long repetition sequences."""
+    try:
+        src = str(text or "")
+        if not src:
+            return src
+        ll = str(lang or "").strip().lower()
+        if ll.startswith(("zh", "ja", "ko")):
+            return src
+
+        pat = re.compile(r"[\u3400-\u9fff]{120,}")
+        replacement = (
+            "[removed: malformed repetition sequence]"
+            if ll.startswith("en")
+            else "[entfernt: fehlerhafte Wiederholungssequenz]"
+        )
+        return pat.sub(replacement, src)
     except Exception:
         return text
 
@@ -2645,62 +2704,6 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
         return out
     except Exception:
         return html_text
-
-
-def strip_evidence_tags_from_heading_lines(text: str) -> str:
-    """Remove Evidence-Linker tags from pure heading-like lines.
-
-    Keeps color markers on substantive content lines while avoiding noisy markers
-    on section headings/list headers.
-    """
-    try:
-        if not text:
-            return text
-
-        lead_tag_pat = re.compile(
-            r"^(?P<prefix>\s*(?:[-*•]\s*)?(?:\d+\s*[\.)]\s*)?)"
-            r"(?P<tags>(?:\[(?:GREEN|YELLOW|RED|GRAY)(?:-[A-Z0-9]+)*\]\s*(?:[🟢🟡🔴⚪⚪️]\s*)?)+)"
-            r"(?P<rest>.*)$",
-            flags=re.IGNORECASE,
-        )
-
-        def _looks_heading(candidate: str) -> bool:
-            plain = re.sub(r"(?is)<[^>]+>", " ", candidate or "")
-            plain = re.sub(r"\s+", " ", plain).strip()
-            if not plain:
-                return False
-            if re.match(r"^#{1,6}\s+\S+", plain):
-                return True
-            core = re.sub(r"^\s*\d+\s*[\.)]\s*", "", plain).strip()
-            if core.endswith(":"):
-                core_body = core[:-1].strip(" -*_`")
-                if core_body and len(core_body.split()) <= 20 and not re.search(r"[.!?]", core_body):
-                    return True
-            return False
-
-        out_lines = []
-        in_code = False
-        for ln in str(text).splitlines():
-            s = (ln or "").strip()
-            if s.startswith("```"):
-                in_code = not in_code
-                out_lines.append(ln)
-                continue
-            if in_code:
-                out_lines.append(ln)
-                continue
-            m = lead_tag_pat.match(ln or "")
-            if not m:
-                out_lines.append(ln)
-                continue
-            rest = m.group("rest") or ""
-            if _looks_heading(rest):
-                out_lines.append((m.group("prefix") or "") + rest.lstrip())
-            else:
-                out_lines.append(ln)
-        return "\n".join(out_lines)
-    except Exception:
-        return text
 
 
 def strip_exact_status_header_line(text: str, header_line: str) -> str:
@@ -3820,6 +3823,184 @@ def contract_answer_response(html_text: str) -> bool:
     """Best-effort contract for a normal answer response: QC footer is expected."""
     txt = str(html_text or '')
     return ('QC-Matrix:' in txt) or ('QC:' in txt)
+
+
+_SIGNAL_DOT_SPAN_RE = re.compile(r"(?is)<span(?P<attrs>[^>]*)>(?P<body>\s*[🟢🟡🔴]\s*)</span>")
+_SIGNAL_DOT_BLOCK_RE = re.compile(r"(?is)<(?P<tag>p|li)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>")
+_SIGNAL_DOT_MARKER_RE = re.compile(
+    r"(?is)<span\b[^>]*class=(?:\"|')[^\"']*\bsignal-dot-marker\b[^\"']*(?:\"|')[^>]*>.*?</span>\s*"
+)
+_SIGNAL_DOT_STATUS_PREFIX_RE = re.compile(
+    r"(?i)^(?:active profile|profile|overlay|sci|control layer|qc|cgi|color|comm)\s*:"
+)
+_SIGNAL_DOT_COLOR = {
+    "🟢": "#2e7d32",
+    "🟡": "#f9a825",
+    "🔴": "#c62828",
+}
+
+
+def _signal_dot_tooltip_text(icon: str, *, lang: str = "de") -> str:
+    use_en = str(lang or "").strip().lower().startswith("en")
+    ic = str(icon or "").strip()
+    if ic == "🟢":
+        return (
+            "Green: high reliability and comparatively robust evidence."
+            if use_en
+            else "Gruen: hohe Verlaesslichkeit und vergleichsweise robuste Evidenz."
+        )
+    if ic == "🟡":
+        return (
+            "Yellow: medium reliability; relevant uncertainty remains."
+            if use_en
+            else "Gelb: mittlere Verlaesslichkeit; relevante Unsicherheit bleibt."
+        )
+    if ic == "🔴":
+        return (
+            "Red: low reliability; substantial uncertainty or weak support."
+            if use_en
+            else "Rot: niedrige Verlaesslichkeit; erhebliche Unsicherheit oder schwache Absicherung."
+        )
+    return ""
+
+
+def annotate_signal_dot_tooltips_html(html_text: str, *, lang: str = "de") -> str:
+    """Wrap color signal dots with hold-tooltip metadata in answer language."""
+    src = str(html_text or "")
+    if not src:
+        return src
+    if "signal-dot-marker" in src:
+        return src
+
+    def _repl(m: re.Match) -> str:
+        body = str(m.group("body") or "")
+        icon = re.sub(r"\s+", "", body)
+        tip = _signal_dot_tooltip_text(icon, lang=lang)
+        if not tip:
+            return m.group(0)
+        esc = html.escape(tip)
+        return (
+            "<span class='signal-dot-marker' "
+            f"data-u-title='{esc}' title='{esc}' style='cursor:help;'>"
+            f"{m.group(0)}"
+            "</span>"
+        )
+
+    return _SIGNAL_DOT_SPAN_RE.sub(_repl, src)
+
+
+def _fallback_signal_dot_icon_for_text(text: str) -> str:
+    """Map block uncertainty signal to a deterministic fallback dot icon."""
+    norm = html.unescape(re.sub(r"(?is)<[^>]+>", " ", str(text or "")))
+    norm = re.sub(r"\s+", " ", norm).strip()
+    if not norm:
+        return "🟢"
+
+    codes: list[str] = []
+    try:
+        if _uncertainty_codes_mod is not None and hasattr(_uncertainty_codes_mod, "infer_uncertainty_codes"):
+            codes = list(_uncertainty_codes_mod.infer_uncertainty_codes(norm, user_text="") or [])
+    except Exception:
+        codes = []
+    code_set = {str(c or "").strip().upper() for c in codes}
+    if "U1" in code_set or "U4" in code_set:
+        return "🔴"
+    if code_set:
+        return "🟡"
+    return "🟢"
+
+
+def inject_fallback_signal_dots_html(html_text: str, *, lang: str = "de") -> str:
+    """Insert deterministic signal dots when Color=on but model emitted no evidence dots."""
+    src = str(html_text or "")
+    if not src:
+        return src
+    if "signal-dot-marker" in src:
+        return src
+
+    out = []
+    cursor = 0
+    for m in _SIGNAL_DOT_BLOCK_RE.finditer(src):
+        start, end = m.span()
+        tag = str(m.group("tag") or "")
+        attrs = str(m.group("attrs") or "")
+        body = str(m.group("body") or "")
+        out.append(src[cursor:start])
+
+        plain = html.unescape(re.sub(r"(?is)<[^>]+>", " ", body))
+        plain = re.sub(r"\s+", " ", plain).strip()
+        low = plain.lower()
+
+        skip = False
+        if not plain or len(plain) < 24:
+            skip = True
+        elif _SIGNAL_DOT_STATUS_PREFIX_RE.match(plain):
+            skip = True
+        elif low.startswith("qc-matrix:") or low.startswith("verification route"):
+            skip = True
+        elif "response at " in low or "selbst-debunking" in low or "self-debunking" in low:
+            skip = True
+        elif "uncertainty-auto-marker" in attrs:
+            skip = True
+
+        if skip:
+            out.append(src[start:end])
+        else:
+            icon = _fallback_signal_dot_icon_for_text(plain)
+            tip = _signal_dot_tooltip_text(icon, lang=lang)
+            esc_tip = html.escape(tip) if tip else ""
+            color = _SIGNAL_DOT_COLOR.get(icon, "#5f6368")
+            dot_html = (
+                "<span class='signal-dot-marker' "
+                f"data-u-title='{esc_tip}' title='{esc_tip}' style='cursor:help;'>"
+                f"<span style=\"color:{color}; font-weight:600;\">{icon}</span>"
+                "</span> "
+            )
+            marked_body = re.sub(r"^(\s*)", r"\1" + dot_html, body, count=1)
+            out.append(f"<{tag}{attrs}>{marked_body}</{tag}>")
+        cursor = end
+    out.append(src[cursor:])
+    return "".join(out)
+
+
+def strip_signal_dots_from_heading_only_blocks_html(html_text: str) -> str:
+    """Remove signal-dot markers from pure heading blocks (<p>/<li> with only <strong>/<hN>)."""
+    src = str(html_text or "")
+    if not src or "signal-dot-marker" not in src:
+        return src
+
+    def _is_heading_only(inner_html: str) -> bool:
+        content = re.sub(r"(?is)^\s*(?:<br\s*/?>|\s|&nbsp;)+", "", str(inner_html or ""))
+        content = re.sub(r"(?is)(?:<br\s*/?>|\s|&nbsp;)+\s*$", "", content)
+        if not content:
+            return False
+        if re.fullmatch(r"(?is)<strong\b[^>]*>.*?</strong>", content):
+            return True
+        if re.fullmatch(r"(?is)<h[1-6]\b[^>]*>.*?</h[1-6]>", content):
+            return True
+        return False
+
+    out = []
+    cursor = 0
+    for m in _SIGNAL_DOT_BLOCK_RE.finditer(src):
+        start, end = m.span()
+        block = str(m.group(0) or "")
+        out.append(src[cursor:start])
+        if "signal-dot-marker" not in block:
+            out.append(block)
+        else:
+            block_wo_markers = _SIGNAL_DOT_MARKER_RE.sub("", block)
+            mm = re.match(r"(?is)<(?P<tag>p|li)\b[^>]*>(?P<body>.*?)</(?P=tag)>", block_wo_markers)
+            body = str(mm.group("body") if mm else "")
+            if _is_heading_only(body):
+                out.append(block_wo_markers)
+            else:
+                out.append(block)
+        cursor = end
+    out.append(src[cursor:])
+    return "".join(out)
+
+
 def apply_color_spans(text: str, enabled: bool = True) -> str:
     """Render Evidence-Linker tags with actual HTML colors (does not invent tags)."""
     if not enabled or not text:
@@ -4698,10 +4879,128 @@ HTML_CHAT_TEMPLATE = """
       document.body.removeChild(textArea);
   }
 
-  async function send() {
-      const txt = document.getElementById('inp').value.trim();
+  let __uTipEl = null;
+  function _uTipHide(){
+      if(!__uTipEl) return;
+      try { __uTipEl.remove(); } catch(e) {}
+      __uTipEl = null;
+  }
+
+  function _uTipShow(target, ev){
+      if(!target) return;
+      const txt = String(target.getAttribute('data-u-title') || target.getAttribute('title') || '').trim();
       if(!txt) return;
-      document.getElementById('inp').value = '';
+      _uTipHide();
+      const tip = document.createElement('div');
+      tip.className = 'uncertainty-tooltip';
+      tip.textContent = txt;
+      tip.style.position = 'fixed';
+      tip.style.zIndex = '99999';
+      tip.style.maxWidth = '420px';
+      tip.style.padding = '8px 10px';
+      tip.style.border = '1px solid #93c5fd';
+      tip.style.borderRadius = '8px';
+      tip.style.background = '#eff6ff';
+      tip.style.color = '#1e3a8a';
+      tip.style.fontSize = '12px';
+      tip.style.lineHeight = '1.35';
+      tip.style.boxShadow = '0 6px 16px rgba(0,0,0,0.18)';
+      tip.style.pointerEvents = 'none';
+      document.body.appendChild(tip);
+      __uTipEl = tip;
+      try {
+          const rect = tip.getBoundingClientRect();
+          const vw = window.innerWidth || document.documentElement.clientWidth || 1024;
+          const vh = window.innerHeight || document.documentElement.clientHeight || 768;
+          const cx = (ev && typeof ev.clientX === 'number') ? ev.clientX : Math.round(vw / 2);
+          const cy = (ev && typeof ev.clientY === 'number') ? ev.clientY : Math.round(vh / 2);
+          let left = cx + 12;
+          let top = cy + 12;
+          if(left + rect.width + 8 > vw) left = Math.max(8, vw - rect.width - 8);
+          if(top + rect.height + 8 > vh) top = Math.max(8, cy - rect.height - 12);
+          tip.style.left = left + 'px';
+          tip.style.top = top + 'px';
+      } catch(e) {}
+  }
+
+  document.addEventListener('mousedown', (e)=>{
+      if(typeof e.button === 'number' && e.button !== 0) return;
+      const t = (e.target && e.target.closest)
+          ? e.target.closest('.uncertainty-inline-marker, .signal-dot-marker')
+          : null;
+      if(!t) return;
+      _uTipShow(t, e);
+  });
+  document.addEventListener('mouseup', _uTipHide);
+  document.addEventListener('dragstart', _uTipHide);
+  document.addEventListener('scroll', _uTipHide, true);
+  window.addEventListener('blur', _uTipHide);
+
+  window.__cmdHistory = window.__cmdHistory || {
+      entries: [],
+      index: -1,
+      draft: '',
+      maxEntries: 200
+  };
+
+  function _cmdHistResetBrowse() {
+      const h = window.__cmdHistory;
+      if(!h) return;
+      h.index = -1;
+      h.draft = '';
+  }
+
+  function _cmdHistPush(raw) {
+      const txt = String(raw || '').trim();
+      if(!txt) return;
+      const h = window.__cmdHistory;
+      if(!h) return;
+      const arr = Array.isArray(h.entries) ? h.entries : [];
+      const last = arr.length ? String(arr[arr.length - 1] || '') : '';
+      if(last !== txt) arr.push(txt);
+      const maxN = Math.max(20, parseInt(h.maxEntries || 200, 10) || 200);
+      while(arr.length > maxN) arr.shift();
+      h.entries = arr;
+      _cmdHistResetBrowse();
+  }
+
+  function _cmdHistBrowse(currentValue, step) {
+      const h = window.__cmdHistory;
+      const cur = String(currentValue || '');
+      if(!h || !Array.isArray(h.entries) || !h.entries.length) return cur;
+      const dir = (step < 0) ? -1 : 1;
+      if(parseInt(h.index || -1, 10) < 0){
+          if(dir > 0) return cur;
+          h.draft = cur;
+          h.index = h.entries.length - 1;
+          return String(h.entries[h.index] || '');
+      }
+      let next = parseInt(h.index || -1, 10) + dir;
+      if(next < 0){
+          h.index = -1;
+          return String(h.draft || '');
+      }
+      if(next >= h.entries.length){
+          h.index = -1;
+          return String(h.draft || '');
+      }
+      h.index = next;
+      return String(h.entries[h.index] || '');
+  }
+
+  function _cmdHistApply(step){
+      const inp = document.getElementById('inp');
+      if(!inp) return;
+      inp.value = _cmdHistBrowse(inp.value, step);
+  }
+
+  async function send() {
+      const inp = document.getElementById('inp');
+      const txt = inp.value.trim();
+      if(!txt) return;
+      _cmdHistPush(txt);
+      inp.value = '';
+      _cmdHistResetBrowse();
       addMsg('user', txt);
       const btn = document.getElementById('btn');
       btn.disabled = true;
@@ -4717,14 +5016,29 @@ HTML_CHAT_TEMPLATE = """
           addMsg('bot', '<span style="color:red">Error: '+e+'</span>');
       }
       btn.disabled = false;
-      document.getElementById('inp').focus();
+      inp.focus();
   }
 
   function rate(v) { window.pywebview.api.remote_cmd('CGI Rating: '+v); }
-  function remoteInput(txt) { document.getElementById('inp').value=txt; send(); }
+  function remoteInput(txt) {
+      const inp = document.getElementById('inp');
+      if(!inp) return;
+      inp.value = txt;
+      _cmdHistResetBrowse();
+      send();
+  }
   
   document.getElementById('inp').addEventListener('keydown', (e)=>{
-      if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); send();}
+      if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); send(); return;}
+      if(e.key==='ArrowUp' && !e.shiftKey){e.preventDefault(); _cmdHistApply(-1); return;}
+      if(e.key==='ArrowDown' && !e.shiftKey){e.preventDefault(); _cmdHistApply(1); return;}
+  });
+  document.getElementById('inp').addEventListener('input', ()=>{
+      const h = window.__cmdHistory;
+      if(!h) return;
+      if(parseInt(h.index || -1, 10) >= 0){
+          h.index = -1;
+      }
   });
 
 // --- Panel helpers: allow Python to replay a loaded chat log into the main UI (no model call).
@@ -5200,7 +5514,12 @@ async function run(c) {
   try {
     const r = await _apiCall('panel_action', ['cmd', {text: cmd}], 30000);
     if(r && r.ok === false) {
-      _setStatus('cmd failed: ' + (r.error || 'unknown error'), 'err');
+      const err = String(r.error || 'unknown error');
+      if(err === 'qc_override_modal_blocked'){
+        _setStatus('QC Override Dialog ist offen; Aktion temporär blockiert.', 'info');
+      } else {
+        _setStatus('cmd failed: ' + err, 'err');
+      }
     }
     // Refresh panel UI after commands that change state-dependent labels (e.g., Comm Anchor on/off)
     try { await buildUI(); } catch(e) {}
@@ -5954,6 +6273,7 @@ HTML_QC_OVERRIDE = """
     ['Consistency','consistency'],
     ['Neutrality','neutrality']
   ];
+  let _attached = false;
 
   function readValues(){
     const out = {};
@@ -5985,6 +6305,35 @@ HTML_QC_OVERRIDE = """
     }
   }
 
+  function applyState(st){
+    if(!(st && st.ok)){
+      setStatus('Online, aber qc_get_state fehlgeschlagen.', true);
+      return false;
+    }
+    const prof = st.profile || 'Standard';
+    document.title = 'Temporary QC override – Profile: ' + prof;
+    const h = qs('#title');
+    if(h) h.textContent = 'Temporary QC override – Profile: ' + prof;
+
+    const defaults = st.defaults || {};
+    const ovs = st.overrides || {};
+    const base = {};
+    for(const [label, key] of DIMENSIONS){
+      const d = defaults[key];
+      let v = 2;
+      if(Array.isArray(d) && d.length>=2){
+        v = parseInt(d[1],10);
+      }else if(typeof d === 'number'){
+        v = d;
+      }
+      base[label] = v;
+    }
+    setValues(base);
+    setValues(ovs);
+    setStatus(st.note || 'Online.', false);
+    return true;
+  }
+
   async function callApi(fn, payload){
     if(!window.pywebview || !pywebview.api || !pywebview.api[fn]){
       throw new Error('Bridge not ready: ' + fn);
@@ -5992,41 +6341,24 @@ HTML_QC_OVERRIDE = """
     return await pywebview.api[fn](payload || {});
   }
 
+  async function refreshState(){
+    const st = await callApi('qc_get_state', {});
+    return applyState(st);
+  }
+
   async function boot(){
     setStatus('Offline (bridge not ready). Trying…', false);
-    attach();
+    if(!_attached){
+      attach();
+      _attached = true;
+    }
 
     for(let i=0;i<40;i++){
       try{
         if(window.pywebview && pywebview.api && pywebview.api.ping){
           const pong = await pywebview.api.ping();
           if(pong && pong.ok){
-            const st = await callApi('qc_get_state', {});
-            if(st && st.ok){
-              const prof = st.profile || 'Standard';
-              document.title = 'Temporary QC override – Profile: ' + prof;
-              const h = qs('#title');
-              if(h) h.textContent = 'Temporary QC override – Profile: ' + prof;
-
-              const defaults = st.defaults || {};
-              const ovs = st.overrides || {};
-              const base = {};
-              for(const [label, key] of DIMENSIONS){
-                const d = defaults[key];
-                let v = 2;
-                if(Array.isArray(d) && d.length>=2){
-                  v = parseInt(d[1],10);
-                }else if(typeof d === 'number'){
-                  v = d;
-                }
-                base[label] = v;
-              }
-              setValues(base);
-              setValues(ovs);
-              setStatus(st.note || 'Online.', false);
-            }else{
-              setStatus('Online, aber qc_get_state fehlgeschlagen.', true);
-            }
+            await refreshState();
             return;
           }
         }
@@ -6055,22 +6387,7 @@ HTML_QC_OVERRIDE = """
       const res = await callApi('qc_override_clear', {});
       if(res && res.ok){
         try{
-          const st = await callApi('qc_get_state', {});
-          if(st && st.ok){
-            const defaults = st.defaults || {};
-            const base = {};
-            for(const [label, key] of DIMENSIONS){
-              const d = defaults[key];
-              let v = 2;
-              if(Array.isArray(d) && d.length>=2){
-                v = parseInt(d[1],10);
-              }else if(typeof d === 'number'){
-                v = d;
-              }
-              base[label] = v;
-            }
-            setValues(base);
-          }
+          await refreshState();
         }catch(e){}
         setStatus('Cleared.', false);
       }else{
@@ -6098,7 +6415,7 @@ HTML_QC_OVERRIDE = """
     setValues(vals);
   }
 
-  window.QCUI = { boot, onApply, onClear, onCancel, preset };
+  window.QCUI = { boot, refreshState, onApply, onClear, onCancel, preset };
 })();
 </script>
 </head>
@@ -6445,6 +6762,32 @@ class OutputComplianceValidator:
         if all(p is not None for p in positions):
             if any(positions[i] >= positions[i+1] for i in range(len(positions)-1)):
                 vios.append("SCI Trace steps not in required order.")
+
+        # Require a substantive final-answer body outside the SCI Trace block.
+        # Otherwise a repair pass may satisfy only the trace protocol and still drop the actual answer.
+        try:
+            m_title = re.search(rf"(?im)^\s*{re.escape(block_title)}\s*:?\s*$", text)
+            if m_title and any(p is not None for p in positions):
+                tail = text[m_title.end():]
+                m_boundary = re.search(r"(?im)^\s*(Self-?Debunking\b|QC(?:-Matrix)?\b)", tail)
+                trace_plus_answer = tail[:m_boundary.start()] if m_boundary else tail
+
+                lines = trace_plus_answer.splitlines()
+                last_step_line_idx = -1
+                for idx, line in enumerate(lines):
+                    if any(self._label_regex(s).search(line) for s in steps):
+                        last_step_line_idx = idx
+
+                if last_step_line_idx >= 0:
+                    post_trace_lines = lines[last_step_line_idx + 1:]
+                    post_trace_txt = "\n".join(post_trace_lines)
+                    post_trace_txt = re.sub(r"<[^>]+>", " ", post_trace_txt or "")
+                    post_trace_txt = re.sub(r"(?im)^\s*(?:Final Answer)\s*:?\s*$", "", post_trace_txt)
+                    post_trace_txt = re.sub(r"\s+", " ", post_trace_txt).strip()
+                    if not re.search(r"[A-Za-z0-9ÄÖÜäöüß]", post_trace_txt):
+                        vios.append("Missing substantive final answer content outside SCI Trace.")
+        except Exception:
+            pass
         return vios
 
 
@@ -6740,6 +7083,13 @@ class OutputComplianceValidator:
                 parts.append(f"  - {s}")
             parts.append("- Each step must contain at least one substantive sentence; do NOT output empty step headers.")
             parts.append("- If content must be withheld, keep the step label and write: 'Redacted: <reason>'.")
+            parts.append("- After the SCI Trace, include a substantive final answer body OUTSIDE the SCI Trace (before Self-Debunking/QC).")
+            try:
+                color_on = str(getattr(state, "color", "off") or "off").strip().lower() == "on"
+            except Exception:
+                color_on = False
+            if color_on:
+                parts.append("- Color=on: apply Evidence-Linker tags only in the final answer body (not in SCI Trace / Self-Debunking / QC).")
             try:
                 brev = int((getattr(state, "qc_overrides", {}) or {}).get("brevity", 2))
             except Exception:
@@ -8738,10 +9088,6 @@ class CSCRefiner:
                 raw_for_render = strip_exact_status_header_line(raw_for_render or "", header or "")
             except Exception:
                 pass
-            try:
-                raw_for_render = strip_evidence_tags_from_heading_lines(raw_for_render or "")
-            except Exception:
-                pass
             
             # A: Header voranstellen
             if header:
@@ -8924,6 +9270,13 @@ class CSCRefiner:
 
             try:
                 raw_for_render = unwrap_accidental_full_text_codefence(raw_for_render or "")
+            except Exception:
+                pass
+            try:
+                raw_for_render = strip_pathological_repetition_display_noise(
+                    raw_for_render or "",
+                    lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
+                )
             except Exception:
                 pass
 
@@ -9271,7 +9624,10 @@ class CSCRefiner:
                 f"[OUTPUT LANGUAGE] Final answer and SCI Trace content in {lang_name} ({lang}). "
                 "Keep fixed protocol tokens/step labels unchanged."
             )
-            lines.append("[ANSWER LENGTH] Be slightly more detailed than minimal (+10-20%). Avoid one-liners.")
+            lines.append(
+                "[ANSWER LENGTH] Prefer substantive depth (+20-40% vs minimal). "
+                "Use concrete mechanisms/examples where useful; avoid one-liners."
+            )
 
             # QC overrides (session-local): these should influence BOTH
             # - delta calculation / enforcement (Python side) and
@@ -9313,7 +9669,10 @@ class CSCRefiner:
                     b = clean.get('Brevity')
                     if isinstance(b, int):
                         if b <= 1:
-                            lines[1] = "[ANSWER LENGTH] Be detailed and thorough. Do not compress; include steps/examples when helpful."
+                            lines[1] = (
+                                "[ANSWER LENGTH] Be detailed and thorough. "
+                                "Do not compress; cover key dimensions explicitly and include concrete steps/examples."
+                            )
                         elif b >= 3:
                             lines[1] = "[ANSWER LENGTH] Be concise. Use short sentences; minimize background; prefer bullets."
 
@@ -9378,7 +9737,10 @@ class CSCRefiner:
                     except Exception:
                         sci_now = False
                     if sci_now and isinstance(b, int) and b <= 0:
-                        lines.append("[SCI TRACE DETAIL] Brevity=0 is active: write at least two substantive sentences per SCI Trace step.")
+                        lines.append(
+                            "[SCI TRACE DETAIL] Brevity=0 is active: write at least two substantive sentences per SCI Trace step "
+                            "(ideally three when needed for clarity)."
+                        )
             else:
                 try:
                     _qc_reset_pending = bool(getattr(self, '_qc_override_prompt_reset_pending', False))
@@ -10198,7 +10560,7 @@ class CSCRefiner:
             color = (getattr(getattr(self, 'gov_state', None), 'color', 'off') or 'off').strip().lower()
             if comm and color == 'on':
                 evidence = (
-                    "EVIDENCE-LINKER (MANDATORY WHEN COLOR=ON): In the FINAL ANSWER, tag substantive factual statements "
+                    "EVIDENCE-LINKER (WHEN COLOR=ON): In the FINAL ANSWER, prefix substantive factual statements "
                     "with exactly ONE tag: [GREEN] well-established, [YELLOW] plausible/uncertain, [RED] speculative. "
                     "Prefer one tag per content sentence or bullet statement. "
                     "Do NOT tag pure section headings/list headers, SCI Trace, Self-Debunking, or QC-Matrix."
@@ -10520,6 +10882,39 @@ class CSCRefiner:
                         'preview': _safe_preview_text(raw_txt, 160),
                     },
                 )
+            except Exception:
+                pass
+
+            # QC-Override modal gate for Main input:
+            # while the dialog is open, Main input must remain locked.
+            try:
+                if self._is_qc_override_modal_active():
+                    _raw = str(raw_txt or '').strip()
+                    if _raw == "QC Override":
+                        self._bring_qc_override_to_front()
+                        msg = (
+                            "<div class='sys'>QC Override ist bereits geöffnet.</div>"
+                            if str(self._lang() or "de").lower() != "en"
+                            else "<div class='sys'>QC Override is already open.</div>"
+                        )
+                        try:
+                            self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
+                            self.history.append({"role": "bot", "content": msg, "ts": datetime.now().isoformat(), "csc": None})
+                        except Exception:
+                            pass
+                        return {"html": msg, "csc": None}
+                    self._bring_qc_override_to_front()
+                    try:
+                        self.log_event('qc_override_modal_block', {'source': 'ask', 'preview': _safe_preview_text(raw_txt, 80)})
+                    except Exception:
+                        pass
+                    _blocked_html = self._qc_override_modal_block_html()
+                    try:
+                        self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
+                        self.history.append({"role": "bot", "content": _blocked_html, "ts": datetime.now().isoformat(), "csc": None})
+                    except Exception:
+                        pass
+                    return {"html": _blocked_html, "csc": None}
             except Exception:
                 pass
 
@@ -11169,6 +11564,10 @@ class CSCRefiner:
                     final_work = crossv_html + final_work
             except Exception:
                 pass
+            try:
+                final_work = self._append_uncertainty_explanation_if_needed(final_work, user_text=raw_txt)
+            except Exception:
+                pass
             self.history.append({"role": "bot", "content": final_work, "ts": datetime.now().isoformat(), "csc": meta})
 
             # Use the repaired/enforced text for rendering.
@@ -11334,6 +11733,16 @@ class CSCRefiner:
             return {'ok': False, 'error': 'no_main_win'}
         try:
             cmd_s = str(cmd or '')
+            if self._is_qc_override_modal_active():
+                if cmd_s.strip() == "QC Override":
+                    self._bring_qc_override_to_front()
+                    return {'ok': True, 'already_open': True}
+                self._bring_qc_override_to_front()
+                try:
+                    self.log_event('qc_override_modal_block', {'source': 'remote_cmd', 'cmd': cmd_s})
+                except Exception:
+                    pass
+                return {'ok': False, 'error': 'qc_override_modal_blocked'}
             return {'ok': bool(self._ui_remote_input(cmd_s))}
         except Exception as e:
             return {'ok': False, 'error': str(e)}
@@ -11458,6 +11867,116 @@ class CSCRefiner:
         except Exception:
             return False
 
+    def _is_qc_override_modal_active(self) -> bool:
+        try:
+            return bool(getattr(self, "_qc_override_open", False))
+        except Exception:
+            return False
+
+    def _bring_qc_override_to_front(self) -> bool:
+        try:
+            win = getattr(self, "qc_win", None)
+            if win is None:
+                return False
+            used = False
+            for _meth in ("show", "restore", "bring_to_front", "focus"):
+                try:
+                    if hasattr(win, _meth):
+                        getattr(win, _meth)()
+                        used = True
+                except Exception:
+                    pass
+            return bool(used)
+        except Exception:
+            return False
+
+    def _qc_override_modal_block_html(self) -> str:
+        try:
+            lang = str(self._lang() or "de").strip().lower()
+        except Exception:
+            lang = "de"
+        if lang == "en":
+            msg = (
+                "QC Override is open. Please finish with Apply, Clear Overrides, or Cancel "
+                "before using Main or Panel actions."
+            )
+        else:
+            msg = (
+                "QC Override ist geöffnet. Bitte zuerst mit Apply, Clear Overrides oder Cancel beenden, "
+                "bevor Main- oder Panel-Aktionen genutzt werden."
+            )
+        return _control_layer_alert_html(msg, title="QC Override aktiv", severity="warn")
+
+    def _answer_lang(self) -> str:
+        """Return answer language (de/en), independent of UI language."""
+        try:
+            lang = str(getattr(getattr(self, "gov_state", None), "answer_language", "") or "").strip().lower()
+        except Exception:
+            lang = ""
+        if not lang:
+            try:
+                cfg = getattr(self, "cfg_mgr", None) or globals().get("cfg")
+                lang = str(getattr(cfg, "get_answer_language", lambda: "de")() or "").strip().lower()
+            except Exception:
+                lang = ""
+        if lang.startswith("de"):
+            return "de"
+        if lang.startswith("en"):
+            return "en"
+        try:
+            ui_lang = str(self._lang() or "de").strip().lower()
+        except Exception:
+            ui_lang = "de"
+        return "de" if ui_lang.startswith("de") else "en"
+
+    def _append_uncertainty_explanation_if_needed(self, html_text: str, user_text: str = "") -> str:
+        txt = str(html_text or "")
+        if not txt:
+            return txt
+        lang = self._answer_lang()
+        out = txt
+        color_on = False
+        try:
+            color_on = (
+                bool(getattr(getattr(self, "gov_state", None), "comm_active", False))
+                and str(getattr(getattr(self, "gov_state", None), "color", "off") or "off").strip().lower() == "on"
+            )
+        except Exception:
+            color_on = False
+        try:
+            if _uncertainty_codes_mod is not None and hasattr(_uncertainty_codes_mod, "ensure_uncertainty_annotations_html"):
+                out = _uncertainty_codes_mod.ensure_uncertainty_annotations_html(
+                    txt,
+                    lang=lang,
+                    user_text=str(user_text or ""),
+                )
+            elif _uncertainty_codes_mod is not None and hasattr(_uncertainty_codes_mod, "append_uncertainty_legend_html"):
+                out = _uncertainty_codes_mod.append_uncertainty_legend_html(txt, lang=lang)
+        except Exception:
+            out = txt
+        try:
+            out = annotate_signal_dot_tooltips_html(out, lang=lang)
+        except Exception:
+            pass
+        if color_on:
+            try:
+                out = inject_fallback_signal_dots_html(out, lang=lang)
+            except Exception:
+                pass
+        try:
+            out = strip_signal_dots_from_heading_only_blocks_html(out)
+        except Exception:
+            pass
+        try:
+            out = re.sub(
+                r"(?is)<details\b[^>]*class=(?:\"|')[^\"']*\buncertainty-legend\b[^\"']*(?:\"|')[^>]*>.*?</details>\s*",
+                "",
+                str(out or ""),
+            )
+        except Exception:
+            pass
+        return out
+
     def ping(self, _payload=None):
         """Panel health check."""
         try:
@@ -11492,6 +12011,28 @@ class CSCRefiner:
 
         def _err(message: str):
             return {'ok': False, 'action': action_s, 'result': None, 'error': str(message or 'error')}
+
+        # QC-Override modal gate: while dialog is open, block Main/Panel actions except QC actions.
+        if self._is_qc_override_modal_active():
+            _allowed_modal_actions = {
+                'qc_override_apply',
+                'qc_override_clear',
+                'qc_override_cancel',
+                'panel_bootstrap_selftest',
+            }
+            if action_s not in _allowed_modal_actions:
+                try:
+                    self._bring_qc_override_to_front()
+                except Exception:
+                    pass
+                try:
+                    self.log_event(
+                        'qc_override_modal_block',
+                        {'source': 'panel_action', 'action': action_s},
+                    )
+                except Exception:
+                    pass
+                return _err("qc_override_modal_blocked")
 
         # Strict Comm-off panel gate: block rule-workflow actions even if stale/hidden UI calls still fire.
         try:
@@ -11710,8 +12251,17 @@ class CSCRefiner:
         except Exception:
             return False
 
+    def _manual_test_monitor_apply_seam_state_plan(self, plan) -> dict:
+        self.manual_test_monitor_state = (plan or {}).get('state')
+        _js_code = (plan or {}).get('js_code')
+        if _js_code:
+            try:
+                self._manual_test_monitor_eval(str(_js_code))
+            except Exception:
+                pass
+        return {'ok': True}
+
     def manual_test_monitor_show(self, payload=None):
-        payload = payload or {}
         try:
             def _ensure_window():
                 _win = getattr(self, 'manual_test_monitor_win', None)
@@ -11725,13 +12275,11 @@ class CSCRefiner:
                 return {'ok': False, 'error': 'manual_test_monitor_win unavailable'}
 
             show_ok = False
-            show_err = None
             try:
                 if hasattr(win, 'show'):
                     win.show()
                 show_ok = True
             except Exception as e:
-                show_err = e
                 show_ok = False
 
             if not show_ok:
@@ -11784,60 +12332,42 @@ class CSCRefiner:
     def manual_test_monitor_reset(self, payload=None):
         payload = payload or {}
         try:
-            st = getattr(self, 'manual_test_monitor_state', None)
-            if not isinstance(st, dict):
-                self.manual_test_monitor_state = {}
-                st = self.manual_test_monitor_state
-            st['scenario'] = str(payload.get('scenario', '') or '')
-            st['status'] = str(payload.get('status', 'running') or 'running')
-            st['summary'] = payload.get('summary', '-')
-            st['events'] = []
-            try:
-                import json as _json
-                self._manual_test_monitor_eval(f"mtmReplace({_json.dumps(st, ensure_ascii=False)});")
-            except Exception:
-                pass
-            return {'ok': True}
+            if _manual_test_monitor_seam_mod is None:
+                return {'ok': False, 'error': 'manual_test_monitor_seam unavailable'}
+            return self._manual_test_monitor_apply_seam_state_plan(
+                _manual_test_monitor_seam_mod.manual_test_monitor_reset_state_plan(
+                    state=getattr(self, 'manual_test_monitor_state', None),
+                    payload=payload,
+                )
+            )
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
     def manual_test_monitor_append(self, entry):
         try:
-            e = entry if isinstance(entry, dict) else {'message': str(entry)}
-            st = getattr(self, 'manual_test_monitor_state', None)
-            if not isinstance(st, dict):
-                self.manual_test_monitor_state = {'events': []}
-                st = self.manual_test_monitor_state
-            if not isinstance(st.get('events'), list):
-                st['events'] = []
-            st['events'].append(dict(e))
-            if len(st['events']) > 1000:
-                st['events'] = st['events'][-1000:]
-            try:
-                import json as _json
-                self._manual_test_monitor_eval(f"mtmAppend({_json.dumps(e, ensure_ascii=False)});")
-            except Exception:
-                pass
-            return {'ok': True}
+            if _manual_test_monitor_seam_mod is None:
+                return {'ok': False, 'error': 'manual_test_monitor_seam unavailable'}
+            return self._manual_test_monitor_apply_seam_state_plan(
+                _manual_test_monitor_seam_mod.manual_test_monitor_append_state_plan(
+                    state=getattr(self, 'manual_test_monitor_state', None),
+                    entry=entry,
+                    max_events=1000,
+                )
+            )
         except Exception as ex:
             return {'ok': False, 'error': f"{type(ex).__name__}: {ex}"}
 
     def manual_test_monitor_set_header(self, payload=None):
         payload = payload or {}
         try:
-            st = getattr(self, 'manual_test_monitor_state', None)
-            if not isinstance(st, dict):
-                self.manual_test_monitor_state = {}
-                st = self.manual_test_monitor_state
-            for k in ('scenario', 'status', 'summary'):
-                if k in payload:
-                    st[k] = payload.get(k)
-            try:
-                import json as _json
-                self._manual_test_monitor_eval(f"mtmSetHeader({_json.dumps({'scenario': st.get('scenario',''), 'status': st.get('status',''), 'summary': st.get('summary','-')}, ensure_ascii=False)});")
-            except Exception:
-                pass
-            return {'ok': True}
+            if _manual_test_monitor_seam_mod is None:
+                return {'ok': False, 'error': 'manual_test_monitor_seam unavailable'}
+            return self._manual_test_monitor_apply_seam_state_plan(
+                _manual_test_monitor_seam_mod.manual_test_monitor_set_header_state_plan(
+                    state=getattr(self, 'manual_test_monitor_state', None),
+                    payload=payload,
+                )
+            )
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
@@ -11855,13 +12385,38 @@ class CSCRefiner:
           (comm/profiles/sci/overlays/tools/logs) from gov.get_ui_data().
         - Provide a cheap local listing of chat logs for the loader UI.
         """
-        data = {
+        if _panel_ui_snapshot_seam_mod is not None:
+            try:
+                gov_obj = getattr(self, 'gov', None) or globals().get('gov')
+                return _panel_ui_snapshot_seam_mod.panel_ui_build_snapshot(
+                    provider_router=getattr(self, 'provider_router', None),
+                    cfg_obj=globals().get('cfg'),
+                    get_available_models_fn=getattr(self, 'get_available_models', None),
+                    gov_state=getattr(self, 'gov_state', None),
+                    panel_state_snapshot_ctor=_PanelStateSnapshot,
+                    panel_normalize_ui_fn=_panel_normalize_ui,
+                    gov_obj=gov_obj,
+                    list_chat_logs_fn=getattr(self, 'list_chat_logs', None),
+                    chat_log_limit=200,
+                )
+            except Exception:
+                pass
+
+        # Fail-open fallback if the seam module is unavailable or failed.
+        if _panel_ui_snapshot_seam_mod is not None:
+            try:
+                return _panel_ui_snapshot_seam_mod.panel_ui_failopen_snapshot(
+                    gov_state=getattr(self, 'gov_state', None),
+                )
+            except Exception:
+                pass
+        return {
             'providers': ['gemini', 'openrouter', 'huggingface'],
             'current_provider': 'gemini',
             'current_model': 'gemini-2.0-flash',
             'available_models': ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-pro'],
             'answer_language': 'de',
-            'comm': [],
+            'comm': [{'name': 'Comm Start', 'cmd': 'Comm Start', 'desc': 'Start Comm Control Layer'}],
             'profiles': [],
             'sci': [],
             'overlays': [],
@@ -11869,196 +12424,12 @@ class CSCRefiner:
             'logs': [],
             'chat_logs': [],
             'model_hint': '',
+            'comm_active': False,
+            'manual_test_visible': False,
+            'qc_override_visible': False,
+            'provider': 'gemini',
+            'model': 'gemini-2.0-flash',
         }
-
-        # Provider
-        try:
-            pr = getattr(self, 'provider_router', None)
-            if pr is not None and hasattr(pr, 'get_active_provider'):
-                cp = (pr.get_active_provider() or 'gemini').strip().lower()
-            else:
-                cp = 'gemini'
-            if cp:
-                data['current_provider'] = cp
-        except Exception:
-            pass
-
-        # Model
-        try:
-            cfg_obj = globals().get('cfg')
-            if cfg_obj is not None and hasattr(cfg_obj, 'get_provider_model'):
-                cm = (cfg_obj.get_provider_model(data['current_provider']) or '').strip()
-                if cm:
-                    data['current_model'] = cm
-        except Exception:
-            pass
-
-        # Model lists (offline-fast): use in-memory caches warmed from disk; no network here.
-        try:
-            curp = data.get('current_provider', 'gemini')
-            if curp in ('gemini', 'openrouter', 'huggingface'):
-                data['available_models'] = self.get_available_models(curp)
-        except Exception:
-            pass
-
-        # Answer language
-        try:
-            cfg_obj = globals().get('cfg')
-            if cfg_obj is not None and hasattr(cfg_obj, 'get_answer_language'):
-                al = (cfg_obj.get_answer_language() or 'de').strip().lower()
-                if al in ('de', 'en'):
-                    data['answer_language'] = al
-        except Exception:
-            pass
-
-        # Merge richer command/button schema when governance runtime is available
-        try:
-            gov_obj = getattr(self, 'gov', None) or globals().get('gov')
-            if gov_obj is not None and hasattr(gov_obj, 'get_ui_data'):
-                ui = gov_obj.get_ui_data() or {}
-                if isinstance(ui, dict):
-                    for k in ('comm', 'profiles', 'sci', 'overlays', 'tools', 'logs'):
-                        v = ui.get(k)
-                        if isinstance(v, list):
-                            data[k] = v
-                    # Optional keys (best-effort)
-                    for k in ('current_rule_file', 'version', 'loaded'):
-                        if k in ui:
-                            data[k] = ui.get(k)
-                    if isinstance(ui.get('answer_language'), str):
-                        data['answer_language'] = ui.get('answer_language')
-        except Exception:
-            pass
-
-        
-        # Panel UX: replace "Comm Anchor off/on" pair with a single state-dependent toggle button.
-        # (The actual commands still exist and remain accepted via input / programmatic calls.)
-        try:
-            comm = data.get('comm')
-            if isinstance(comm, list) and comm:
-                # Detect canonical anchor toggle commands from the loaded ruleset
-                tok_off = "Comm Anchor off"
-                tok_on = "Comm Anchor on"
-                if (tok_off in comm) and (tok_on in comm):
-                    try:
-                        anchor_auto = bool(getattr(self.gov_state, "anchor_auto", True))
-                    except Exception:
-                        anchor_auto = True
-
-                    # Keep position deterministic: insert at the first occurrence of either token
-                    try:
-                        i_off = comm.index(tok_off)
-                    except Exception:
-                        i_off = 10**9
-                    try:
-                        i_on = comm.index(tok_on)
-                    except Exception:
-                        i_on = 10**9
-                    ins = min(i_off, i_on) if min(i_off, i_on) != 10**9 else len(comm)
-
-                    # Remove both tokens (all occurrences), then insert a single object button
-                    comm2 = [c for c in comm if c not in (tok_off, tok_on)]
-                    btn = {
-                        "name": (tok_off if anchor_auto else tok_on),
-                        "cmd": (tok_off if anchor_auto else tok_on),
-                        "desc": ("Disable Anchor auto snapshots" if anchor_auto else "Enable Anchor auto snapshots")
-                    }
-                    # clamp insert index after removals
-                    if ins < 0: ins = 0
-                    if ins > len(comm2): ins = len(comm2)
-                    comm2.insert(ins, btn)
-                    data['comm'] = comm2
-        except Exception:
-            pass
-
-
-        # Panel UX (Phase 1): derive toggle UI from a pure state snapshot.
-        try:
-            gs = getattr(self, 'gov_state', None)
-            state_snapshot = _PanelStateSnapshot(
-                comm_active=bool(getattr(gs, 'comm_active', False)),
-                sci_on=bool(getattr(gs, 'sci_pending', False) or getattr(gs, 'sci_active', False)),
-                overlay=str(getattr(gs, 'overlay', '') or '').strip().lower(),
-                color_on=((getattr(gs, 'color', 'on') or 'on') == 'on'),
-            )
-        except Exception:
-            state_snapshot = None
-
-        def _toggle_btn(label_prefix: str, is_on: bool, cmd_on: str, cmd_off: str, desc_on: str, desc_off: str):
-            if is_on:
-                return {"name": f"{label_prefix}: OFF", "cmd": cmd_off, "desc": desc_off}
-            return {"name": f"{label_prefix}: ON", "cmd": cmd_on, "desc": desc_on}
-
-        try:
-            if _panel_normalize_ui is not None and state_snapshot is not None:
-                data = _panel_normalize_ui(data, state_snapshot)
-            else:
-                # Fail-soft fallback if the pure UI module is unavailable.
-                comm_active = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
-                comm = data.get('comm')
-                if isinstance(comm, list) and ("Comm Start" in comm) and ("Comm Stop" in comm):
-                    comm2 = [c for c in comm if c not in ("Comm Start", "Comm Stop")]
-                    comm2.insert(0, _toggle_btn("Comm ⏻", comm_active, "Comm Start", "Comm Stop", "Start Comm Control Layer", "Stop Comm Control Layer"))
-                    data['comm'] = comm2
-        except Exception:
-            pass
-
-        # Comm-off UI gating (strict): hide all rule-workflow widgets except Comm Start.
-        try:
-            comm_active_ui = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
-            data['comm_active'] = comm_active_ui
-            data['manual_test_visible'] = comm_active_ui
-            data['qc_override_visible'] = comm_active_ui
-            if not comm_active_ui:
-                def _cmd_name(_item):
-                    try:
-                        if isinstance(_item, dict):
-                            return str(_item.get('cmd') or _item.get('name') or '').strip()
-                        return str(_item or '').strip()
-                    except Exception:
-                        return ''
-                comm_items = data.get('comm') if isinstance(data.get('comm'), list) else []
-                kept = [it for it in comm_items if _cmd_name(it) == 'Comm Start']
-                if not kept:
-                    kept = [{
-                        'name': 'Comm Start',
-                        'cmd': 'Comm Start',
-                        'desc': 'Start Comm Control Layer',
-                    }]
-                else:
-                    # Avoid misleading labels like "Comm ⏻: ON" while Comm is off.
-                    _fixed = []
-                    for _it in kept:
-                        if isinstance(_it, dict):
-                            _cp = dict(_it)
-                            _cp['name'] = 'Comm Start'
-                            _cp['cmd'] = 'Comm Start'
-                            _fixed.append(_cp)
-                        else:
-                            _fixed.append({'name': 'Comm Start', 'cmd': 'Comm Start'})
-                    kept = _fixed
-                data['comm'] = kept
-                for _k in ('profiles', 'sci', 'overlays', 'tools', 'logs'):
-                    data[_k] = []
-        except Exception:
-            pass
-
-# Local chat log listing (for loader UI)
-        try:
-            res = self.list_chat_logs(limit=200)
-            if isinstance(res, dict) and res.get('ok') is True:
-                logs = res.get('logs')
-                if isinstance(logs, list):
-                    data['chat_logs'] = logs
-                    if logs:
-                        data['chat_log_selected'] = logs[0]
-        except Exception:
-            pass
-
-        # Backward-compat aliases for older Panel JS builds
-        data['provider'] = data.get('current_provider', 'gemini')
-        data['model'] = data.get('current_model', 'gemini-2.0-flash')
-        return data
 
     def _warm_model_caches_from_disk(self):
         """Load cached provider model lists from disk into memory. No network."""
@@ -13065,6 +13436,10 @@ class CSCRefiner:
                     if isinstance(_show_plan, dict)
                     else "qc_win unavailable"
                 )
+                try:
+                    self._qc_override_open = False
+                except Exception:
+                    pass
                 return {'ok': False, 'error': _err}
             _methods = (
                 tuple(_show_plan.get("window_methods") or ())
@@ -13077,13 +13452,33 @@ class CSCRefiner:
                         getattr(win, _meth)()
                 except Exception:
                     pass
+            # Re-sync dialog sliders/title on every show (profile switch resets overrides, but hidden dialog UI may be stale).
+            try:
+                if hasattr(win, 'evaluate_js'):
+                    win.evaluate_js(
+                        "(function(){try{"
+                        "if(window.QCUI && typeof window.QCUI.refreshState==='function'){window.QCUI.refreshState();return 'ok';}"
+                        "if(window.QCUI && typeof window.QCUI.boot==='function'){window.QCUI.boot();return 'boot';}"
+                        "return 'noop';"
+                        "}catch(e){return 'err';}})();"
+                    )
+            except Exception:
+                pass
             _ok = (
                 _show_plan.get("success_result")
                 if isinstance(_show_plan, dict) and isinstance(_show_plan.get("success_result"), dict)
                 else {'ok': True}
             )
+            try:
+                self._qc_override_open = bool(dict(_ok).get("ok", True))
+            except Exception:
+                self._qc_override_open = True
             return dict(_ok)
         except Exception as e:
+            try:
+                self._qc_override_open = False
+            except Exception:
+                pass
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
     def qc_get_state(self, _payload=None):
@@ -13206,6 +13601,11 @@ class CSCRefiner:
                             getattr(_win, _meth)()
                         except Exception:
                             pass
+                if "hide" in _methods:
+                    try:
+                        self._qc_override_open = False
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -13294,6 +13694,11 @@ class CSCRefiner:
                             getattr(_win, _meth)()
                         except Exception:
                             pass
+                if "hide" in _methods:
+                    try:
+                        self._qc_override_open = False
+                    except Exception:
+                        pass
             except Exception:
                 pass
             _ok = (
@@ -13326,6 +13731,11 @@ class CSCRefiner:
                 for _meth in _methods:
                     if _win is not None and hasattr(_win, _meth):
                         getattr(_win, _meth)()
+                if "hide" in _methods:
+                    try:
+                        self._qc_override_open = False
+                    except Exception:
+                        pass
             except Exception:
                 pass
             _ok = (
@@ -13336,42 +13746,6 @@ class CSCRefiner:
             return dict(_ok)
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
-
-        def _safe_int(v, default):
-            try:
-                return int(v)
-            except Exception:
-                return int(default)
-        panel_x = _safe_int(geom.get('x', 1100), 1100)
-        panel_y = _safe_int(geom.get('y', 0), 0)
-        panel_w = _safe_int(geom.get('width', 340), 340)
-        panel_h = _safe_int(geom.get('height', 1000), 1000)
-
-        # macOS/pywebview: a persisted off-screen position makes the panel look 'missing'.
-        # Keep values in a sane corridor; otherwise reset to defaults near top-left.
-        if panel_w < 250: panel_w = 250
-        if panel_h < 300: panel_h = 300
-        if panel_x < 0 or panel_x > 5000: panel_x = 50
-        if panel_y < 0 or panel_y > 3000: panel_y = 50
-
-        # Panel window must receive the same js_api object as the main window.
-        # (Secondary windows can otherwise miss methods like get_ui/ping on some backends.)
-        kwargs = dict(
-            title=PANEL_WINDOW_TITLE,
-            html=HTML_PANEL,
-            js_api=(self.panel_bridge or self),
-            width=panel_w,
-            height=panel_h,
-            on_top=False
-        )
-
-        # Only set x/y if we have something sensible
-        if panel_x is not None and panel_y is not None:
-            kwargs.update(dict(x=panel_x, y=panel_y))
-
-        self.panel_win = webview.create_window(**kwargs)
-        self.panel_hidden = False
-        self._bind_panel_window_events(self.panel_win)
 
     def _rebuild_panel(self, reason: str = "reload"):
         """Robust panel rebuild.
@@ -13531,12 +13905,33 @@ class CSCRefiner:
         self.panel_win = None
         self.panel_hidden = False
 
-    def _show_panel(self):
+    def _focus_main_window(self, *, skip_if_qc_override: bool = True):
+        """Best-effort main-window activation for panel toggle UX."""
+        try:
+            if skip_if_qc_override and bool(getattr(self, "_qc_override_open", False)):
+                return False
+            win = getattr(self, "main_win", None)
+            if win is None:
+                return False
+            used = False
+            for _meth in ("restore", "bring_to_front", "focus"):
+                try:
+                    if hasattr(win, _meth):
+                        getattr(win, _meth)()
+                        used = True
+                except Exception:
+                    pass
+            return bool(used)
+        except Exception:
+            return False
+
+    def _show_panel(self, *, activate_panel: bool = True, return_focus_to_main: bool = False):
         _show_plan = None
         try:
             if _panel_lifecycle_seam_mod is not None:
                 _show_plan = _panel_lifecycle_seam_mod.panel_show_plan(
                     panel_window_exists=(getattr(self, "panel_win", None) is not None),
+                    activate_panel=bool(activate_panel),
                 )
         except Exception:
             _show_plan = None
@@ -13561,6 +13956,11 @@ class CSCRefiner:
                 pass
             if _show_plan.get("panel_hidden") is not None:
                 self.panel_hidden = bool(_show_plan.get("panel_hidden"))
+            if return_focus_to_main:
+                try:
+                    self._focus_main_window(skip_if_qc_override=True)
+                except Exception:
+                    pass
             return
 
         if not self.panel_win:
@@ -13577,11 +13977,16 @@ class CSCRefiner:
                 self.panel_win.show()
             if hasattr(self.panel_win, "restore"):
                 self.panel_win.restore()
-            if hasattr(self.panel_win, "focus"):
+            if bool(activate_panel) and hasattr(self.panel_win, "focus"):
                 self.panel_win.focus()
         except Exception:
             pass
         self.panel_hidden = False
+        if return_focus_to_main:
+            try:
+                self._focus_main_window(skip_if_qc_override=True)
+            except Exception:
+                pass
 
     def ensure_panel_visible(self):
         """Called from JS once the main UI is ready: show the panel automatically."""
@@ -13640,23 +14045,23 @@ class CSCRefiner:
                 )
         except Exception:
             _plan = None
-        if isinstance(_plan, dict):
-            _action = str(_plan.get("action") or "")
-            if _action == "create_panel":
-                self._create_panel()
-                return
-            if _action == "show_panel":
-                self._show_panel()
-                return
-            if _action == "hide_panel":
-                self._hide_panel()
-                return
+            if isinstance(_plan, dict):
+                _action = str(_plan.get("action") or "")
+                if _action == "create_panel":
+                    self._create_panel()
+                    return
+                if _action == "show_panel":
+                    self._show_panel(activate_panel=False, return_focus_to_main=True)
+                    return
+                if _action == "hide_panel":
+                    self._hide_panel()
+                    return
         if not self.panel_win:
             self._create_panel()
             return
         # If currently hidden/minimized -> show; else hide
         if self.panel_hidden:
-            self._show_panel()
+            self._show_panel(activate_panel=False, return_focus_to_main=True)
         else:
             self._hide_panel()
 
@@ -14294,6 +14699,16 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
             return {'ok': False, 'error': 'no_main_win'}
         try:
             cmd_s = str(cmd or '')
+            if self._is_qc_override_modal_active():
+                if cmd_s.strip() == "QC Override":
+                    self._bring_qc_override_to_front()
+                    return {'ok': True, 'already_open': True}
+                self._bring_qc_override_to_front()
+                try:
+                    self.log_event('qc_override_modal_block', {'source': 'remote_cmd', 'cmd': cmd_s})
+                except Exception:
+                    pass
+                return {'ok': False, 'error': 'qc_override_modal_blocked'}
             return {'ok': bool(self._ui_remote_input(cmd_s))}
         except Exception as e:
             return {'ok': False, 'error': str(e)}
@@ -14836,147 +15251,6 @@ def _openrouter_friendly_http_error(
     except Exception:
         reset_str = None
         reset_in_str = None
-
-
-
-    def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
-        """Rebuild main chat UI from self.history without calling the model.
-
-        Primary path uses the built-in JS helper window.resetChatFromHistory(history, statusMsg).
-        If that is unavailable or fails (e.g. very large payloads), falls back to a safe
-        incremental replay (reset status + addMsg per message) to avoid a hung UI.
-        """
-        try:
-            win = getattr(self, 'main_win', None)
-            if not win:
-                return
-            hist = getattr(self, 'history', None)
-            if not isinstance(hist, list):
-                hist = []
-
-            ui_hist = []
-            for msg in hist:
-                if not isinstance(msg, dict):
-                    continue
-                role = (msg.get('role', '') or '').strip().lower()
-                content = msg.get('content', '') if 'content' in msg else msg.get('text', '')
-                if content is None:
-                    content = ''
-                # normalize roles for UI
-                if role == 'assistant':
-                    role = 'bot'
-                elif role == 'system':
-                    role = 'sys'
-                elif role not in ('user', 'bot', 'sys'):
-                    role = 'user'
-
-                if role == 'bot':
-
-                    # If the loaded history contains a legacy plaintext 'Comm Config' dump (very large JSON),
-                    # re-render it deterministically as collapsible HTML to keep the UI readable and within margins.
-                    try:
-                        _c = str(content)
-                        if 'Loaded rules file:' in _c and ('QC-Matrix:' in _c or 'QC Matrix:' in _c):
-                            # Heuristic: first line looks like "<sys> v<ver> · Loaded rules file: <file>"
-                            _lines = _c.splitlines()
-                            if _lines and 'Loaded rules file:' in _lines[0]:
-                                # Find JSON start (first line that starts with '{' or '[' after header)
-                                _json_i = None
-                                for _i in range(1, len(_lines)):
-                                    _ls = _lines[_i].lstrip()
-                                    if _ls.startswith('{') or _ls.startswith('['):
-                                        _json_i = _i
-                                        break
-                                # Find QC footer line near the end
-                                _qc_i = None
-                                for _i in range(len(_lines)-1, -1, -1):
-                                    _s = _lines[_i].strip()
-                                    if _s.startswith('QC-Matrix:') or _s.startswith('QC Matrix:'):
-                                        _qc_i = _i
-                                        break
-                                if _json_i is not None:
-                                    _status = _lines[0].strip()
-                                    _qc = _lines[_qc_i].strip() if _qc_i is not None else ''
-                                    _json_end = _qc_i if (_qc_i is not None and _qc_i > _json_i) else len(_lines)
-                                    _raw_json = "\n".join(_lines[_json_i:_json_end]).strip()
-                                    # Render (language-aware summary)
-                                    _ui_lang = self._lang()
-                                    _summary = 'Raw JSON anzeigen' if _ui_lang == 'de' else 'Show raw JSON'
-                                    _minor = (
-                                        'Read-only view of the full governance configuration (deterministic from JSON, no LLM).'
-                                        if _ui_lang != 'de'
-                                        else 'Nur-Lese-Ansicht der vollständigen Governance-Konfiguration (deterministisch aus JSON, ohne LLM).'
-                                    )
-                                    content = (
-                                        '<div class="comm-help comm-config">'
-                                        f'<div class="help-status">{html.escape(_status)}</div>'
-                                        f'<div class="minor">{html.escape(_minor)}</div>'
-                                        '<details class="config-details">'
-                                        f'<summary>{html.escape(_summary)}</summary>'
-                                        f'<pre class="raw-json">{html.escape(_raw_json)}</pre>'
-                                        '</details>'
-                                        + (f"<div style='margin-top:10px'>{html.escape(_qc)}</div>" if _qc else '')
-                                        + '</div>'
-                                    )
-                    except Exception:
-                        pass
-                    try:
-                        _c = str(content)
-                        if _c.lstrip().startswith('<'):
-                            _h = sanitize_html(_c)
-                        else:
-                            import markdown as _markdown
-                            _h = _markdown.markdown(_c, extensions=['extra', 'codehilite'])
-                            _h = sanitize_html(_h)
-                    except Exception:
-                        _h = sanitize_html(html.escape(str(content)))
-                    ui_hist.append({'role': 'bot', 'html': _h})
-                else:
-                    ui_hist.append({'role': role, 'content': str(content)})
-
-            payload = json.dumps(ui_hist, ensure_ascii=False)
-            sm = json.dumps(str(status_msg or "Loaded chat log."), ensure_ascii=False)
-
-            # Attempt bulk helper call and get a success marker back.
-            try:
-                js = (
-                    "(function(){try{"
-                    "if(window.resetChatFromHistory){window.resetChatFromHistory(%s,%s); return 'OK';}"
-                    "return 'NOFUNC';"
-                    "}catch(e){return 'ERR:'+String(e);}})()"
-                ) % (payload, sm)
-                res = win.evaluate_js(js)
-                if isinstance(res, str) and res == 'OK':
-                    return
-            except Exception:
-                pass
-
-            # Fallback: incremental replay (small JS snippets, robust for huge logs)
-            try:
-                win.evaluate_js(f"resetChatToStatus({sm});")
-            except Exception:
-                # If even reset fails, don't crash the app.
-                return
-
-            for m in ui_hist:
-                try:
-                    r = (m.get('role') or 'user')
-                    if r == 'bot':
-                        h = m.get('html', '')
-                        h_js = json.dumps(str(h), ensure_ascii=False)
-                        win.evaluate_js(f"addMsg('bot', {h_js}, false, null);")
-                    else:
-                        c = m.get('content', '')
-                        c_js = json.dumps(html.escape(str(c)), ensure_ascii=False)
-                        rr = 'sys' if r == 'sys' else 'user'
-                        win.evaluate_js(f"addMsg('{rr}', {c_js});")
-                except Exception:
-                    # Keep going; best-effort replay.
-                    continue
-        except Exception:
-            pass
-
-
     def _fmt_quota():
         parts = []
         if lim is not None and rem is not None:
@@ -16419,6 +16693,7 @@ class Api(CSCRefiner):
         self.main_win = None
         self.panel_win = None
         self.panel_hidden = False
+        self._qc_override_open = False
         self._qc_override_prompt_reset_pending = False
 
         # Panel API bridge (small surface to avoid pywebview method enumeration issues)
@@ -16786,50 +17061,34 @@ else:
             return self._api.panel_action(action, payload)
 
 
-class MainBridge:
-    """Slim JS-API bridge for the main chat window.
+if _MainBridge is not None:
+    MainBridge = _MainBridge
+else:
+    class MainBridge:
+        """Slim JS-API bridge for the main chat window (fallback local implementation)."""
 
-    Purpose:
-    - Expose only methods used by HTML_CHAT.
-    - Avoid pywebview scanning the full Api object graph (which can include
-      unsupported callables from third-party clients).
-    """
+        def __init__(self, api):
+            self._api = api
 
-    def __init__(self, api):
-        self._api = api
+    def _main_bridge_forwarder(_name):
+        def _call(self, *args, **kwargs):
+            return getattr(self._api, _name)(*args, **kwargs)
+        return _call
 
-    def ask(self, txt):
-        return self._api.ask(txt)
-
-    def remote_cmd(self, txt):
-        return self._api.remote_cmd(txt)
-
-    def ui_qc_bar_enabled(self):
-        return self._api.ui_qc_bar_enabled()
-
-    def is_ready(self):
-        return self._api.is_ready()
-
-    def ping(self, _payload=None):
-        return self._api.ping(_payload)
-
-    def update_stats_ui(self):
-        return self._api.update_stats_ui()
-
-    def ensure_panel_visible(self):
-        return self._api.ensure_panel_visible()
-
-    def load_rule_file(self):
-        return self._api.load_rule_file()
-
-    def export(self):
-        return self._api.export()
-
-    def settings(self):
-        return self._api.settings()
-
-    def close_app(self):
-        return self._api.close_app()
+    for _mb_name in (
+        "ask",
+        "remote_cmd",
+        "ui_qc_bar_enabled",
+        "is_ready",
+        "ping",
+        "update_stats_ui",
+        "ensure_panel_visible",
+        "load_rule_file",
+        "export",
+        "settings",
+        "close_app",
+    ):
+        setattr(MainBridge, _mb_name, _main_bridge_forwarder(_mb_name))
 
 # ----------------------------
 
@@ -17007,44 +17266,14 @@ def _bootstrap_desktop_windows(api, webview_module):
         )
     _main_w, _main_h, _main_x, _main_y = 1100, 1000, 0, 0
     _panel_w, _panel_h, _panel_x, _panel_y = 340, 1000, 1100, 0
-
-    def _mac_visible_rect():
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return None
-        try:
-            import AppKit  # type: ignore
-        except Exception:
-            return None
-        try:
-            _screen = AppKit.NSScreen.mainScreen()
-            if _screen is None:
-                return None
-            _vf = _screen.visibleFrame()
-            _x = int(getattr(_vf, "origin", None).x if getattr(_vf, "origin", None) is not None else 0)
-            _y = int(getattr(_vf, "origin", None).y if getattr(_vf, "origin", None) is not None else 0)
-            _w = int(getattr(_vf, "size", None).width if getattr(_vf, "size", None) is not None else 0)
-            _h = int(getattr(_vf, "size", None).height if getattr(_vf, "size", None) is not None else 0)
-            if _w < 800 or _h < 500:
-                return None
-            return (_x, _y, _w, _h)
-        except Exception:
-            return None
-
     try:
-        _screen_rect = _mac_visible_rect()
-        if _screen_rect is None:
-            _screens = getattr(webview_module, "screens", None)
-            if _screens:
-                _s0 = _screens[0]
-                _screen_rect = (
-                    int(getattr(_s0, "x", 0)),
-                    int(getattr(_s0, "y", 0)),
-                    int(getattr(_s0, "width", 0)),
-                    int(getattr(_s0, "height", 0)),
-                )
-
-        if _screen_rect is not None:
-            _sx, _sy, _sw, _sh = _screen_rect
+        _screens = getattr(webview_module, "screens", None)
+        if _screens:
+            _s0 = _screens[0]
+            _sx = int(getattr(_s0, "x", 0))
+            _sy = int(getattr(_s0, "y", 0))
+            _sw = int(getattr(_s0, "width", 0))
+            _sh = int(getattr(_s0, "height", 0))
             if _sw >= 800 and _sh >= 500:
                 _panel_w = max(320, min(420, int(round(_sw * 0.26))))
                 if _panel_w > _sw - 480:

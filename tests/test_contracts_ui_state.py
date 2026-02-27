@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 
 WRAPPER_DEFAULT = Path(__file__).resolve().parents[1] / "src" / "Comm-SCI-Control-App.py"
+SEAM_DEFAULT = Path(__file__).resolve().parents[1] / "src" / "panel_ui_snapshot_seam.py"
 
 def _read_wrapper_source() -> str:
     if not WRAPPER_DEFAULT.exists():
@@ -15,26 +16,38 @@ def test_contract_toggle_buttons_show_action_not_state():
     """
     src = _read_wrapper_source()
 
-    # Find the toggle helper (the project uses _toggle_btn).
+    # Legacy path: monolith helper.
     m = re.search(r"def\s+_toggle_btn\s*\([^)]*\)\s*:\s*\n(?P<body>(?:\s+.*\n){5,80})", src)
-    assert m, "Missing _toggle_btn() helper (required by contract V2)."
-    body = m.group("body")
+    if m:
+        body = m.group("body")
 
-    # Required semantics:
-    # is_on True  => label contains ': OFF'  and cmd_off is used
-    # is_on False => label contains ': ON'   and cmd_on  is used
-    #
-    # We accept small formatting differences, but we require evidence of the inversion.
-    assert (": OFF" in body) and (": ON" in body), "Toggle labels must include both ': OFF' and ': ON'."
+        # Required semantics:
+        # is_on True  => label contains ': OFF'  and cmd_off is used
+        # is_on False => label contains ': ON'   and cmd_on  is used
+        #
+        # We accept small formatting differences, but we require evidence of the inversion.
+        assert (": OFF" in body) and (": ON" in body), "Toggle labels must include both ': OFF' and ': ON'."
 
-    # Ensure the ON-branch produces OFF label (action), not ON label (state).
-    # We look for a common pattern: 'OFF' if is_on else 'ON' or the equivalent inversion.
-    inversion_ok = (
-        re.search(r"OFF'\s*if\s*is_on\s*else\s*'ON", body)
-        or re.search(r'"OFF"\s*if\s*is_on\s*else\s*"ON"', body)
-        or re.search(r"if\s+is_on\s*:\s*\n(?:\s+.*OFF.*\n)+", body)
+        # Ensure the ON-branch produces OFF label (action), not ON label (state).
+        inversion_ok = (
+            re.search(r"OFF'\s*if\s*is_on\s*else\s*'ON", body)
+            or re.search(r'"OFF"\s*if\s*is_on\s*else\s*"ON"', body)
+            or re.search(r"if\s+is_on\s*:\s*\n(?:\s+.*OFF.*\n)+", body)
+        )
+        assert inversion_ok, "Toggle must show OFF when is_on=True (action, not state)."
+        return
+
+    # S13 path: Comm toggle inversion moved into panel_ui_snapshot_seam.
+    assert SEAM_DEFAULT.exists(), "Missing _toggle_btn() helper and panel_ui_snapshot_seam.py."
+    seam_src = SEAM_DEFAULT.read_text(encoding="utf-8")
+    m2 = re.search(
+        r"def\s+panel_ui_apply_failsoft_comm_toggle\s*\([^)]*\)\s*(?:->\s*[^:]+)?\s*:\s*\n(?P<body>(?:\s+.*\n){5,120})",
+        seam_src,
     )
-    assert inversion_ok, "Toggle must show OFF when is_on=True (action, not state)."
+    assert m2, "Missing panel_ui_apply_failsoft_comm_toggle() seam helper (required by contract V2)."
+    body = m2.group("body")
+    assert "Comm ⏻: OFF" in body and "Comm Stop" in body, "Active Comm state must expose OFF action / Comm Stop."
+    assert "Comm ⏻: ON" in body and "Comm Start" in body, "Inactive Comm state must expose ON action / Comm Start."
 
 def test_contract_no_second_state_truth_runtime_state_is_alias_if_present():
     """

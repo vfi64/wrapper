@@ -5,8 +5,6 @@ Behavior-preserving extraction from the monolithic launcher path.
 
 from __future__ import annotations
 
-import os
-
 
 def validate_desktop_runtime_dependencies(webview_module, genai_module, genai_types):
     if webview_module is None:
@@ -20,6 +18,48 @@ def _safe_int(value, default):
         return int(value)
     except Exception:
         return int(default)
+
+
+def _tk_screen_rect():
+    """Best-effort screen rect via tkinter (often matches the active display)."""
+    try:
+        import tkinter as tk  # stdlib
+
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            width = _safe_int(root.winfo_screenwidth(), 0)
+            height = _safe_int(root.winfo_screenheight(), 0)
+        finally:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+        if width >= 800 and height >= 500:
+            return 0, 0, width, height
+    except Exception:
+        pass
+    return None
+
+
+def _mac_visible_frame_rect():
+    """Best-effort visible screen rect on macOS (excludes Dock/Menu Bar)."""
+    try:
+        import AppKit  # type: ignore
+
+        screen = AppKit.NSScreen.mainScreen()
+        if screen is None:
+            return None
+        vf = screen.visibleFrame()
+        x = _safe_int(vf.origin.x, 0)
+        y = _safe_int(vf.origin.y, 0)
+        w = _safe_int(vf.size.width, 0)
+        h = _safe_int(vf.size.height, 0)
+        if w >= 800 and h >= 500:
+            return x, y, w, h
+    except Exception:
+        pass
+    return None
 
 
 def _rect_from_screen_obj(screen_obj):
@@ -36,51 +76,49 @@ def _rect_from_screen_obj(screen_obj):
     return _safe_int(x, 0), _safe_int(y, 0), _safe_int(w, 0), _safe_int(h, 0)
 
 
-def _mac_visible_frame_rect():
-    """Return macOS visible frame (excludes menu bar + dock) when available."""
-    # PyObjC/AppKit screen access can abort in headless pytest contexts.
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return None
-    try:
-        import AppKit  # type: ignore
-    except Exception:
-        return None
-    try:
-        screen = AppKit.NSScreen.mainScreen()
-        if screen is None:
-            return None
-        frame = screen.visibleFrame()
-        x = _safe_int(getattr(frame, "origin", None).x if getattr(frame, "origin", None) is not None else 0, 0)
-        y = _safe_int(getattr(frame, "origin", None).y if getattr(frame, "origin", None) is not None else 0, 0)
-        w = _safe_int(getattr(frame, "size", None).width if getattr(frame, "size", None) is not None else 0, 0)
-        h = _safe_int(getattr(frame, "size", None).height if getattr(frame, "size", None) is not None else 0, 0)
-        if w < 800 or h < 500:
-            return None
-        return (x, y, w, h)
-    except Exception:
-        return None
+def _should_use_mac_visible_frame(webview_module):
+    """Use AppKit visibleFrame only for real pywebview runtime modules."""
+    module_name = str(getattr(webview_module, "__name__", "") or "")
+    if module_name.startswith("webview"):
+        return True
+    return False
 
 
 def _primary_screen_rect(webview_module):
+    """Resolve a sane working screen; avoid virtual-wide multi-monitor artifacts."""
     fallback = (0, 0, 1440, 1000)
+    if _should_use_mac_visible_frame(webview_module):
+        mac_rect = _mac_visible_frame_rect()
+        if mac_rect is not None:
+            return mac_rect
+    screen_rect = None
     try:
-        mac_visible = _mac_visible_frame_rect()
-        if mac_visible:
-            return mac_visible
         screens = getattr(webview_module, "screens", None)
-        if not screens:
-            return fallback
-        first = screens[0]
-        x, y, w, h = _rect_from_screen_obj(first)
-        if w < 800 or h < 500:
-            return fallback
-        return x, y, w, h
+        if screens:
+            first = screens[0]
+            x, y, w, h = _rect_from_screen_obj(first)
+            if w >= 800 and h >= 500:
+                screen_rect = (x, y, w, h)
     except Exception:
-        return fallback
+        screen_rect = None
+
+    tk_rect = _tk_screen_rect()
+    if screen_rect is not None and tk_rect is not None:
+        _, _, sw, sh = screen_rect
+        _, _, tw, th = tk_rect
+        # pywebview can report a virtual-wide desktop; prefer tkinter when this looks implausibly large.
+        if sw > int(tw * 1.8) or sh > int(th * 1.8):
+            return tk_rect
+        return screen_rect
+    if screen_rect is not None:
+        return screen_rect
+    if tk_rect is not None:
+        return tk_rect
+    return fallback
 
 
 def compute_startup_window_layout(webview_module):
-    """Compute a deterministic side-by-side startup layout for main + panel windows."""
+    """Compute deterministic side-by-side startup layout for main + panel."""
     sx, sy, sw, sh = _primary_screen_rect(webview_module)
 
     panel_w = max(320, min(420, int(round(sw * 0.26))))
@@ -90,11 +128,8 @@ def compute_startup_window_layout(webview_module):
 
     main_w = max(sw - panel_w, 220)
     panel_w = max(sw - main_w, 220)
-    total = main_w + panel_w
-    if total != sw:
-        panel_w = max(sw - main_w, 220)
-        if main_w + panel_w > sw:
-            panel_w = max(sw - main_w, 1)
+    if (main_w + panel_w) > sw:
+        panel_w = max(sw - main_w, 1)
 
     main = {"x": sx, "y": sy, "width": main_w, "height": sh}
     panel = {"x": sx + main_w, "y": sy, "width": panel_w, "height": sh}

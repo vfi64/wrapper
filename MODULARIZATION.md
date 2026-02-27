@@ -392,6 +392,60 @@ S12 completion snapshot (2026-02-26):
 - Treat user-found rendering/QC regressions as release-blocking follow-up fixes before wrapper sync.
 - S13 should prioritize net monolith reduction (composition/wiring compaction), not only additional seam coverage.
 
+### S13 — Composition/Wiring compaction (next net monolith reduction stage)
+**Goal:** convert the S11/S12 seam groundwork into visible monolith reduction by moving remaining UI/bridge composition and low-risk UI orchestration glue out of `src/Comm-SCI-Control-App.py`, while preserving behavior and contracts.
+- Prioritize **net line reduction** in the monolith (not just new seam modules).
+- Keep pywebview calls behavior-preserving; continue extracting plans/builders/factories first.
+- Preserve `panel_action(...)` contracts, QC/QC-Override semantics, audit behavior, and provider switching behavior.
+- Continue private-first workflow (implement + verify in private repo, then sync to wrapper).
+
+**Out of scope (S13 must not do this)**
+- No governance/repair/SCI feature refactor (e.g. `_apply_csc_strict(...)`, repair validator behavior) unless fixing a user-reported regression.
+- No provider behavior changes or model-selection policy changes.
+- No `panel_action(...)` route renames / payload schema changes.
+- No UI redesign.
+
+#### S13 acceptance checklist (planned)
+- [x] S13a baseline measured and documented (post-S12 monolith size + hotspot map + first slice order).
+- [ ] `Comm-SCI-Control-App.py` is materially smaller after S13 (documented delta vs S13a baseline).
+- [ ] Remaining UI/bridge composition/wiring glue is reduced to thin adapters/fail-open shims where practical.
+- [ ] `panel_action(...)` route names/payload schemas unchanged.
+- [ ] Focused UI/bridge/panel tests remain green after each S13 slice.
+- [ ] Manual smoke checks re-run before wrapper sync (panel, QC override, manual-test monitor, provider/model switch).
+- [ ] Private CI green, then wrapper sync, then wrapper CI green.
+
+S13a baseline snapshot (2026-02-26):
+- Monolith size: `src/Comm-SCI-Control-App.py` = **16,801 lines** (`wc -l`).
+- Highest-risk large methods remain:
+  - `_apply_csc_strict(...)` (`src/Comm-SCI-Control-App.py:8129`) ~ 815 lines (governance/rendering-heavy; **not** the first S13 extraction target)
+  - `ask(...)` (`src/Comm-SCI-Control-App.py:10244`) ~ 826 lines (request pipeline; high regression risk)
+- Primary S13 UI/bridge compaction hotspots (lower-risk, wiring-heavy):
+  - `get_ui(...)` (`src/Comm-SCI-Control-App.py:11599`) panel UI snapshot assembly + local/offline merges + UI normalization/gating
+  - Manual test monitor window lifecycle/UI methods:
+    - `_bind_manual_test_monitor_window_events(...)` (`src/Comm-SCI-Control-App.py:11410`)
+    - `_create_manual_test_monitor(...)` (`src/Comm-SCI-Control-App.py:11421`)
+    - `manual_test_monitor_show(...)` (`src/Comm-SCI-Control-App.py:11468`)
+    - `manual_test_monitor_hide(...)` (`src/Comm-SCI-Control-App.py:11523`)
+    - `manual_test_monitor_reset(...)` (`src/Comm-SCI-Control-App.py:11539`)
+    - `manual_test_monitor_append(...)` (`src/Comm-SCI-Control-App.py:11559`)
+    - `manual_test_monitor_set_header(...)` (`src/Comm-SCI-Control-App.py:11580`)
+  - Bridge/fallback wiring region:
+    - `_QCBridge` fallback binding (`src/Comm-SCI-Control-App.py:16490`)
+    - `_PanelBridge` fallback binding (`src/Comm-SCI-Control-App.py:16525`)
+    - `MainBridge` class (`src/Comm-SCI-Control-App.py:16544`)
+- `panel_action(...)` (`src/Comm-SCI-Control-App.py:11225`) is already relatively compact after S6, but remains a contract-sensitive integration point to keep regression-tested during S13.
+
+Planned S13 slice order (pragmatic):
+- S13b (low risk): manual-test-monitor window/orchestration seam extraction (window create/show/hide + state/UI push planning), pywebview calls remain local.
+- S13c: `get_ui(...)` split into pure snapshot-builder helpers (provider/model/language snapshot, governance merge, comm-off gating, log list merge).
+- S13d: bridge/fallback wiring compaction (`MainBridge` / fallback bridge shims -> module/factory extraction with fail-open imports).
+- S13e: cleanup/compaction pass + focused tests + manual smoke + wrapper sync.
+
+#### S13 execution notes
+- Prefer extracting pure builders/plans/factories before touching `ask(...)` or `_apply_csc_strict(...)`.
+- Treat line-count reduction as an explicit acceptance metric in S13, not a side effect.
+- Keep user-facing regression fixes separate from S13 scope accounting unless they are caused by S13 changes.
+
 
 ---
 

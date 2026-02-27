@@ -510,7 +510,12 @@ async function run(c) {
   try {
     const r = await _apiCall('panel_action', ['cmd', {text: cmd}], 30000);
     if(r && r.ok === false) {
-      _setStatus('cmd failed: ' + (r.error || 'unknown error'), 'err');
+      const err = String(r.error || 'unknown error');
+      if(err === 'qc_override_modal_blocked'){
+        _setStatus('QC Override Dialog ist offen; Aktion temporär blockiert.', 'info');
+      } else {
+        _setStatus('cmd failed: ' + err, 'err');
+      }
     }
     // Refresh panel UI after commands that change state-dependent labels (e.g., Comm Anchor on/off)
     try { await buildUI(); } catch(e) {}

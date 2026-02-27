@@ -173,6 +173,14 @@ def test_panel_show_plan_requests_bootstrap_wait_and_focus_sequence_when_window_
     assert plan["panel_hidden"] is False
 
 
+def test_panel_show_plan_can_skip_panel_focus_when_called_from_main_toggle():
+    plan = sut.panel_show_plan(panel_window_exists=True, activate_panel=False)
+    assert plan["action"] == "show_existing"
+    assert plan["wait_bootstrap_before_show"] is True
+    assert tuple(plan["window_methods"]) == ("show", "restore")
+    assert plan["panel_hidden"] is False
+
+
 def test_panel_hide_plan_prefers_hide_then_minimize_then_destroy():
     hide_plan = sut.panel_hide_plan(panel_window_exists=True, has_hide=True, has_minimize=True)
     assert hide_plan["action"] == "hide"
