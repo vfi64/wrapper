@@ -2322,6 +2322,9 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
         profile_title_pat = re.compile(
             r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
         )
+        question_like_pat = re.compile(
+            r"(?i)^(?:was|wie|warum|wieso|wer|wo|wann|welche?|what|why|how|who|where|when|which|is|are|can|could|should|do|does)\b"
+        )
         compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
 
         def _is_block_scaffold(block_lines):
@@ -2379,9 +2382,38 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
                 i += 1
                 continue
             if profile_only_pat.match(s):
+                # Optionally consume a leaked prompt-echo line directly below.
+                j = i + 1
+                while j < n and not (lines[j] or "").strip():
+                    j += 1
+                if j < n:
+                    nxt = (lines[j] or "").strip()
+                    nxt_low = nxt.lower()
+                    if (
+                        nxt
+                        and not status_line_pat.match(nxt)
+                        and len(nxt) <= 600
+                        and ("?" in nxt or question_like_pat.match(nxt_low))
+                    ):
+                        i = j + 1
+                        continue
                 i += 1
                 continue
             if profile_title_pat.match(s):
+                j = i + 1
+                while j < n and not (lines[j] or "").strip():
+                    j += 1
+                if j < n:
+                    nxt = (lines[j] or "").strip()
+                    nxt_low = nxt.lower()
+                    if (
+                        nxt
+                        and not status_line_pat.match(nxt)
+                        and len(nxt) <= 600
+                        and ("?" in nxt or question_like_pat.match(nxt_low))
+                    ):
+                        i = j + 1
+                        continue
                 i += 1
                 continue
             starts_status = low.startswith("profile:")
@@ -2532,11 +2564,26 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
                 r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
             )
             compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
+            question_like_pat = re.compile(
+                r"(?i)^(?:was|wie|warum|wieso|wer|wo|wann|welche?|what|why|how|who|where|when|which|is|are|can|could|should|do|does)\b"
+            )
 
             if profile_only_pat.match(txt or ""):
                 return True
             if profile_title_pat.match(txt or ""):
                 return True
+            if len(lines) >= 2 and (
+                profile_only_pat.match(lines[0] or "") or profile_title_pat.match(lines[0] or "")
+            ):
+                nxt = (lines[1] or "").strip()
+                nxt_low = nxt.lower()
+                if (
+                    nxt
+                    and not status_line_pat.match(nxt)
+                    and len(nxt) <= 600
+                    and ("?" in nxt or question_like_pat.match(nxt_low))
+                ):
+                    return True
             if len(lines) >= 2:
                 key_hits = sum(1 for ln in lines if compact_keys_pat.match(ln or ""))
                 if key_hits >= 2 and all(status_line_pat.match(ln or "") for ln in lines):

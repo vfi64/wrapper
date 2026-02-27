@@ -3580,6 +3580,20 @@ def test_strip_internal_scaffolding_status_lines_removes_profile_title_without_s
     assert "Antwortinhalt bleibt sichtbar." in out
 
 
+def test_strip_internal_scaffolding_status_lines_removes_profile_plus_prompt_echo_block():
+    mod = load_fix_module()
+    raw = (
+        "Active profile: Standard · SCI: off · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
+        "Profile: Standard\n"
+        "Was ist Zeit?\n"
+        "Hier startet der eigentliche Inhalt.\n"
+    )
+    out = mod.strip_internal_scaffolding_status_lines(raw)
+    assert "Profile: Standard" not in out
+    assert "Was ist Zeit?" not in out
+    assert "Hier startet der eigentliche Inhalt." in out
+
+
 def test_strip_internal_scaffolding_status_html_removes_profile_block():
     mod = load_fix_module()
     html_in = (
@@ -3624,6 +3638,18 @@ def test_strip_internal_scaffolding_status_html_removes_profile_title_without_se
     out = mod.strip_internal_scaffolding_status_html(html_in)
     assert "Profile Standard:" not in out
     assert "Inhalt bleibt sichtbar." in out
+
+
+def test_strip_internal_scaffolding_status_html_removes_profile_plus_prompt_echo_block():
+    mod = load_fix_module()
+    html_in = (
+        "<p>Profile: Standard\nWas ist Zeit?</p>"
+        "<p>Hier startet der eigentliche Inhalt.</p>"
+    )
+    out = mod.strip_internal_scaffolding_status_html(html_in)
+    assert "Profile: Standard" not in out
+    assert "Was ist Zeit?" not in out
+    assert "Hier startet der eigentliche Inhalt." in out
 
 
 def test_strip_evidence_tags_from_heading_lines_removes_only_heading_markers():
