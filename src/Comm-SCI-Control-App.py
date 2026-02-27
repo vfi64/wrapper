@@ -2322,10 +2322,24 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
         profile_title_pat = re.compile(
             r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
         )
+        profile_with_tail_pat = re.compile(
+            r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s+(?P<tail>.+?)\s*$"
+        )
         question_like_pat = re.compile(
             r"(?i)^(?:was|wie|warum|wieso|wer|wo|wann|welche?|what|why|how|who|where|when|which|is|are|can|could|should|do|does)\b"
         )
         compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
+
+        def _is_prompt_echo_line(sline: str) -> bool:
+            t = (sline or "").strip()
+            if not t:
+                return False
+            tl = t.lower()
+            if "?" in t:
+                return True
+            if question_like_pat.match(tl):
+                return True
+            return False
 
         def _is_block_scaffold(block_lines):
             if not block_lines:
@@ -2381,6 +2395,12 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
             if directive_pat.match(s):
                 i += 1
                 continue
+            m_tail = profile_with_tail_pat.match(s)
+            if m_tail:
+                tail = (m_tail.group("tail") or "").strip()
+                if _is_prompt_echo_line(tail):
+                    i += 1
+                    continue
             if profile_only_pat.match(s):
                 # Optionally consume a leaked prompt-echo line directly below.
                 j = i + 1
@@ -2388,12 +2408,10 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
                     j += 1
                 if j < n:
                     nxt = (lines[j] or "").strip()
-                    nxt_low = nxt.lower()
                     if (
-                        nxt
+                        _is_prompt_echo_line(nxt)
                         and not status_line_pat.match(nxt)
                         and len(nxt) <= 600
-                        and ("?" in nxt or question_like_pat.match(nxt_low))
                     ):
                         i = j + 1
                         continue
@@ -2405,12 +2423,10 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
                     j += 1
                 if j < n:
                     nxt = (lines[j] or "").strip()
-                    nxt_low = nxt.lower()
                     if (
-                        nxt
+                        _is_prompt_echo_line(nxt)
                         and not status_line_pat.match(nxt)
                         and len(nxt) <= 600
-                        and ("?" in nxt or question_like_pat.match(nxt_low))
                     ):
                         i = j + 1
                         continue
@@ -2563,26 +2579,43 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
             profile_title_pat = re.compile(
                 r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
             )
+            profile_with_tail_pat = re.compile(
+                r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s+(?P<tail>.+?)\s*$"
+            )
             compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
             question_like_pat = re.compile(
                 r"(?i)^(?:was|wie|warum|wieso|wer|wo|wann|welche?|what|why|how|who|where|when|which|is|are|can|could|should|do|does)\b"
             )
 
+            def _is_prompt_echo_line(sline: str) -> bool:
+                t = (sline or "").strip()
+                if not t:
+                    return False
+                tl = t.lower()
+                if "?" in t:
+                    return True
+                if question_like_pat.match(tl):
+                    return True
+                return False
+
             if profile_only_pat.match(txt or ""):
                 return True
             if profile_title_pat.match(txt or ""):
+                return True
+            m_tail = profile_with_tail_pat.match(txt or "")
+            if m_tail and _is_prompt_echo_line((m_tail.group("tail") or "").strip()):
                 return True
             if len(lines) >= 2 and (
                 profile_only_pat.match(lines[0] or "") or profile_title_pat.match(lines[0] or "")
             ):
                 nxt = (lines[1] or "").strip()
-                nxt_low = nxt.lower()
                 if (
-                    nxt
+                    _is_prompt_echo_line(nxt)
                     and not status_line_pat.match(nxt)
                     and len(nxt) <= 600
-                    and ("?" in nxt or question_like_pat.match(nxt_low))
                 ):
+                    return True
+                if re.match(r"(?i)^\s*SCI\s*Trace\s*:?\s*$", nxt or ""):
                     return True
             if len(lines) >= 2:
                 key_hits = sum(1 for ln in lines if compact_keys_pat.match(ln or ""))
