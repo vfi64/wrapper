@@ -3544,6 +3544,18 @@ def test_strip_internal_scaffolding_status_lines_removes_prompt_directive_echo_l
     assert "Kerninhalt bleibt erhalten." in out
 
 
+def test_strip_internal_scaffolding_status_lines_removes_isolated_profile_name_leak():
+    mod = load_fix_module()
+    raw = (
+        "Active profile: Standard · SCI: off · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
+        "Profile: Standard.\n"
+        "Antwortinhalt bleibt sichtbar.\n"
+    )
+    out = mod.strip_internal_scaffolding_status_lines(raw)
+    assert "Profile: Standard." not in out
+    assert "Antwortinhalt bleibt sichtbar." in out
+
+
 def test_strip_internal_scaffolding_status_html_removes_profile_block():
     mod = load_fix_module()
     html_in = (
@@ -3567,6 +3579,31 @@ def test_strip_internal_scaffolding_status_html_removes_qc_override_directive_bl
     out = mod.strip_internal_scaffolding_status_html(html_in)
     assert "[QC OVERRIDES]" not in out
     assert "Inhalt bleibt sichtbar." in out
+
+
+def test_strip_internal_scaffolding_status_html_removes_multiline_profile_overlay_sci_block():
+    mod = load_fix_module()
+    html_in = (
+        "<p>Profile: Standard<br>Overlay: Strict<br>SCI: off</p>"
+        "<p>Inhalt bleibt sichtbar.</p>"
+    )
+    out = mod.strip_internal_scaffolding_status_html(html_in)
+    assert "Profile: Standard" not in out
+    assert "Overlay: Strict" not in out
+    assert "SCI: off" not in out
+    assert "Inhalt bleibt sichtbar." in out
+
+
+def test_strip_evidence_tags_from_heading_lines_removes_only_heading_markers():
+    mod = load_fix_module()
+    raw = (
+        "[GREEN] 1. Strategie:\n"
+        "[YELLOW] Diese Einschätzung ist plausibel, aber unsicher.\n"
+    )
+    out = mod.strip_evidence_tags_from_heading_lines(raw)
+    assert "[GREEN]" not in out
+    assert "1. Strategie:" in out
+    assert "[YELLOW]" in out
 
 
 def test_strip_exact_status_header_line_removes_exact_duplicate_only():

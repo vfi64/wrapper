@@ -2300,9 +2300,10 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
     """Remove leaked internal status scaffold lines from model output (display-only).
 
     Deterministic and conservative:
-    - only full lines starting with "Profile:" (or "Comm:")
-    - only if they clearly look like wrapper status scaffolding
-      (contains separators plus multiple control tokens)
+    - removes explicit prompt-directive echoes (`[QC OVERRIDES]`, etc.)
+    - removes clear status matrix lines (`Profile: ... · Overlay: ...`)
+    - removes compact multi-line status blocks (`Profile:/Overlay:/SCI:`)
+    - removes isolated `Profile: <known profile>` leak lines
     - code fences remain untouched
     """
     try:
@@ -2312,21 +2313,70 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
         directive_pat = re.compile(
             r"(?i)^\s*(?:[-*•]\s*)?\[(?:output language|answer length|qc overrides|qc behavior|sci trace detail)\]"
         )
+        status_line_pat = re.compile(
+            r"(?i)^\s*(?:active profile|profile|overlay|sci|comm|control layer|qc|cgi|color)\s*:\s*.+$"
+        )
+        profile_only_pat = re.compile(
+            r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
+        )
+        compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
 
+        def _is_block_scaffold(block_lines):
+            if not block_lines:
+                return False
+            cleaned = [re.sub(r"\s+", " ", str(x or "")).strip() for x in block_lines if str(x or "").strip()]
+            if len(cleaned) < 2:
+                return False
+            key_hits = sum(1 for ln in cleaned if compact_keys_pat.match(ln))
+            if key_hits < 2:
+                return False
+            return all(status_line_pat.match(ln or "") for ln in cleaned)
+
+        lines = str(text).splitlines()
         out_lines = []
         in_code = False
-        for ln in str(text).splitlines():
+        i = 0
+        n = len(lines)
+        while i < n:
+            ln = lines[i]
             s = (ln or "").strip()
             if s.startswith("```"):
                 in_code = not in_code
                 out_lines.append(ln)
+                i += 1
                 continue
             if in_code:
                 out_lines.append(ln)
+                i += 1
                 continue
+
+            # Remove compact leaked status blocks like:
+            # Profile: ...
+            # Overlay: ...
+            # SCI: ...
+            if status_line_pat.match(s or ""):
+                j = i
+                block = []
+                while j < n:
+                    cur = (lines[j] or "").strip()
+                    if not cur:
+                        break
+                    if cur.startswith("```"):
+                        break
+                    if not status_line_pat.match(cur):
+                        break
+                    block.append(lines[j])
+                    j += 1
+                if _is_block_scaffold(block):
+                    i = j
+                    continue
 
             low = s.lower()
             if directive_pat.match(s):
+                i += 1
+                continue
+            if profile_only_pat.match(s):
+                i += 1
                 continue
             starts_status = low.startswith("profile:")
             starts_comm = low.startswith("comm:")
@@ -2339,11 +2389,14 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
             has_active_profile = "active profile" in low
 
             if starts_status and has_sep and token_count >= 3:
+                i += 1
                 continue
             if starts_comm and has_sep and has_active_profile and token_count >= 4:
+                i += 1
                 continue
 
             out_lines.append(ln)
+            i += 1
 
         return "\n".join(out_lines)
     except Exception:
@@ -2450,15 +2503,34 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
         block_pat = re.compile(r"(?is)<(p|div|li)\b[^>]*>(.*?)</\1>")
 
         def _is_scaffold(inner_html: str) -> bool:
-            txt = re.sub(r"(?is)<[^>]+>", " ", inner_html or "")
-            txt = html.unescape(txt or "")
-            txt = re.sub(r"\s+", " ", txt).strip()
+            txt_lines = re.sub(r"(?is)<br\s*/?>", "\n", inner_html or "")
+            txt_lines = re.sub(r"(?is)</(?:p|div|li|tr)>", "\n", txt_lines)
+            txt_lines = re.sub(r"(?is)<[^>]+>", " ", txt_lines)
+            txt_lines = html.unescape(txt_lines or "")
+            lines = [re.sub(r"\s+", " ", ln).strip() for ln in str(txt_lines).splitlines() if ln.strip()]
+            txt = re.sub(r"\s+", " ", " ".join(lines)).strip()
             low = txt.lower()
             if re.match(
                 r"(?i)^\s*(?:[-*•]\s*)?\[(?:output language|answer length|qc overrides|qc behavior|sci trace detail)\]",
                 txt,
             ):
                 return True
+
+            status_line_pat = re.compile(
+                r"(?i)^\s*(?:active profile|profile|overlay|sci|comm|control layer|qc|cgi|color)\s*:\s*.+$"
+            )
+            profile_only_pat = re.compile(
+                r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
+            )
+            compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
+
+            if profile_only_pat.match(txt or ""):
+                return True
+            if len(lines) >= 2:
+                key_hits = sum(1 for ln in lines if compact_keys_pat.match(ln or ""))
+                if key_hits >= 2 and all(status_line_pat.match(ln or "") for ln in lines):
+                    return True
+
             starts_status = low.startswith("profile:")
             starts_comm = low.startswith("comm:")
             has_sep = any(ch in txt for ch in ("·", "•", "|"))
@@ -2482,6 +2554,62 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
         return out
     except Exception:
         return html_text
+
+
+def strip_evidence_tags_from_heading_lines(text: str) -> str:
+    """Remove Evidence-Linker tags from pure heading-like lines.
+
+    Keeps color markers on substantive content lines while avoiding noisy markers
+    on section headings/list headers.
+    """
+    try:
+        if not text:
+            return text
+
+        lead_tag_pat = re.compile(
+            r"^(?P<prefix>\s*(?:[-*•]\s*)?(?:\d+\s*[\.)]\s*)?)"
+            r"(?P<tags>(?:\[(?:GREEN|YELLOW|RED|GRAY)(?:-[A-Z0-9]+)*\]\s*(?:[🟢🟡🔴⚪⚪️]\s*)?)+)"
+            r"(?P<rest>.*)$",
+            flags=re.IGNORECASE,
+        )
+
+        def _looks_heading(candidate: str) -> bool:
+            plain = re.sub(r"(?is)<[^>]+>", " ", candidate or "")
+            plain = re.sub(r"\s+", " ", plain).strip()
+            if not plain:
+                return False
+            if re.match(r"^#{1,6}\s+\S+", plain):
+                return True
+            core = re.sub(r"^\s*\d+\s*[\.)]\s*", "", plain).strip()
+            if core.endswith(":"):
+                core_body = core[:-1].strip(" -*_`")
+                if core_body and len(core_body.split()) <= 20 and not re.search(r"[.!?]", core_body):
+                    return True
+            return False
+
+        out_lines = []
+        in_code = False
+        for ln in str(text).splitlines():
+            s = (ln or "").strip()
+            if s.startswith("```"):
+                in_code = not in_code
+                out_lines.append(ln)
+                continue
+            if in_code:
+                out_lines.append(ln)
+                continue
+            m = lead_tag_pat.match(ln or "")
+            if not m:
+                out_lines.append(ln)
+                continue
+            rest = m.group("rest") or ""
+            if _looks_heading(rest):
+                out_lines.append((m.group("prefix") or "") + rest.lstrip())
+            else:
+                out_lines.append(ln)
+        return "\n".join(out_lines)
+    except Exception:
+        return text
 
 
 def strip_exact_status_header_line(text: str, header_line: str) -> str:
@@ -8509,6 +8637,10 @@ class CSCRefiner:
                 raw_for_render = strip_exact_status_header_line(raw_for_render or "", header or "")
             except Exception:
                 pass
+            try:
+                raw_for_render = strip_evidence_tags_from_heading_lines(raw_for_render or "")
+            except Exception:
+                pass
             
             # A: Header voranstellen
             if header:
@@ -9965,9 +10097,10 @@ class CSCRefiner:
             color = (getattr(getattr(self, 'gov_state', None), 'color', 'off') or 'off').strip().lower()
             if comm and color == 'on':
                 evidence = (
-                    "EVIDENCE-LINKER (MANDATORY WHEN COLOR=ON): In the FINAL ANSWER, prefix EACH paragraph or bullet item "
+                    "EVIDENCE-LINKER (MANDATORY WHEN COLOR=ON): In the FINAL ANSWER, tag substantive factual statements "
                     "with exactly ONE tag: [GREEN] well-established, [YELLOW] plausible/uncertain, [RED] speculative. "
-                    "Do NOT tag headers, SCI Trace, Self-Debunking, or QC-Matrix."
+                    "Prefer one tag per content sentence or bullet statement. "
+                    "Do NOT tag pure section headings/list headers, SCI Trace, Self-Debunking, or QC-Matrix."
                 )
         except Exception:
             evidence = ''
@@ -16773,14 +16906,44 @@ def _bootstrap_desktop_windows(api, webview_module):
         )
     _main_w, _main_h, _main_x, _main_y = 1100, 1000, 0, 0
     _panel_w, _panel_h, _panel_x, _panel_y = 340, 1000, 1100, 0
+
+    def _mac_visible_rect():
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return None
+        try:
+            import AppKit  # type: ignore
+        except Exception:
+            return None
+        try:
+            _screen = AppKit.NSScreen.mainScreen()
+            if _screen is None:
+                return None
+            _vf = _screen.visibleFrame()
+            _x = int(getattr(_vf, "origin", None).x if getattr(_vf, "origin", None) is not None else 0)
+            _y = int(getattr(_vf, "origin", None).y if getattr(_vf, "origin", None) is not None else 0)
+            _w = int(getattr(_vf, "size", None).width if getattr(_vf, "size", None) is not None else 0)
+            _h = int(getattr(_vf, "size", None).height if getattr(_vf, "size", None) is not None else 0)
+            if _w < 800 or _h < 500:
+                return None
+            return (_x, _y, _w, _h)
+        except Exception:
+            return None
+
     try:
-        _screens = getattr(webview_module, "screens", None)
-        if _screens:
-            _s0 = _screens[0]
-            _sx = int(getattr(_s0, "x", 0))
-            _sy = int(getattr(_s0, "y", 0))
-            _sw = int(getattr(_s0, "width", 0))
-            _sh = int(getattr(_s0, "height", 0))
+        _screen_rect = _mac_visible_rect()
+        if _screen_rect is None:
+            _screens = getattr(webview_module, "screens", None)
+            if _screens:
+                _s0 = _screens[0]
+                _screen_rect = (
+                    int(getattr(_s0, "x", 0)),
+                    int(getattr(_s0, "y", 0)),
+                    int(getattr(_s0, "width", 0)),
+                    int(getattr(_s0, "height", 0)),
+                )
+
+        if _screen_rect is not None:
+            _sx, _sy, _sw, _sh = _screen_rect
             if _sw >= 800 and _sh >= 500:
                 _panel_w = max(320, min(420, int(round(_sw * 0.26))))
                 if _panel_w > _sw - 480:

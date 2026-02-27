@@ -111,6 +111,27 @@ def test_compute_startup_window_layout_is_side_by_side_without_overlap():
     assert panel["height"] == 1000
 
 
+def test_primary_screen_rect_prefers_mac_visible_frame(monkeypatch):
+    log = []
+    webview = _FakeWebview(log, screens=[_FakeScreen(0, 0, 1800, 1000)])
+    monkeypatch.setattr(sut, "_mac_visible_frame_rect", lambda: (37, 0, 1475, 948))
+    assert sut._primary_screen_rect(webview) == (37, 0, 1475, 948)
+
+
+def test_compute_startup_window_layout_uses_visible_frame_without_overlap(monkeypatch):
+    log = []
+    webview = _FakeWebview(log, screens=[_FakeScreen(0, 0, 1800, 1000)])
+    monkeypatch.setattr(sut, "_mac_visible_frame_rect", lambda: (37, 0, 1475, 948))
+    layout = sut.compute_startup_window_layout(webview)
+    main = layout["main"]
+    panel = layout["panel"]
+    assert main["x"] == 37
+    assert panel["x"] == main["x"] + main["width"]
+    assert main["width"] + panel["width"] == 1475
+    assert main["height"] == 948
+    assert panel["height"] == 948
+
+
 def test_bootstrap_desktop_windows_sets_panel_geom_from_split_layout():
     log = []
     api = _FakeApi(log)

@@ -5,6 +5,8 @@ Behavior-preserving extraction from the monolithic launcher path.
 
 from __future__ import annotations
 
+import os
+
 
 def validate_desktop_runtime_dependencies(webview_module, genai_module, genai_types):
     if webview_module is None:
@@ -34,9 +36,37 @@ def _rect_from_screen_obj(screen_obj):
     return _safe_int(x, 0), _safe_int(y, 0), _safe_int(w, 0), _safe_int(h, 0)
 
 
+def _mac_visible_frame_rect():
+    """Return macOS visible frame (excludes menu bar + dock) when available."""
+    # PyObjC/AppKit screen access can abort in headless pytest contexts.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
+    try:
+        import AppKit  # type: ignore
+    except Exception:
+        return None
+    try:
+        screen = AppKit.NSScreen.mainScreen()
+        if screen is None:
+            return None
+        frame = screen.visibleFrame()
+        x = _safe_int(getattr(frame, "origin", None).x if getattr(frame, "origin", None) is not None else 0, 0)
+        y = _safe_int(getattr(frame, "origin", None).y if getattr(frame, "origin", None) is not None else 0, 0)
+        w = _safe_int(getattr(frame, "size", None).width if getattr(frame, "size", None) is not None else 0, 0)
+        h = _safe_int(getattr(frame, "size", None).height if getattr(frame, "size", None) is not None else 0, 0)
+        if w < 800 or h < 500:
+            return None
+        return (x, y, w, h)
+    except Exception:
+        return None
+
+
 def _primary_screen_rect(webview_module):
     fallback = (0, 0, 1440, 1000)
     try:
+        mac_visible = _mac_visible_frame_rect()
+        if mac_visible:
+            return mac_visible
         screens = getattr(webview_module, "screens", None)
         if not screens:
             return fallback
