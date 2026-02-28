@@ -69,6 +69,38 @@ def test_inline_markers_skip_profile_overlay_sci_status_block():
     assert "uncertainty-inline-marker" in blocks[1]
 
 
+def test_inline_markers_skip_control_layer_note_and_keep_content_markers():
+    src = (
+        "<div class='control-layer-note csc-warning'>"
+        "<b>CONTROL LAYER NOTE</b>"
+        "<ul class='control-layer-violations'>"
+        "<li class='control-layer-violation'>Verification Route Gate: RED claim requires uncertainty label (U1-U6).</li>"
+        "</ul>"
+        "</div>"
+        "<p>Unsicherheit: U1 - Datenluecke im Inhaltsteil.</p>"
+    )
+    out = sut.ensure_uncertainty_annotations_html(src, lang="de")
+    note = re.search(r"(?is)<div[^>]*control-layer-note[^>]*>.*?</div>", out)
+    body = re.search(r"(?is)<p[^>]*>.*?</p>", out)
+    assert note is not None
+    assert body is not None
+    assert "uncertainty-inline-marker" not in note.group(0)
+    assert "data-u-code='U1'" in body.group(0)
+    assert "data-u-code='U6'" not in out
+
+
+def test_inline_markers_assign_explicit_code_to_matching_block_not_first_candidate():
+    src = (
+        "<p>Der erste Absatz ist lang genug, enthaelt aber keinen Unsicherheitscode und dient nur als Kontext.</p>"
+        "<p>Der zweite Absatz enthaelt explizit U1 und beschreibt eine Datenluecke fuer den Inhaltsteil.</p>"
+    )
+    out = sut.inject_inline_uncertainty_markers_html(src, codes=["U1"], lang="de")
+    blocks = re.findall(r"(?is)<p[^>]*>.*?</p>", out)
+    assert len(blocks) == 2
+    assert "uncertainty-inline-marker" not in blocks[0]
+    assert "uncertainty-inline-marker" in blocks[1]
+
+
 def test_inline_markers_do_not_break_self_debunking_div_structure():
     src = (
         "<div class='self-debunking'>"
@@ -125,6 +157,30 @@ def test_inline_marker_in_li_stays_sentence_near_and_not_after_closing_div():
         out,
     )
     assert "</div> <span class='uncertainty-inline-wrap'" not in out
+
+
+def test_ensure_annotations_marks_plain_explicit_u_code_with_tooltip():
+    src = (
+        "<p>U1: Datenlücke. Benötigt: Kontinuierliche Beobachtung und Anpassung der Strategien.</p>"
+    )
+    out = sut.ensure_uncertainty_annotations_html(src, lang="de")
+    assert "uncertainty-inline-marker" in out
+    assert "data-u-code='U1'" in out
+    assert "data-u-title='U1 - Datenluecke" in out
+    assert "U1: Datenlücke" not in out
+    assert out.count("data-u-code='U1'") == 1
+
+
+def test_ensure_annotations_avoids_plain_and_tooltip_duplicate_for_parenthesized_u_code():
+    src = (
+        "<p>Die Aussage bleibt vorlaeufig und ist von der Datenlage abhaengig (U1). "
+        "Weitere Verifikation ist erforderlich.</p>"
+    )
+    out = sut.ensure_uncertainty_annotations_html(src, lang="de")
+    assert "uncertainty-inline-marker" in out
+    assert out.count("data-u-code='U1'") == 1
+    assert "(U1)." not in out
+    assert re.search(r"\(\s*<span class='uncertainty-inline-wrap'[^>]*>\s*\(", out) is None
 
 
 def test_append_uncertainty_legend_removes_existing_block():

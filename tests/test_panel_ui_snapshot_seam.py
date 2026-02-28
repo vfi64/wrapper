@@ -6,10 +6,11 @@ import panel_ui_snapshot_seam as sut
 def test_panel_ui_default_snapshot_contains_minimum_panel_keys():
     ui = sut.panel_ui_default_snapshot()
     assert isinstance(ui, dict)
-    for key in ("providers", "current_provider", "current_model", "available_models", "answer_language", "comm", "profiles", "chat_logs"):
+    for key in ("providers", "current_provider", "current_model", "available_models", "answer_language", "language_policy_mode", "comm", "profiles", "chat_logs"):
         assert key in ui
     assert ui["current_provider"] == "gemini"
     assert ui["answer_language"] == "de"
+    assert ui["language_policy_mode"] == "production"
 
 
 def test_panel_ui_apply_basic_runtime_normalizes_and_keeps_defaults_when_values_missing():
@@ -47,6 +48,9 @@ def test_panel_ui_probe_and_apply_basic_runtime_collects_values_from_router_cfg_
         def get_answer_language(self):
             return "EN"
 
+        def get_language_policy_mode(self):
+            return "benchmark"
+
     seen = {}
 
     def _get_models(provider):
@@ -66,6 +70,7 @@ def test_panel_ui_probe_and_apply_basic_runtime_collects_values_from_router_cfg_
     assert ui["current_model"] == "openrouter/model-1"
     assert ui["available_models"] == ["m1", "m2"]
     assert ui["answer_language"] == "en"
+    assert ui["language_policy_mode"] == "benchmark"
 
 
 def test_panel_ui_probe_and_apply_basic_runtime_failsoft_keeps_defaults_on_errors():

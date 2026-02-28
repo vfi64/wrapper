@@ -5,6 +5,7 @@ import re
 
 
 _U_CODE_RE = re.compile(r"\b(U[1-6])\b")
+_U_MARKED_RE = re.compile(r"(?i)data-u-code\s*=\s*(?:\"|')?(U[1-6])(?:\"|')?")
 _BLOCK_TAG_RE = re.compile(r"(?is)<(p|li)([^>]*)>(.*?)</\1>")
 _STATUS_KEY_RE = re.compile(r"(?i)\b(?:active profile|profile|overlay|sci|control layer|qc|cgi|color|comm)\s*:")
 _TS_FOOTER_RE = re.compile(
@@ -12,6 +13,12 @@ _TS_FOOTER_RE = re.compile(
 )
 _LEGEND_BLOCK_RE = re.compile(
     r"(?is)<details\b[^>]*class=(?:\"|')[^\"']*\buncertainty-legend\b[^\"']*(?:\"|')[^>]*>.*?</details>"
+)
+_CONTROL_LAYER_CLASS_BLOCK_RE = re.compile(
+    r"(?is)<(div|details)\b[^>]*class=(?:\"|')[^\"']*\b(?:csc-warning|control-layer-note|control-layer-alert)\b[^\"']*(?:\"|')[^>]*>.*?</\1>"
+)
+_CONTROL_LAYER_LEGACY_BLOCK_RE = re.compile(
+    r"(?is)<div\b[^>]*>\s*<b>\s*CONTROL\s+LAYER\s+(?:NOTE|ALERT|BLOCK)\s*</b>.*?</div>"
 )
 _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 _INLINE_CLOSING_TAG_RUN_RE = re.compile(
@@ -175,6 +182,13 @@ _INLINE_SKIP_TERMS = (
     "active profile",
     "verification route",
 )
+_CONTROL_LAYER_ATTR_HINTS = (
+    "csc-warning",
+    "control-layer-note",
+    "control-layer-alert",
+    "control-layer-violation",
+    "csc-details",
+)
 
 
 def _looks_like_status_scaffold_block(inner_html: str) -> bool:
@@ -216,6 +230,15 @@ def _looks_like_status_scaffold_block(inner_html: str) -> bool:
     return has_profile and has_meta
 
 
+def _strip_control_layer_blocks_for_analysis(src: str) -> str:
+    txt = str(src or "")
+    if not txt:
+        return txt
+    out = _CONTROL_LAYER_CLASS_BLOCK_RE.sub(" ", txt)
+    out = _CONTROL_LAYER_LEGACY_BLOCK_RE.sub(" ", out)
+    return out
+
+
 def _build_plain_text_index_map(html_text: str) -> tuple[str, list[int]]:
     plain_chars: list[str] = []
     html_after_positions: list[int] = []
@@ -229,6 +252,69 @@ def _build_plain_text_index_map(html_text: str) -> tuple[str, list[int]]:
         if ch == ">":
             in_tag = False
     return "".join(plain_chars), html_after_positions
+
+
+def _plain_to_html_span(pos_map: list[int], plain_start: int, plain_end: int) -> tuple[int, int]:
+    if not pos_map:
+        return -1, -1
+    ps = int(plain_start)
+    pe = int(plain_end)
+    if ps < 0 or pe <= ps or ps >= len(pos_map):
+        return -1, -1
+    end_idx = pe - 1
+    if end_idx >= len(pos_map):
+        return -1, -1
+    html_start = 0 if ps == 0 else int(pos_map[ps - 1])
+    html_end = int(pos_map[end_idx])
+    if html_end <= html_start:
+        return -1, -1
+    return html_start, html_end
+
+
+def _replace_first_plain_code_with_marker(inner_html: str, code: str, *, lang: str = "de") -> tuple[str, bool]:
+    src = str(inner_html or "")
+    cc = str(code or "").strip().upper()
+    if cc not in _U_CODES:
+        return src, False
+
+    plain, pos_map = _build_plain_text_index_map(src)
+    if not plain or not pos_map:
+        return src, False
+
+    pat = re.compile(rf"\b{re.escape(cc)}\b")
+    for m in pat.finditer(plain):
+        ps, pe = int(m.start()), int(m.end())
+        prev_ch = plain[ps - 1] if ps > 0 else ""
+        next_ch = plain[pe] if pe < len(plain) else ""
+        if prev_ch == "-" or next_ch == "-":
+            # Keep range notations like U1-U6 untouched.
+            continue
+
+        # If the source already contains "(U1)", replace the whole parenthesized token
+        # to avoid nested double parentheses after marker injection.
+        rep_ps = ps
+        rep_pe = pe
+        if ps > 0 and pe < len(plain) and plain[ps - 1] == "(" and plain[pe] == ")":
+            rep_ps = ps - 1
+            rep_pe = pe + 1
+
+        hs, he = _plain_to_html_span(pos_map, rep_ps, rep_pe)
+        if hs < 0 or he <= hs:
+            continue
+
+        raw_token = src[hs:he]
+        raw_plain = html.unescape(re.sub(r"(?is)<[^>]+>", "", str(raw_token or "")))
+        raw_plain = re.sub(r"\s+", "", raw_plain).upper()
+        expected_plain = re.sub(r"\s+", "", plain[rep_ps:rep_pe]).upper()
+        if raw_plain != expected_plain:
+            continue
+
+        marker = build_uncertainty_inline_marker_html(cc, lang=lang)
+        if not marker:
+            return src, False
+        return src[:hs] + marker + src[he:], True
+
+    return src, False
 
 
 def _advance_past_closing_tags(html_text: str, pos: int) -> int:
@@ -269,10 +355,15 @@ def _collect_sentence_slots(inner_html: str) -> list[dict]:
         raw_pos = pos_map[ee - 1] if (ee - 1) < len(pos_map) else len(inner_html)
         raw_pos = _advance_past_closing_tags(inner_html, raw_pos)
         txt = plain[ss:ee]
+        slot_codes: list[str] = []
+        for c in (find_uncertainty_codes(txt) + infer_uncertainty_codes(txt, user_text="")):
+            cc = str(c or "").strip().upper()
+            if cc in _U_CODES and cc not in slot_codes:
+                slot_codes.append(cc)
         out.append(
             {
                 "text": txt,
-                "codes": infer_uncertainty_codes(txt, user_text=""),
+                "codes": slot_codes,
                 "insert_pos": raw_pos,
             }
         )
@@ -283,14 +374,33 @@ def _inject_markers_sentence_precise(inner_html: str, block_codes: list[str], *,
     if not block_codes:
         return str(inner_html or "")
     src = str(inner_html or "")
+
+    uniq_codes: list[str] = []
+    for c in block_codes:
+        cc = str(c or "").strip().upper()
+        if cc in _U_CODES and cc not in uniq_codes:
+            uniq_codes.append(cc)
+
+    if not uniq_codes:
+        return src
+
+    remaining_codes: list[str] = []
+    for c in uniq_codes:
+        src, replaced = _replace_first_plain_code_with_marker(src, c, lang=lang)
+        if not replaced:
+            remaining_codes.append(c)
+
+    if not remaining_codes:
+        return src
+
     slots = _collect_sentence_slots(src)
     if not slots:
-        markers = " ".join(build_uncertainty_inline_marker_html(c, lang=lang) for c in block_codes if c in _U_CODES)
+        markers = " ".join(build_uncertainty_inline_marker_html(c, lang=lang) for c in remaining_codes if c in _U_CODES)
         return f"{src} {markers}".rstrip()
 
     assigned: dict[int, list[str]] = {}
     fallback_idx = len(slots) - 1
-    for code in block_codes:
+    for code in remaining_codes:
         tgt = fallback_idx
         for i, slot in enumerate(slots):
             if code in list(slot.get("codes") or []):
@@ -374,6 +484,17 @@ def find_uncertainty_codes(text: str) -> list[str]:
     return out
 
 
+def find_marked_uncertainty_codes(text: str) -> list[str]:
+    seen = set()
+    out = []
+    for m in _U_MARKED_RE.finditer(str(text or "")):
+        code = str(m.group(1) or "").strip().upper()
+        if code and code not in seen and code in _U_CODES:
+            seen.add(code)
+            out.append(code)
+    return out
+
+
 def infer_uncertainty_codes(text: str, *, user_text: str = "") -> list[str]:
     body = _normalize_text(text)
     user = _normalize_text(user_text)
@@ -448,9 +569,9 @@ def inject_inline_uncertainty_markers_html(
     inferred = [str(c or "").strip().upper() for c in (codes or infer_uncertainty_codes(src, user_text=user_text))]
     target_codes = []
     seen = set()
-    existing = set(find_uncertainty_codes(src))
+    existing_marked = set(find_marked_uncertainty_codes(src))
     for c in inferred:
-        if c in _U_CODES and c not in seen and c not in existing:
+        if c in _U_CODES and c not in seen and c not in existing_marked:
             seen.add(c)
             target_codes.append(c)
     if not target_codes:
@@ -461,6 +582,9 @@ def inject_inline_uncertainty_markers_html(
         tag = str(m.group(1) or "")
         attrs = str(m.group(2) or "")
         inner = str(m.group(3) or "")
+        attrs_low = attrs.lower()
+        if any(h in attrs_low for h in _CONTROL_LAYER_ATTR_HINTS):
+            continue
         if "uncertainty-legend" in attrs or "uncertainty-auto-marker" in attrs:
             continue
         if _looks_like_status_scaffold_block(inner):
@@ -468,11 +592,15 @@ def inject_inline_uncertainty_markers_html(
         norm = _normalize_text(inner)
         if not norm or len(norm) < 40:
             continue
+        if ("control layer note" in norm) or ("control layer alert" in norm) or ("control layer block" in norm):
+            continue
         if any(t in norm for t in _INLINE_SKIP_TERMS):
             continue
-        if re.search(r"\bU[1-6]\b", norm):
-            continue
-        block_codes = infer_uncertainty_codes(inner, user_text="")
+        block_codes = []
+        for c in (find_uncertainty_codes(inner) + infer_uncertainty_codes(inner, user_text="")):
+            cc = str(c or "").strip().upper()
+            if cc in _U_CODES and cc not in block_codes:
+                block_codes.append(cc)
         candidates.append(
             {
                 "start": m.start(),
@@ -582,11 +710,15 @@ def ensure_uncertainty_annotations_html(text: str, *, lang: str = "de", user_tex
     if not src:
         return src
 
-    codes = find_uncertainty_codes(src)
-    if not codes:
-        inferred = infer_uncertainty_codes(src, user_text=user_text)
+    analysis_src = _strip_control_layer_blocks_for_analysis(src)
+    codes = find_uncertainty_codes(analysis_src)
+    if codes:
+        src = inject_inline_uncertainty_markers_html(src, codes=codes, lang=lang, user_text=user_text)
+        codes = find_uncertainty_codes(_strip_control_layer_blocks_for_analysis(src))
+    else:
+        inferred = infer_uncertainty_codes(analysis_src, user_text=user_text)
         src = inject_inline_uncertainty_markers_html(src, codes=inferred, lang=lang, user_text=user_text)
-        codes = find_uncertainty_codes(src)
+        codes = find_uncertainty_codes(_strip_control_layer_blocks_for_analysis(src))
         if (not codes) and inferred and ("uncertainty-auto-marker" not in src):
             src = src + "\n" + build_uncertainty_auto_marker_html(inferred, lang=lang)
             codes = list(inferred)

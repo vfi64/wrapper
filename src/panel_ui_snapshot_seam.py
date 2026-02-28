@@ -8,6 +8,7 @@ def panel_ui_default_snapshot() -> dict:
         'current_model': 'gemini-2.0-flash',
         'available_models': ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-pro'],
         'answer_language': 'de',
+        'language_policy_mode': 'production',
         'comm': [],
         'profiles': [],
         'sci': [],
@@ -40,6 +41,7 @@ def panel_ui_apply_basic_runtime(
     current_model=None,
     available_models=None,
     answer_language=None,
+    language_policy_mode=None,
 ) -> dict:
     out = data if isinstance(data, dict) else panel_ui_default_snapshot()
 
@@ -57,6 +59,10 @@ def panel_ui_apply_basic_runtime(
     al = str(answer_language or '').strip().lower()
     if al in ('de', 'en'):
         out['answer_language'] = al
+
+    mode = str(language_policy_mode or '').strip().lower()
+    if mode in ('production', 'benchmark'):
+        out['language_policy_mode'] = mode
 
     return out
 
@@ -102,6 +108,12 @@ def panel_ui_probe_and_apply_basic_runtime(
             al = (cfg_obj.get_answer_language() or 'de').strip().lower()
     except Exception:
         al = None
+    mode = None
+    try:
+        if cfg_obj is not None and hasattr(cfg_obj, 'get_language_policy_mode'):
+            mode = (cfg_obj.get_language_policy_mode() or 'production').strip().lower()
+    except Exception:
+        mode = None
 
     return panel_ui_apply_basic_runtime(
         out,
@@ -109,6 +121,7 @@ def panel_ui_probe_and_apply_basic_runtime(
         current_model=cm,
         available_models=available_models,
         answer_language=al,
+        language_policy_mode=mode,
     )
 
 
@@ -133,6 +146,8 @@ def panel_ui_merge_governance_ui(data, *, gov_ui) -> dict:
             out[key] = ui.get(key)
     if isinstance(ui.get('answer_language'), str):
         out['answer_language'] = ui.get('answer_language')
+    if isinstance(ui.get('language_policy_mode'), str):
+        out['language_policy_mode'] = ui.get('language_policy_mode')
     return out
 
 

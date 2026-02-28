@@ -38,7 +38,7 @@ def append_jsonl_line(path: str, obj: Dict[str, Any]) -> None:
 
 def build_jsonl_meta(*, wrapper_name: Optional[str], wrapper_version: Optional[str],
                      ruleset_version: Optional[str]=None, provider: Optional[str]=None,
-                     model: Optional[str]=None) -> Dict[str, Any]:
+                     model: Optional[str]=None, language_policy_mode: Optional[str]=None) -> Dict[str, Any]:
     """Best-effort metadata (no secrets)."""
     meta: Dict[str, Any] = {
         "wrapper_name": wrapper_name,
@@ -50,4 +50,6 @@ def build_jsonl_meta(*, wrapper_name: Optional[str], wrapper_version: Optional[s
         meta["provider"] = provider
     if model:
         meta["model"] = model
+    if language_policy_mode:
+        meta["language_policy_mode"] = language_policy_mode
     return meta

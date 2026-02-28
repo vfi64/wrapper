@@ -42,6 +42,13 @@ def _norm_blocked_severities(value: Any) -> list[str]:
     return out or ["critical"]
 
 
+def _norm_language_policy_mode(value: str) -> str:
+    mode = (value or "").strip().lower()
+    if mode in {"production", "benchmark"}:
+        return mode
+    return "production"
+
+
 @dataclass
 class WrapperState:
     comm_active: bool = True
@@ -50,6 +57,7 @@ class WrapperState:
     color: str = "on"
     conversation_language: str = "de"
     answer_language: str = "de"
+    language_policy_mode: str = "production"
     sci_pending: bool = False
     sci_variant: str = ""
     sci_active: bool = False
@@ -82,6 +90,9 @@ def state_from_runtime(runtime_state: Any) -> WrapperState:
         color=str(getattr(runtime_state, "color", "on") or "on"),
         conversation_language=str(getattr(runtime_state, "conversation_language", "de") or "de"),
         answer_language=str(getattr(runtime_state, "answer_language", "de") or "de"),
+        language_policy_mode=_norm_language_policy_mode(
+            str(getattr(runtime_state, "language_policy_mode", "production") or "production")
+        ),
         sci_pending=bool(getattr(runtime_state, "sci_pending", False)),
         sci_variant=str(getattr(runtime_state, "sci_variant", "") or ""),
         sci_active=bool(getattr(runtime_state, "sci_active", False)),
@@ -116,6 +127,7 @@ def init_state_from_ruleset(
     *,
     answer_language: str = "de",
     conversation_language: str = "de",
+    language_policy_mode: str = "production",
 ) -> WrapperState:
     data = ruleset if isinstance(ruleset, dict) else {}
     profiles = (data.get("profiles") or {}) if isinstance(data, dict) else {}
@@ -146,6 +158,7 @@ def init_state_from_ruleset(
         color="on",
         conversation_language=(conversation_language or "de"),
         answer_language=(answer_language or "de"),
+        language_policy_mode=_norm_language_policy_mode(language_policy_mode),
         sci_pending=False,
         sci_variant="",
         sci_active=False,

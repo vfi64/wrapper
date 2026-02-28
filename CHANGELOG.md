@@ -2,6 +2,19 @@
 
 All notable changes are documented in this file.
 
+## 20.0.15-s14 - 2026-02-28
+
+- Added explicit language-policy modes for output validation:
+  - `production` (default): enforce language violations as hard contract failures
+  - `benchmark`: log language violations as soft audit signals without repair rewrite
+- Hardened language validation scope to content-focused checks (reduces false positives from control/meta sections).
+- Added `language_policy_mode` propagation across config, runtime state, panel snapshot, and audit/JSONL metadata.
+- Exposed runtime setter route for language-policy mode via panel action bridge.
+- Extended test coverage for:
+  - benchmark vs production enforcement behavior,
+  - content-scope language checks with scientific symbols/control-line exclusions,
+  - panel/state normalization for language-policy mode.
+
 ## 20.0.12-s12 - 2026-02-26
 
 - Completed S12 panel/QC UI-orchestration seam expansion (private-first, behavior-preserving):

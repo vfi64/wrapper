@@ -1632,6 +1632,32 @@ def test_chat_uncertainty_tooltip_supports_mouse_hold():
     assert "document.addEventListener('mouseup', _uTipHide)" in html
 
 
+def test_chat_cgi_widget_uses_dropdowns_and_repeat_action_only():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_CHAT", "")
+    assert isinstance(html, str) and html
+    assert "_buildCgiWidgetHtml(" in html
+    assert "submitCgi(" in html
+    assert "data-cgi-field=\"clarity\"" in html
+    assert "data-cgi-field=\"insight\"" in html
+    assert "data-cgi-field=\"efficiency\"" in html
+    assert "submitCgi('${id}','repeat')" in html
+    assert "submitCgi('${id}','save')" not in html
+    assert "submit_cgi_feedback" in html
+    assert "data-u-title=" in html
+    assert "Wirkung nur fuer die naechste Antwort" in html
+    assert "document.addEventListener('mouseover'" in html
+    assert ".cgi-help" in html
+
+
+def test_main_bridge_exposes_submit_cgi_feedback():
+    mod = load_fix_module()
+    api = mod.Api()
+    bridge = getattr(api, "main_bridge", None)
+    assert bridge is not None
+    assert hasattr(bridge, "submit_cgi_feedback")
+
+
 def test_panel_cmd_handles_qc_override_modal_block_with_info_status():
     mod = load_fix_module()
     html = getattr(mod, "HTML_PANEL", "")
@@ -1684,6 +1710,28 @@ def test_append_uncertainty_explanation_skips_profile_header_and_keeps_footer():
     assert "ts-footer" in out
 
 
+def test_append_uncertainty_explanation_skips_control_layer_note_and_marks_content():
+    mod = load_fix_module()
+    api = mod.Api()
+    src = (
+        "<div class='control-layer-note csc-warning'>"
+        "<b>CONTROL LAYER NOTE</b>"
+        "<ul class='control-layer-violations'>"
+        "<li class='control-layer-violation'>Verification Route Gate: RED claim requires uncertainty label (U1-U6).</li>"
+        "</ul>"
+        "</div>"
+        "<p>Unsicherheit: U1 - Datenluecke im Inhaltsteil.</p>"
+    )
+    out = api._append_uncertainty_explanation_if_needed(src)
+    note = re.search(r"(?is)<div[^>]*control-layer-note[^>]*>.*?</div>", out)
+    body = re.search(r"(?is)<p[^>]*>.*?</p>", out)
+    assert note is not None
+    assert body is not None
+    assert "uncertainty-inline-marker" not in note.group(0)
+    assert "data-u-code='U1'" in body.group(0)
+    assert "data-u-code='U6'" not in out
+
+
 def test_uncertainty_tooltip_uses_answer_language_english():
     mod = load_fix_module()
     api = mod.Api()
@@ -1730,7 +1778,46 @@ def test_signal_dot_tooltip_uses_answer_language_german():
     assert "Rot: niedrige Verlaesslichkeit; erhebliche Unsicherheit oder schwache Absicherung." in out
 
 
-def test_append_uncertainty_explanation_injects_fallback_signal_dots_when_color_on():
+def test_signal_dot_tooltip_upgrades_existing_marker_without_title():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.answer_language = "de"
+    src = (
+        "<p><span class='signal-dot-marker'><span style='color:#f9a825; font-weight:600;'>🟡</span></span> Aussage.</p>"
+    )
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert "signal-dot-marker" in out
+    assert "data-u-title='Gelb: mittlere Verlaesslichkeit; relevante Unsicherheit bleibt.'" in out
+    assert "</span></span></span>" not in out
+
+
+def test_signal_dot_marker_count_follows_llm_output_without_wrapper_capping():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.answer_language = "de"
+    src = (
+        "<p><span style='color:#2e7d32; font-weight:600;'>🟢</span> Satz A. "
+        "<span style='color:#f9a825; font-weight:600;'>🟡</span> Satz B. "
+        "<span style='color:#c62828; font-weight:600;'>🔴</span> Satz C.</p>"
+    )
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert out.count("signal-dot-marker") == 3
+
+
+def test_append_uncertainty_explanation_marks_plain_explicit_u_code():
+    mod = load_fix_module()
+    api = mod.Api()
+    src = "<p>U1: Datenlücke. Benötigt: Kontinuierliche Beobachtung und Anpassung der Strategien.</p>"
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert "uncertainty-inline-marker" in out
+    assert "data-u-code='U1'" in out
+    assert "data-u-title='U1 - Datenluecke" in out
+    assert "U1: Datenlücke" not in out
+    assert out.count("data-u-code='U1'") == 1
+    assert re.search(r"\(\s*<span class='uncertainty-inline-wrap'[^>]*>\s*\(", out) is None
+
+
+def test_append_uncertainty_explanation_does_not_inject_signal_dots_without_llm_markers_when_color_on():
     mod = load_fix_module()
     api = mod.Api()
     api.gov_state.comm_active = True
@@ -1738,8 +1825,7 @@ def test_append_uncertainty_explanation_injects_fallback_signal_dots_when_color_
     api.gov_state.answer_language = "de"
     src = "<p>Dies ist eine klare und einfache Aussage ohne besondere Unsicherheiten.</p>"
     out = api._append_uncertainty_explanation_if_needed(src)
-    assert "signal-dot-marker" in out
-    assert ("🟢" in out) or ("🟡" in out) or ("🔴" in out)
+    assert "signal-dot-marker" not in out
 
 
 def test_append_uncertainty_explanation_does_not_inject_fallback_signal_dots_when_color_off():
@@ -1753,22 +1839,17 @@ def test_append_uncertainty_explanation_does_not_inject_fallback_signal_dots_whe
     assert "signal-dot-marker" not in out
 
 
-def test_fallback_signal_dots_skip_status_and_qc_blocks():
+def test_append_uncertainty_explanation_keeps_existing_llm_signal_markers():
     mod = load_fix_module()
     api = mod.Api()
     api.gov_state.comm_active = True
     api.gov_state.color = "on"
     src = (
-        "<p>Active profile: Standard · Overlay: Strict · SCI: off · Color: on</p>"
-        "<p>Dies ist eine klare und einfache Aussage ohne besondere Unsicherheiten.</p>"
-        "<p>QC-Matrix: Clarity 3 (Δ0)</p>"
+        "<p><span style='color:#2e7d32; font-weight:600;'>🟢</span> A.</p>"
+        "<p><span style='color:#f9a825; font-weight:600;'>🟡</span> B.</p>"
     )
     out = api._append_uncertainty_explanation_if_needed(src)
-    blocks = re.findall(r"(?is)<p[^>]*>.*?</p>", out)
-    assert len(blocks) == 3
-    assert "signal-dot-marker" not in blocks[0]
-    assert "signal-dot-marker" in blocks[1]
-    assert "signal-dot-marker" not in blocks[2]
+    assert out.count("signal-dot-marker") == 2
 
 
 def test_main_window_title_is_dynamic_and_matches_wrapper_name():
@@ -3285,6 +3366,22 @@ def test_sanitize_self_debunking_markdown_in_html_removes_orphan_star_before_br(
     assert "<br><strong>Warum das wichtig ist</strong>" in out
 
 
+def test_sanitize_self_debunking_markdown_in_html_cleans_nested_orphan_star_lines():
+    mod = load_fix_module()
+    html_in = (
+        "<div class=\"self-debunking\">"
+        "<div>Selbst-Debunking:</div>"
+        "<ol><li><p><strong>Schwäche</strong>: Punkt eins."
+        "   *<br><strong>Warum das wichtig ist</strong>: Punkt zwei."
+        "   *<br><strong>Nächster Check</strong>: Punkt drei.</p></li></ol>"
+        "</div>"
+    )
+    out = mod.sanitize_self_debunking_markdown_in_html(html_in)
+    assert "*<br>" not in out
+    assert "<strong>Warum das wichtig ist</strong>" in out
+    assert "<strong>Nächster Check</strong>" in out
+
+
 def test_qc_override_runtime_violations_detects_brevity_mismatch():
     mod = load_fix_module()
     short_txt = "Kurze Antwort."
@@ -3367,6 +3464,92 @@ def test_cgi_user_feedback_triplet_is_intercepted_without_llm_call(tmp_path):
 
     res = api.ask("3,3,3")
     assert "CGI feedback recorded" in (res.get("html") or "")
+
+
+def test_cgi_bar_is_only_enabled_for_content_answers():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    raw_answer = (
+        "Das ist eine Inhaltsantwort.\n\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: A.\nWarum das wichtig ist: A.\nNächster Check: A.\n"
+        "2. Schwäche: B.\nWarum das wichtig ist: B.\nNächster Check: B.\n"
+        "3. Schwäche: C.\nWarum das wichtig ist: C.\nNächster Check: C.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)\n"
+    )
+    api._llm_call = lambda *a, **k: raw_answer  # type: ignore[assignment]
+
+    cmd_out = api.ask("Comm Start")
+    assert isinstance(cmd_out, dict)
+    assert cmd_out.get("cgi_bar") is False
+
+    ans_out = api.ask("Was ist Zeit?")
+    assert isinstance(ans_out, dict)
+    assert ans_out.get("cgi_bar") is True
+
+
+def test_submit_cgi_feedback_save_records_triplet_without_llm_call():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    def boom(*a, **k):
+        raise AssertionError("LLM must not be called for CGI save")
+
+    api._llm_call = boom  # type: ignore[assignment]
+    res = api.submit_cgi_feedback(3, 2, 2, "save")
+
+    assert isinstance(res, dict)
+    assert res.get("ok") is True
+    assert res.get("repeated") is False
+    assert res.get("saved_triplet") == "3,2,2"
+    assert api.gov_state.last_user_feedback_triplet == "3,2,2"
+    assert bool(api.gov_state.cgi_feedback_pending_for_model) is True
+
+
+def test_submit_cgi_feedback_repeat_reuses_last_content_prompt_and_injects_feedback():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    raw_answer = (
+        "Das ist eine Inhaltsantwort.\n\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: A.\nWarum das wichtig ist: A.\nNächster Check: A.\n"
+        "2. Schwäche: B.\nWarum das wichtig ist: B.\nNächster Check: B.\n"
+        "3. Schwäche: C.\nWarum das wichtig ist: C.\nNächster Check: C.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)\n"
+    )
+    prompts = []
+
+    def fake_llm(prompt, reason="chat"):
+        prompts.append(str(prompt))
+        return raw_answer
+
+    api._llm_call = fake_llm  # type: ignore[assignment]
+    _ = api.ask("Wie funktioniert Zeitdilatation?")
+    assert len(prompts) >= 1
+
+    res = api.submit_cgi_feedback(0, 0, 0, "repeat")
+    assert isinstance(res, dict)
+    assert res.get("ok") is True
+    assert res.get("repeated") is True
+    assert res.get("saved_triplet") == "0,0,0"
+    assert "one-shot" in str(res.get("message", "")).lower()
+    assert len(prompts) >= 2
+    replay_prompts = prompts[1:]
+    assert any("[CGI Feedback]" in p for p in replay_prompts)
+    assert any("0,0,0" in p for p in replay_prompts)
+    assert any("[CGI One-Shot Rewrite Constraints]" in p for p in replay_prompts)
+    assert any("Nur fuer diese naechste Antwort anwenden" in p for p in replay_prompts)
+    assert any("Behandle dies als Ueberarbeitung, nicht als Paraphrase" in p for p in replay_prompts)
+    assert any("Clarity-QC ist bereits 3" in p for p in replay_prompts)
+
+    nested = res.get("response")
+    assert isinstance(nested, dict)
+    assert nested.get("cgi_bar") is True
 
 
 def test_stage1_route_ctx_has_required_keys():
@@ -4861,3 +5044,147 @@ def test_comm_start_via_input_line_refreshes_panel_ui_state():
     assert isinstance(out, dict)
     assert api.gov_state.comm_active is True
     assert calls["panel_refresh"] >= 1
+
+
+def test_language_script_contract_flags_cyrillic_outside_quote_or_source():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+
+    txt = "Dies ist ein deutscher Satz mit заинтересованных сторон im Fliesstext."
+    vios = validator.validate_language_script_contract(txt, expected_lang='de')
+
+    assert any('Language contract' in v for v in vios)
+
+
+def test_language_script_contract_allows_cyrillic_in_quote_and_source_line():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+
+    txt = (
+        'Die Uebersetzung lautet "заинтересованных сторон".\n'
+        'Source: https://example.org/ru заинтересованных сторон\n'
+        'Der restliche Antworttext bleibt deutsch.'
+    )
+    vios = validator.validate_language_script_contract(txt, expected_lang='de')
+
+    assert vios == []
+
+
+def test_language_script_contract_ignores_control_layer_lines_and_scientific_symbols():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+
+    txt = (
+        "CONTROL LAYER NOTE: технический Hinweis\n"
+        "Die Formel Δt beschreibt eine zeitliche Änderung im Modell."
+    )
+    vios = validator.validate_language_script_contract(txt, expected_lang='de')
+
+    assert vios == []
+
+
+def test_language_policy_benchmark_moves_language_violations_to_soft():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+    state = types.SimpleNamespace(
+        answer_language="de",
+        language_policy_mode="benchmark",
+        active_profile="Standard",
+        sci_variant="",
+        sci_active=False,
+    )
+
+    hard, soft = validator.validate(
+        text="Status: смешанный текст",
+        state=state,
+        expect_menu=False,
+        expect_trace=False,
+        is_command=True,
+        user_prompt="Comm State",
+    )
+
+    assert hard == []
+    assert any("Language policy benchmark:" in v for v in soft)
+
+
+def test_language_policy_production_keeps_language_violations_hard():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+    state = types.SimpleNamespace(
+        answer_language="de",
+        language_policy_mode="production",
+        active_profile="Standard",
+        sci_variant="",
+        sci_active=False,
+    )
+
+    hard, soft = validator.validate(
+        text="Status: смешанный текст",
+        state=state,
+        expect_menu=False,
+        expect_trace=False,
+        is_command=True,
+        user_prompt="Comm State",
+    )
+
+    assert any("Language contract" in v for v in hard)
+    assert not any("Language policy benchmark:" in v for v in soft)
+
+
+def test_verification_route_gate_strong_claim_u_only_is_not_enough():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+
+    txt = 'Das beweist definitiv, dass die Methode immer korrekt ist. U1.'
+    vios = validator.validate_verification_route_gate(txt, is_command=False)
+
+    assert any('uncertainty label alone is insufficient' in v for v in vios)
+
+
+def test_verification_route_gate_allows_downgraded_strong_claim_with_u_label():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+
+    txt = 'Das wirkt definitiv, ist aber nur eine Hypothese und daher unsicher. U1.'
+    vios = validator.validate_verification_route_gate(txt, is_command=False)
+
+    assert not any('strong-claim heuristic triggered' in v for v in vios)
+
+
+def test_verification_route_gate_red_claim_requires_u_and_route():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+
+    txt = '[RED] 🔴 Kritische Aussage ohne Nachweis.'
+    vios = validator.validate_verification_route_gate(txt, is_command=False)
+
+    assert any('RED claim requires uncertainty label' in v for v in vios)
+    assert any('RED claim requires at least one verification route marker' in v for v in vios)
+
+
+def test_build_repair_prompt_adds_transliteration_guidance_on_language_contract_violation():
+    mod = load_fix_module()
+    gov_mgr = types.SimpleNamespace(loaded=False, data={})
+    validator = mod.OutputComplianceValidator(gov_mgr, None)
+    state = types.SimpleNamespace(answer_language="de", sci_variant="", sci_active=False, qc_overrides={})
+
+    prompt = validator.build_repair_prompt(
+        user_prompt="Bitte erklaere den Begriff.",
+        raw_response="Antwort mit заинтересованных сторон im Fliesstext.",
+        state=state,
+        hard_violations=["Language contract: expected DE content; found non-DE script outside allowed quote/source contexts."],
+        soft_violations=[],
+    )
+
+    assert "Language contract repair guidance:" in prompt
+    assert "transliterate" in prompt.lower()
+    assert "source/citation lines" in prompt
+    assert "Do not rely on name-specific whitelists." in prompt

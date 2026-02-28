@@ -65,6 +65,17 @@
   .qc-bar { margin-top: 8px; border-top: 1px solid #eee; padding-top: 5px; font-size: 11px; color:#555; }
   .qc-btn { cursor: pointer; margin-right: 8px; color: #1a73e8; background:#f1f3f4; padding:2px 6px; border-radius:4px; }
   .qc-btn:hover { background:#1a73e8; color:white; }
+  .cgi-widget { display:flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .cgi-title { font-weight: 700; color: #334155; margin-right: 2px; }
+  .cgi-field { display:inline-flex; align-items:center; gap:4px; color:#475569; }
+  .cgi-select { height:24px; border:1px solid #cbd5e1; border-radius:4px; background:#fff; color:#0f172a; font-size:11px; padding:0 4px; }
+  .cgi-sep { color:#94a3b8; margin: 0 1px; }
+  .cgi-action { height:24px !important; padding:0 8px !important; border-radius:4px !important; border:1px solid #93c5fd !important; background:#e8f0fe !important; color:#1a73e8 !important; font-size:11px !important; font-weight:600 !important; line-height:22px !important; cursor:pointer; }
+  .cgi-action:hover { background:#1a73e8 !important; color:#fff !important; }
+  .cgi-action.repeat { border-color:#60a5fa !important; }
+  .cgi-help { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:#e2e8f0; color:#334155; font-weight:700; cursor:help; font-size:11px; }
+  .cgi-status { min-height:16px; color:#475569; font-size:11px; }
+  .cgi-hint-line { width:100%; color:#64748b; font-size:10px; margin-top:2px; }
 
   .csc-badge {
     position: absolute;
@@ -239,13 +250,133 @@
              `<div class="csc-warning"><b>CSC</b>: ${msg}${details}</div>`;
   }
 
-  function addMsg(role, text, qc=false, csc=null) {
+  function _cgiLang(lang){
+      const l = String(lang || '').trim().toLowerCase();
+      if(l.startsWith('en')) return 'en';
+      return 'de';
+  }
+
+  function _cgiTexts(lang){
+      const useEn = _cgiLang(lang) === 'en';
+      if(useEn){
+          return {
+              title: 'CGI Feedback:',
+              clarity: 'Clarity gain',
+              insight: 'Insight gain',
+              efficiency: 'Efficiency gain',
+              repeat: 'Repeat with adjustments',
+              help: 'Optional user feedback (0-3) for clarity, insight, and efficiency. Repeat re-runs the last content question with this feedback.',
+              hint: '0 = weak (stronger rewrite), 3 = good (lighter rewrite). Effect applies to the next answer only.',
+              repeating: 'Applying CGI feedback and repeating last content answer...',
+              action_failed: 'CGI feedback action could not be executed.',
+              invalid: 'Please select values from 0 to 3 for all three criteria.'
+          };
+      }
+      return {
+          title: 'CGI-Feedback:',
+          clarity: 'Klarheitsgewinn',
+          insight: 'Erkenntnisgewinn',
+          efficiency: 'Effizienzgewinn',
+          repeat: 'Antwort mit Anpassungen wiederholen',
+          help: 'Optionales Nutzerfeedback (0-3): 0 bedeutet schwach und erzwingt eine staerkere Ueberarbeitung, 3 bedeutet gut und nur leichte Anpassung. Die Wirkung gilt nur fuer die naechste Antwort.',
+          hint: '0 = schlecht (staerkere Anpassung), 3 = gut (geringere Anpassung). Wirkung nur fuer die naechste Antwort.',
+          repeating: 'CGI-Feedback wird angewendet, letzte Inhaltsfrage wird neu beantwortet...',
+          action_failed: 'CGI-Aktion konnte nicht ausgeführt werden.',
+          invalid: 'Bitte für alle drei Kriterien Werte von 0 bis 3 wählen.'
+      };
+  }
+
+  function _cgiOptions(){
+      return '<option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>';
+  }
+
+  let __cgiCounter = 0;
+  function _buildCgiWidgetHtml(answerLang){
+      const lang = _cgiLang(answerLang);
+      const t = _cgiTexts(lang);
+      __cgiCounter += 1;
+      const id = 'cgi-widget-' + String(__cgiCounter);
+      return (
+          `<div class="qc-bar cgi-widget" id="${id}" data-cgi-lang="${lang}">` +
+          `<span class="cgi-title">${escHtml(t.title)}</span>` +
+          `<label class="cgi-field">${escHtml(t.clarity)} <select class="cgi-select" data-cgi-field="clarity">${_cgiOptions()}</select></label>` +
+          `<span class="cgi-sep">/</span>` +
+          `<label class="cgi-field">${escHtml(t.insight)} <select class="cgi-select" data-cgi-field="insight">${_cgiOptions()}</select></label>` +
+          `<span class="cgi-sep">/</span>` +
+          `<label class="cgi-field">${escHtml(t.efficiency)} <select class="cgi-select" data-cgi-field="efficiency">${_cgiOptions()}</select></label>` +
+          `<button type="button" class="cgi-action repeat" onclick="submitCgi('${id}','repeat')">${escHtml(t.repeat)}</button>` +
+          `<span class="cgi-help" data-u-title="${escHtml(t.help)}" title="${escHtml(t.help)}">i</span>` +
+          `<span class="cgi-status"></span>` +
+          `<div class="cgi-hint-line">${escHtml(t.hint)}</div>` +
+          `</div>`
+      );
+  }
+
+  async function submitCgi(widgetId, mode){
+      const root = document.getElementById(String(widgetId || ''));
+      if(!root) return;
+      const lang = _cgiLang(root.getAttribute('data-cgi-lang') || '');
+      const t = _cgiTexts(lang);
+      const statusEl = root.querySelector('.cgi-status');
+      const kEl = root.querySelector('select[data-cgi-field="clarity"]');
+      const iEl = root.querySelector('select[data-cgi-field="insight"]');
+      const eEl = root.querySelector('select[data-cgi-field="efficiency"]');
+      const actButtons = root.querySelectorAll('button.cgi-action');
+      const sel = root.querySelectorAll('select.cgi-select');
+      const k = parseInt(kEl ? kEl.value : '', 10);
+      const i = parseInt(iEl ? iEl.value : '', 10);
+      const e = parseInt(eEl ? eEl.value : '', 10);
+      if([k,i,e].some(v => Number.isNaN(v) || v < 0 || v > 3)){
+          if(statusEl){
+              statusEl.style.color = '#b91c1c';
+              statusEl.textContent = t.invalid;
+          }
+          return;
+      }
+      const busy = t.repeating;
+      if(statusEl){
+          statusEl.style.color = '#475569';
+          statusEl.textContent = busy;
+      }
+      actButtons.forEach(b => { b.disabled = true; });
+      sel.forEach(s => { s.disabled = true; });
+      try{
+          const res = await window.pywebview.api.submit_cgi_feedback(k, i, e, String(mode || 'repeat'));
+          if(!res || !res.ok){
+              const err = (res && res.error) ? String(res.error) : t.action_failed;
+              if(statusEl){
+                  statusEl.style.color = '#b91c1c';
+                  statusEl.textContent = err;
+              }
+              return;
+          }
+          if(statusEl){
+              statusEl.style.color = '#166534';
+              statusEl.textContent = String(res.message || '');
+          }
+          if(res.repeated && res.response){
+              const rr = res.response || {};
+              const rrLang = String(rr.answer_lang || lang || '');
+              addMsg('bot', String(rr.html || ''), !!rr.cgi_bar, rr.csc || null, {answerLang: rrLang});
+          }
+      } catch(e2){
+          if(statusEl){
+              statusEl.style.color = '#b91c1c';
+              statusEl.textContent = t.action_failed + ' ' + String(e2);
+          }
+      } finally {
+          actButtons.forEach(b => { b.disabled = false; });
+          sel.forEach(s => { s.disabled = false; });
+      }
+  }
+
+  function addMsg(role, text, qc=false, csc=null, opts={}) {
       const d = document.createElement('div');
       d.className = 'msg ' + role;
       let html = '<button class="copy-btn" onclick="copyToClipboard(this)" title="Copy">📋</button>';
       if(role === 'bot') html += renderCscBlock(csc);
       html += text;
-      if(qc) html += '<div class="qc-bar">QC (CGI): <span class="qc-btn" onclick="rate(0)">0</span><span class="qc-btn" onclick="rate(1)">1</span><span class="qc-btn" onclick="rate(2)">2</span><span class="qc-btn" onclick="rate(3)">3</span></div>';
+      if(qc && role === 'bot') html += _buildCgiWidgetHtml((opts && opts.answerLang) ? opts.answerLang : '');
       d.innerHTML = html;
       document.getElementById('chat').appendChild(d);
       document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
@@ -331,10 +462,24 @@
   document.addEventListener('mousedown', (e)=>{
       if(typeof e.button === 'number' && e.button !== 0) return;
       const t = (e.target && e.target.closest)
-          ? e.target.closest('.uncertainty-inline-marker, .signal-dot-marker')
+          ? e.target.closest('.uncertainty-inline-marker, .signal-dot-marker, .cgi-help')
           : null;
       if(!t) return;
       _uTipShow(t, e);
+  });
+  document.addEventListener('mouseover', (e)=>{
+      const t = (e.target && e.target.closest)
+          ? e.target.closest('.cgi-help')
+          : null;
+      if(!t) return;
+      _uTipShow(t, e);
+  });
+  document.addEventListener('mouseout', (e)=>{
+      const t = (e.target && e.target.closest)
+          ? e.target.closest('.cgi-help')
+          : null;
+      if(!t) return;
+      _uTipHide();
   });
   document.addEventListener('mouseup', _uTipHide);
   document.addEventListener('dragstart', _uTipHide);
@@ -411,11 +556,13 @@
       btn.disabled = true;
       try {
           const res = await window.pywebview.api.ask(txt);
-          const qc = await window.pywebview.api.ui_qc_bar_enabled();
+          const qcEnabled = await window.pywebview.api.ui_qc_bar_enabled();
           if(typeof res === 'string') {
-              addMsg('bot', res, qc);
+              addMsg('bot', res, false);
           } else {
-              addMsg('bot', res.html || '', qc, res.csc || null);
+              const showCgi = !!qcEnabled && !!(res && res.cgi_bar);
+              const answerLang = (res && typeof res.answer_lang === 'string') ? res.answer_lang : '';
+              addMsg('bot', res.html || '', showCgi, res.csc || null, {answerLang: answerLang});
           }
       } catch(e) {
           addMsg('bot', '<span style="color:red">Error: '+e+'</span>');
@@ -424,7 +571,6 @@
       inp.focus();
   }
 
-  function rate(v) { window.pywebview.api.remote_cmd('CGI Rating: '+v); }
   function remoteInput(txt) {
       const inp = document.getElementById('inp');
       if(!inp) return;

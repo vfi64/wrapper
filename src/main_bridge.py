@@ -39,3 +39,6 @@ class MainBridge:
 
     def close_app(self):
         return self._api.close_app()
+
+    def submit_cgi_feedback(self, clarity, insight, efficiency, mode="repeat"):
+        return self._api.submit_cgi_feedback(clarity, insight, efficiency, mode)

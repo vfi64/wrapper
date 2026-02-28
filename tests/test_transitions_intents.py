@@ -30,6 +30,14 @@ def test_init_state_from_ruleset_uses_default_profile_and_profile_overlay():
     assert state.color == "on"
 
 
+def test_init_state_from_ruleset_normalizes_language_policy_mode():
+    s1 = init_state_from_ruleset({}, answer_language="de", conversation_language="de", language_policy_mode="benchmark")
+    assert s1.language_policy_mode == "benchmark"
+
+    s2 = init_state_from_ruleset({}, answer_language="de", conversation_language="de", language_policy_mode="invalid")
+    assert s2.language_policy_mode == "production"
+
+
 def test_apply_intent_comm_start_enforces_ruleset_default_profile():
     ruleset = {
         "default_profile": "Standard",

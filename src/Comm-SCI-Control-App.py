@@ -1134,6 +1134,7 @@ class ConfigManager:
               }
             },
             "answer_language": "de",
+            "language_policy_mode": "production",  # production | benchmark
             "rate_limit_enabled": True,
             "rate_limit_per_minute": 30,
             "rate_limit_per_hour": 120
@@ -1187,6 +1188,10 @@ class ConfigManager:
             # Back-compat key for Gemini
             if (self.config.get('model') or '').strip() != 'gemini-2.0-flash':
                 self.config['model'] = 'gemini-2.0-flash'
+                changed = True
+            mode = (self.config.get("language_policy_mode", "production") or "production").strip().lower()
+            if mode not in ("production", "benchmark"):
+                self.config["language_policy_mode"] = "production"
                 changed = True
 
             if changed:
@@ -1351,6 +1356,25 @@ class ConfigManager:
             if lang not in ("en", "de"):
                 lang = "de"
             self.config["answer_language"] = lang
+            self.save()
+        except Exception:
+            pass
+
+    def get_language_policy_mode(self) -> str:
+        try:
+            mode = (self.config.get("language_policy_mode", "production") or "production").strip().lower()
+            if mode in ("production", "benchmark"):
+                return mode
+        except Exception:
+            pass
+        return "production"
+
+    def set_language_policy_mode(self, mode: str):
+        try:
+            m = (mode or "production").strip().lower()
+            if m not in ("production", "benchmark"):
+                m = "production"
+            self.config["language_policy_mode"] = m
             self.save()
         except Exception:
             pass
@@ -1532,6 +1556,7 @@ class GovernanceManager:
                 "current_rule_file": os.path.basename(self.current_filename),
                 "current_model": cfg_get_model(),
                 "answer_language": getattr(cfg, "get_answer_language", lambda: "de")(),
+                "language_policy_mode": getattr(cfg, "get_language_policy_mode", lambda: "production")(),
                 "comm": [],
                 "profiles": [],
                 "sci": [],
@@ -1594,6 +1619,7 @@ class GovernanceManager:
             "current_rule_file": os.path.basename(self.current_filename),
             "current_model": cfg_get_model(),
             "answer_language": getattr(cfg, "get_answer_language", lambda: "de")(),
+            "language_policy_mode": getattr(cfg, "get_language_policy_mode", lambda: "production")(),
             "comm": comm_cmds,
             "profiles": profiles,
             "sci": sci_cmds,
@@ -2740,16 +2766,19 @@ def sanitize_self_debunking_markdown_in_html(html_text: str) -> str:
             return html_text
         out = re.sub(r"\*\*([^*\n][^*\n]*?)\*\*", r"<strong>\1</strong>", html_text)
         out = re.sub(r"__([^_\n][^_\n]*?)__", r"<strong>\1</strong>", out)
-        # Remove orphan markdown bullet artifacts like " *<br>" inside Self-Debunking.
-        out = re.sub(
-            r'(?is)(<div[^>]*class=(?:"|\')[^"\']*self-debunking[^"\']*(?:"|\')[^>]*>)(.*?)(</div>)',
-            lambda m: (
-                m.group(1)
-                + re.sub(r"(?im)\s*\*\s*(?=<br\s*/?>)", "", m.group(2) or "")
-                + m.group(3)
-            ),
-            out,
+        # Remove orphan markdown bullet artifacts like "*<br>" inside full Self-Debunking blocks.
+        sd_block_re = re.compile(
+            r'(?is)<div[^>]*class=(?:"|\')[^"\']*self-debunking[^"\']*(?:"|\')[^>]*>.*?</div>(?=\s*<(?:p|div)\b|\s*\Z)'
         )
+
+        def _clean_sd_block(m: re.Match) -> str:
+            block = str(m.group(0) or "")
+            block = re.sub(r"(?im)\s*\*\s*(?=<br\s*/?>)", "", block)
+            block = re.sub(r"(?im)(^|>\s*)\*\s*(?=(?:<strong>|[A-Za-zÄÖÜäöü]))", r"\1", block)
+            block = re.sub(r"(?im)\n[ \t]*\*[ \t]*(?=\n)", "\n", block)
+            return block
+
+        out = sd_block_re.sub(_clean_sd_block, out)
         return out
     except Exception:
         return html_text
@@ -3827,8 +3856,13 @@ def contract_answer_response(html_text: str) -> bool:
 
 _SIGNAL_DOT_SPAN_RE = re.compile(r"(?is)<span(?P<attrs>[^>]*)>(?P<body>\s*[🟢🟡🔴]\s*)</span>")
 _SIGNAL_DOT_BLOCK_RE = re.compile(r"(?is)<(?P<tag>p|li)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>")
+_SIGNAL_DOT_MARKER_SPAN_RE = re.compile(
+    r"(?is)<span(?P<attrs1>[^>]*)class=(?:\"|')[^\"']*\bsignal-dot-marker\b[^\"']*(?:\"|')(?P<attrs2>[^>]*)>\s*"
+    r"(?P<body>(?:<span\b[^>]*>\s*[🟢🟡🔴]\s*</span>|[🟢🟡🔴]))\s*</span>"
+)
 _SIGNAL_DOT_MARKER_RE = re.compile(
-    r"(?is)<span\b[^>]*class=(?:\"|')[^\"']*\bsignal-dot-marker\b[^\"']*(?:\"|')[^>]*>.*?</span>\s*"
+    r"(?is)<span\b[^>]*class=(?:\"|')[^\"']*\bsignal-dot-marker\b[^\"']*(?:\"|')[^>]*>\s*"
+    r"(?:<span\b[^>]*>\s*[🟢🟡🔴]\s*</span>|[🟢🟡🔴])\s*</span>\s*"
 )
 _SIGNAL_DOT_STATUS_PREFIX_RE = re.compile(
     r"(?i)^(?:active profile|profile|overlay|sci|control layer|qc|cgi|color|comm)\s*:"
@@ -3869,8 +3903,38 @@ def annotate_signal_dot_tooltips_html(html_text: str, *, lang: str = "de") -> st
     src = str(html_text or "")
     if not src:
         return src
-    if "signal-dot-marker" in src:
-        return src
+
+    protected: list[str] = []
+
+    def _protect_existing_marker(m: re.Match) -> str:
+        attrs = f"{m.group('attrs1') or ''}{m.group('attrs2') or ''}"
+        body = str(m.group("body") or "")
+        block = m.group(0)
+        if re.search(r"(?i)\b(?:data-u-title|title)\s*=", attrs) is None:
+            im = re.search(r"[🟢🟡🔴]", body)
+            icon = str(im.group(0) if im else "")
+            tip = _signal_dot_tooltip_text(icon, lang=lang)
+            if tip:
+                esc = html.escape(tip)
+                if re.search(r"(?i)\bstyle\s*=", block):
+                    block = re.sub(
+                        r"(?is)<span\b",
+                        f"<span data-u-title='{esc}' title='{esc}'",
+                        block,
+                        count=1,
+                    )
+                else:
+                    block = re.sub(
+                        r"(?is)<span\b",
+                        f"<span data-u-title='{esc}' title='{esc}' style='cursor:help;'",
+                        block,
+                        count=1,
+                    )
+        token = f"__SIGNAL_DOT_MARKER_PROTECT_{len(protected)}__"
+        protected.append(block)
+        return token
+
+    stage = _SIGNAL_DOT_MARKER_SPAN_RE.sub(_protect_existing_marker, src)
 
     def _repl(m: re.Match) -> str:
         body = str(m.group("body") or "")
@@ -3886,7 +3950,10 @@ def annotate_signal_dot_tooltips_html(html_text: str, *, lang: str = "de") -> st
             "</span>"
         )
 
-    return _SIGNAL_DOT_SPAN_RE.sub(_repl, src)
+    stage = _SIGNAL_DOT_SPAN_RE.sub(_repl, stage)
+    for idx, block in enumerate(protected):
+        stage = stage.replace(f"__SIGNAL_DOT_MARKER_PROTECT_{idx}__", block)
+    return stage
 
 
 def _fallback_signal_dot_icon_for_text(text: str) -> str:
@@ -3958,6 +4025,43 @@ def inject_fallback_signal_dots_html(html_text: str, *, lang: str = "de") -> str
             )
             marked_body = re.sub(r"^(\s*)", r"\1" + dot_html, body, count=1)
             out.append(f"<{tag}{attrs}>{marked_body}</{tag}>")
+        cursor = end
+    out.append(src[cursor:])
+    return "".join(out)
+
+
+def limit_signal_dot_marker_density_html(html_text: str, *, max_per_block: int = 1) -> str:
+    """Keep at most N signal-dot markers per content block to avoid visual marker overload."""
+    src = str(html_text or "")
+    cap = max(1, int(max_per_block or 1))
+    if not src or "signal-dot-marker" not in src:
+        return src
+
+    out = []
+    cursor = 0
+    for m in _SIGNAL_DOT_BLOCK_RE.finditer(src):
+        start, end = m.span()
+        tag = str(m.group("tag") or "")
+        attrs = str(m.group("attrs") or "")
+        body = str(m.group("body") or "")
+        out.append(src[cursor:start])
+
+        if "signal-dot-marker" not in body:
+            out.append(src[start:end])
+            cursor = end
+            continue
+
+        kept = 0
+
+        def _trim(mm: re.Match) -> str:
+            nonlocal kept
+            kept += 1
+            if kept <= cap:
+                return mm.group(0)
+            return ""
+
+        cleaned = _SIGNAL_DOT_MARKER_RE.sub(_trim, body)
+        out.append(f"<{tag}{attrs}>{cleaned}</{tag}>")
         cursor = end
     out.append(src[cursor:])
     return "".join(out)
@@ -4050,6 +4154,7 @@ class GovernanceRuntimeState:
     color: str = "on"
     conversation_language: str = ""
     answer_language: str = "de"
+    language_policy_mode: str = "production"
     sci_pending: bool = False
     sci_variant: str = ""
     sci_active: bool = False
@@ -4570,6 +4675,7 @@ def _init_state_from_rules():
                 getattr(gov, "data", {}) or {},
                 answer_language=(getattr(cfg, "get_answer_language", lambda: "de")() or "de"),
                 conversation_language=(UI_LANG or "").lower() or "de",
+                language_policy_mode=(getattr(cfg, "get_language_policy_mode", lambda: "production")() or "production"),
             )
             return GovernanceRuntimeState(
                 comm_active=dom.comm_active,
@@ -4578,6 +4684,7 @@ def _init_state_from_rules():
                 color=dom.color,
                 conversation_language=dom.conversation_language,
                 answer_language=dom.answer_language,
+                language_policy_mode=getattr(dom, "language_policy_mode", "production"),
                 sci_pending=dom.sci_pending,
                 sci_variant=dom.sci_variant,
                 sci_active=dom.sci_active,
@@ -4588,7 +4695,18 @@ def _init_state_from_rules():
     prof = ui.get("defaults", {}).get("profile", "Standard") or "Standard"
     ov = ui.get("defaults", {}).get("overlay", "") or ""
     col = ui.get("defaults", {}).get("color_default", "on") or "on"
-    return GovernanceRuntimeState(comm_active=True, active_profile=prof, overlay=ov, color=col, conversation_language=(UI_LANG or '').lower(), answer_language=(getattr(cfg, "get_answer_language", lambda: "de")() or "de"), sci_pending=False, sci_variant="", sci_active=False)
+    return GovernanceRuntimeState(
+        comm_active=True,
+        active_profile=prof,
+        overlay=ov,
+        color=col,
+        conversation_language=(UI_LANG or '').lower(),
+        answer_language=(getattr(cfg, "get_answer_language", lambda: "de")() or "de"),
+        language_policy_mode=(getattr(cfg, "get_language_policy_mode", lambda: "production")() or "production"),
+        sci_pending=False,
+        sci_variant="",
+        sci_active=False,
+    )
 
 
 # --- HTML TEMPLATES ---
@@ -4660,6 +4778,17 @@ HTML_CHAT_TEMPLATE = """
   .qc-bar { margin-top: 8px; border-top: 1px solid #eee; padding-top: 5px; font-size: 11px; color:#555; }
   .qc-btn { cursor: pointer; margin-right: 8px; color: #1a73e8; background:#f1f3f4; padding:2px 6px; border-radius:4px; }
   .qc-btn:hover { background:#1a73e8; color:white; }
+  .cgi-widget { display:flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .cgi-title { font-weight: 700; color: #334155; margin-right: 2px; }
+  .cgi-field { display:inline-flex; align-items:center; gap:4px; color:#475569; }
+  .cgi-select { height:24px; border:1px solid #cbd5e1; border-radius:4px; background:#fff; color:#0f172a; font-size:11px; padding:0 4px; }
+  .cgi-sep { color:#94a3b8; margin: 0 1px; }
+  .cgi-action { height:24px !important; padding:0 8px !important; border-radius:4px !important; border:1px solid #93c5fd !important; background:#e8f0fe !important; color:#1a73e8 !important; font-size:11px !important; font-weight:600 !important; line-height:22px !important; cursor:pointer; }
+  .cgi-action:hover { background:#1a73e8 !important; color:#fff !important; }
+  .cgi-action.repeat { border-color:#60a5fa !important; }
+  .cgi-help { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:#e2e8f0; color:#334155; font-weight:700; cursor:help; font-size:11px; }
+  .cgi-status { min-height:16px; color:#475569; font-size:11px; }
+  .cgi-hint-line { width:100%; color:#64748b; font-size:10px; margin-top:2px; }
 
   .csc-badge {
     position: absolute;
@@ -4834,13 +4963,133 @@ HTML_CHAT_TEMPLATE = """
              `<div class="csc-warning"><b>CSC</b>: ${msg}${details}</div>`;
   }
 
-  function addMsg(role, text, qc=false, csc=null) {
+  function _cgiLang(lang){
+      const l = String(lang || '').trim().toLowerCase();
+      if(l.startsWith('en')) return 'en';
+      return 'de';
+  }
+
+  function _cgiTexts(lang){
+      const useEn = _cgiLang(lang) === 'en';
+      if(useEn){
+          return {
+              title: 'CGI Feedback:',
+              clarity: 'Clarity gain',
+              insight: 'Insight gain',
+              efficiency: 'Efficiency gain',
+              repeat: 'Repeat with adjustments',
+              help: 'Optional user feedback (0-3) for clarity, insight, and efficiency. Repeat re-runs the last content question with this feedback.',
+              hint: '0 = weak (stronger rewrite), 3 = good (lighter rewrite). Effect applies to the next answer only.',
+              repeating: 'Applying CGI feedback and repeating last content answer...',
+              action_failed: 'CGI feedback action could not be executed.',
+              invalid: 'Please select values from 0 to 3 for all three criteria.'
+          };
+      }
+      return {
+          title: 'CGI-Feedback:',
+          clarity: 'Klarheitsgewinn',
+          insight: 'Erkenntnisgewinn',
+          efficiency: 'Effizienzgewinn',
+          repeat: 'Antwort mit Anpassungen wiederholen',
+          help: 'Optionales Nutzerfeedback (0-3): 0 bedeutet schwach und erzwingt eine staerkere Ueberarbeitung, 3 bedeutet gut und nur leichte Anpassung. Die Wirkung gilt nur fuer die naechste Antwort.',
+          hint: '0 = schlecht (staerkere Anpassung), 3 = gut (geringere Anpassung). Wirkung nur fuer die naechste Antwort.',
+          repeating: 'CGI-Feedback wird angewendet, letzte Inhaltsfrage wird neu beantwortet...',
+          action_failed: 'CGI-Aktion konnte nicht ausgeführt werden.',
+          invalid: 'Bitte für alle drei Kriterien Werte von 0 bis 3 wählen.'
+      };
+  }
+
+  function _cgiOptions(){
+      return '<option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>';
+  }
+
+  let __cgiCounter = 0;
+  function _buildCgiWidgetHtml(answerLang){
+      const lang = _cgiLang(answerLang);
+      const t = _cgiTexts(lang);
+      __cgiCounter += 1;
+      const id = 'cgi-widget-' + String(__cgiCounter);
+      return (
+          `<div class="qc-bar cgi-widget" id="${id}" data-cgi-lang="${lang}">` +
+          `<span class="cgi-title">${escHtml(t.title)}</span>` +
+          `<label class="cgi-field">${escHtml(t.clarity)} <select class="cgi-select" data-cgi-field="clarity">${_cgiOptions()}</select></label>` +
+          `<span class="cgi-sep">/</span>` +
+          `<label class="cgi-field">${escHtml(t.insight)} <select class="cgi-select" data-cgi-field="insight">${_cgiOptions()}</select></label>` +
+          `<span class="cgi-sep">/</span>` +
+          `<label class="cgi-field">${escHtml(t.efficiency)} <select class="cgi-select" data-cgi-field="efficiency">${_cgiOptions()}</select></label>` +
+          `<button type="button" class="cgi-action repeat" onclick="submitCgi('${id}','repeat')">${escHtml(t.repeat)}</button>` +
+          `<span class="cgi-help" data-u-title="${escHtml(t.help)}" title="${escHtml(t.help)}">i</span>` +
+          `<span class="cgi-status"></span>` +
+          `<div class="cgi-hint-line">${escHtml(t.hint)}</div>` +
+          `</div>`
+      );
+  }
+
+  async function submitCgi(widgetId, mode){
+      const root = document.getElementById(String(widgetId || ''));
+      if(!root) return;
+      const lang = _cgiLang(root.getAttribute('data-cgi-lang') || '');
+      const t = _cgiTexts(lang);
+      const statusEl = root.querySelector('.cgi-status');
+      const kEl = root.querySelector('select[data-cgi-field="clarity"]');
+      const iEl = root.querySelector('select[data-cgi-field="insight"]');
+      const eEl = root.querySelector('select[data-cgi-field="efficiency"]');
+      const actButtons = root.querySelectorAll('button.cgi-action');
+      const sel = root.querySelectorAll('select.cgi-select');
+      const k = parseInt(kEl ? kEl.value : '', 10);
+      const i = parseInt(iEl ? iEl.value : '', 10);
+      const e = parseInt(eEl ? eEl.value : '', 10);
+      if([k,i,e].some(v => Number.isNaN(v) || v < 0 || v > 3)){
+          if(statusEl){
+              statusEl.style.color = '#b91c1c';
+              statusEl.textContent = t.invalid;
+          }
+          return;
+      }
+      const busy = t.repeating;
+      if(statusEl){
+          statusEl.style.color = '#475569';
+          statusEl.textContent = busy;
+      }
+      actButtons.forEach(b => { b.disabled = true; });
+      sel.forEach(s => { s.disabled = true; });
+      try{
+          const res = await window.pywebview.api.submit_cgi_feedback(k, i, e, String(mode || 'repeat'));
+          if(!res || !res.ok){
+              const err = (res && res.error) ? String(res.error) : t.action_failed;
+              if(statusEl){
+                  statusEl.style.color = '#b91c1c';
+                  statusEl.textContent = err;
+              }
+              return;
+          }
+          if(statusEl){
+              statusEl.style.color = '#166534';
+              statusEl.textContent = String(res.message || '');
+          }
+          if(res.repeated && res.response){
+              const rr = res.response || {};
+              const rrLang = String(rr.answer_lang || lang || '');
+              addMsg('bot', String(rr.html || ''), !!rr.cgi_bar, rr.csc || null, {answerLang: rrLang});
+          }
+      } catch(e2){
+          if(statusEl){
+              statusEl.style.color = '#b91c1c';
+              statusEl.textContent = t.action_failed + ' ' + String(e2);
+          }
+      } finally {
+          actButtons.forEach(b => { b.disabled = false; });
+          sel.forEach(s => { s.disabled = false; });
+      }
+  }
+
+  function addMsg(role, text, qc=false, csc=null, opts={}) {
       const d = document.createElement('div');
       d.className = 'msg ' + role;
       let html = '<button class="copy-btn" onclick="copyToClipboard(this)" title="Copy">📋</button>';
       if(role === 'bot') html += renderCscBlock(csc);
       html += text;
-      if(qc) html += '<div class="qc-bar">QC (CGI): <span class="qc-btn" onclick="rate(0)">0</span><span class="qc-btn" onclick="rate(1)">1</span><span class="qc-btn" onclick="rate(2)">2</span><span class="qc-btn" onclick="rate(3)">3</span></div>';
+      if(qc && role === 'bot') html += _buildCgiWidgetHtml((opts && opts.answerLang) ? opts.answerLang : '');
       d.innerHTML = html;
       document.getElementById('chat').appendChild(d);
       document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
@@ -4926,10 +5175,24 @@ HTML_CHAT_TEMPLATE = """
   document.addEventListener('mousedown', (e)=>{
       if(typeof e.button === 'number' && e.button !== 0) return;
       const t = (e.target && e.target.closest)
-          ? e.target.closest('.uncertainty-inline-marker, .signal-dot-marker')
+          ? e.target.closest('.uncertainty-inline-marker, .signal-dot-marker, .cgi-help')
           : null;
       if(!t) return;
       _uTipShow(t, e);
+  });
+  document.addEventListener('mouseover', (e)=>{
+      const t = (e.target && e.target.closest)
+          ? e.target.closest('.cgi-help')
+          : null;
+      if(!t) return;
+      _uTipShow(t, e);
+  });
+  document.addEventListener('mouseout', (e)=>{
+      const t = (e.target && e.target.closest)
+          ? e.target.closest('.cgi-help')
+          : null;
+      if(!t) return;
+      _uTipHide();
   });
   document.addEventListener('mouseup', _uTipHide);
   document.addEventListener('dragstart', _uTipHide);
@@ -5006,11 +5269,13 @@ HTML_CHAT_TEMPLATE = """
       btn.disabled = true;
       try {
           const res = await window.pywebview.api.ask(txt);
-          const qc = await window.pywebview.api.ui_qc_bar_enabled();
+          const qcEnabled = await window.pywebview.api.ui_qc_bar_enabled();
           if(typeof res === 'string') {
-              addMsg('bot', res, qc);
+              addMsg('bot', res, false);
           } else {
-              addMsg('bot', res.html || '', qc, res.csc || null);
+              const showCgi = !!qcEnabled && !!(res && res.cgi_bar);
+              const answerLang = (res && typeof res.answer_lang === 'string') ? res.answer_lang : '';
+              addMsg('bot', res.html || '', showCgi, res.csc || null, {answerLang: answerLang});
           }
       } catch(e) {
           addMsg('bot', '<span style="color:red">Error: '+e+'</span>');
@@ -5019,7 +5284,6 @@ HTML_CHAT_TEMPLATE = """
       inp.focus();
   }
 
-  function rate(v) { window.pywebview.api.remote_cmd('CGI Rating: '+v); }
   function remoteInput(txt) {
       const inp = document.getElementById('inp');
       if(!inp) return;
@@ -6855,42 +7119,71 @@ class OutputComplianceValidator:
         return vios
 
 
-    # -------- Language drift (heuristic; warning by default) --------
-    
-    # -------- Verification Route Gate (hard) --------
-    def validate_verification_route_gate(self, text: str, *, is_command: bool):
-        """Hard check: if strong-claim heuristic triggers, require at least one verification route marker.
-        Compliance shortcuts (to reduce false alarms):
-          - Any explicit uncertainty label U1..U6 counts as 'downgraded' and passes.
-          - Any Evidence-Linker provenance tag like [GREEN-WEB]/[YELLOW-DOC]/... counts as route presence.
-        """
-        vios = []
-        if is_command or (not self.gov.loaded) or (not text):
-            return vios
-    
-        gate = (self.gov.data.get("global_defaults", {}) or {}).get("verification_route_gate", {}) or {}
-        if not gate.get("enabled", False):
-            return vios
-    
-        if re.search(r"\bU[1-6]\b", text):
-            return vios
-    
-        heur = gate.get("strong_claim_heuristics", {}) or {}
-        if not heur.get("enabled", False):
-            return vios
-    
-        kw = []
-        kw += list(heur.get("keywords_de", []) or [])
-        kw += list(heur.get("keywords_en", []) or [])
-        text_l = text.lower()
-        has_strong = any(str(k).lower() in text_l for k in kw) if kw else False
-        if not has_strong:
-            return vios
-    
-        markers = gate.get("route_presence_markers", {}) or {}
+    # -------- Language + Verification gates --------
+    _NON_LATIN_SCRIPT_RE = re.compile(
+        r"[Ѐ-ԯⷠ-ⷿꙀ-ꚟ"  # Cyrillic
+        r"֐-׿"  # Hebrew
+        r"؀-ۿݐ-ݿࢠ-ࣿ"  # Arabic
+        r"ऀ-ॿ"  # Devanagari
+        r"぀-ヿㇰ-ㇿ"  # Kana
+        r"㐀-䶿一-鿿"  # CJK
+        r"가-힯"  # Hangul
+        r"]"
+    )
+
+    def _norm_language_policy_mode(self, value: str) -> str:
+        mode = str(value or "").strip().lower()
+        if mode in ("production", "benchmark"):
+            return mode
+        return "production"
+
+    def _language_policy_mode(self, state) -> str:
+        try:
+            mode = self._norm_language_policy_mode(getattr(state, "language_policy_mode", "production"))
+            if mode in ("production", "benchmark"):
+                return mode
+        except Exception:
+            pass
+        try:
+            if self.cfg is not None and hasattr(self.cfg, "get_language_policy_mode"):
+                return self._norm_language_policy_mode(self.cfg.get_language_policy_mode())
+        except Exception:
+            pass
+        return "production"
+
+    def _extract_language_contract_scope(self, text: str, *, is_command: bool) -> str:
+        """Best-effort extraction of the content scope for language checks."""
+        src = str(text or "")
+        if not src:
+            return src
+        # Language guard should evaluate readable text, not structural HTML.
+        src = re.sub(r"<[^>]+>", " ", src)
+        if is_command:
+            return src
+
+        # Content scope ends before post-content blocks.
+        end_m = re.search(
+            r"(?im)^\s*(?:Self-?Debunking|QC(?:-Matrix)?|CGI-Feedback|QC\s*\(CGI\)|Response\s+at)\b",
+            src,
+        )
+        if end_m:
+            src = src[:end_m.start()]
+
+        # Exclude wrapper/system lines from content-language checks.
+        ctl_re = re.compile(
+            r"(?i)^\s*(?:CONTROL\s+LAYER(?:\s+(?:NOTE|ALERT|BLOCK|WARN(?:ING)?))?|CSC(?:\s|:)|COMM\s+(?:STATE|CONFIG|ANCHOR|AUDIT|VALIDATE|HELP)\b)"
+        )
+        header_re = re.compile(r"(?i)^\s*(?:Reqs\s*:|In\s*:|Out\s*:|Profile\s*:|\[[^\]]*Comm-SCI[^\]]*\])")
+        out_lines = []
+        for ln in src.splitlines():
+            if ctl_re.search(ln) or header_re.search(ln):
+                continue
+            out_lines.append(ln)
+        return "\n".join(out_lines)
+
+    def _has_verification_route_marker(self, text: str, markers: dict) -> bool:
+        text_l = str(text or "").lower()
         found = False
-        # route_presence_markers may contain non-dict metadata entries (e.g. "enabled", "notes").
-        # Guard strictly to avoid "str has no attribute get" crashes.
         for _rtype, spec in (markers.items() if isinstance(markers, dict) else []):
             if not isinstance(spec, dict):
                 continue
@@ -6901,14 +7194,103 @@ class OutputComplianceValidator:
                     break
             if found:
                 break
-    
+
         if not found and re.search(r"\[(GREEN|YELLOW|RED|GRAY)-(?:WEB|DOC|TRAIN)\]", text):
             found = True
-    
-        if not found:
-            vios.append("Verification Route Gate: strong-claim heuristic triggered, but no verification route markers found (Source/Measurement/Contrast/Web Check).")
+
+        # Deterministic fallback for localized/handwritten marker lines.
+        if not found and re.search(r"(?im)^\s*(?:[-*]\s*)?(?:source|quelle|measurement|messung|contrast|kontrast|web-?check)\s*:", text):
+            found = True
+
+        return found
+
+    def _has_claim_downgrade_marker(self, text_l: str) -> bool:
+        return any(
+            kw in text_l
+            for kw in (
+                "hypothesis",
+                "hypothetical",
+                "unclear",
+                "uncertain",
+                "unverified",
+                "preliminary",
+                "speculat",
+                "pr claim",
+                "annahme",
+                "hypothese",
+                "unklar",
+                "unsicher",
+                "unverifiziert",
+                "vorlaeufig",
+                "spekulativ",
+                "nicht gesichert",
+            )
+        )
+
+    # -------- Verification Route Gate (hard) --------
+    def validate_verification_route_gate(self, text: str, *, is_command: bool):
+        """Hard checks for strong/RED claims against verification-route + uncertainty contracts."""
+        vios = []
+        if is_command or (not self.gov.loaded) or (not text):
+            return vios
+
+        gate = (self.gov.data.get("global_defaults", {}) or {}).get("verification_route_gate", {}) or {}
+        if not gate.get("enabled", False):
+            return vios
+
+        heur = gate.get("strong_claim_heuristics", {}) or {}
+        if not heur.get("enabled", False):
+            return vios
+
+        text_l = text.lower()
+        markers = gate.get("route_presence_markers", {}) or {}
+        has_route = self._has_verification_route_marker(text, markers)
+        has_uncertainty = bool(re.search(r"\bU[1-6]\b", text))
+        has_downgrade = self._has_claim_downgrade_marker(text_l)
+
+        kw = []
+        kw += list(heur.get("keywords_de", []) or [])
+        kw += list(heur.get("keywords_en", []) or [])
+        has_strong = any(str(k).lower() in text_l for k in kw) if kw else False
+
+        # RED-claim guard: RED requires uncertainty + route (or explicit downgrade fallback path).
+        has_red_claim = bool(
+            re.search(
+                r"\[(?:RED|ROT)(?:-[A-Z0-9]+)*\]|\b(?:RED|ROT)\b|🔴|niedrige verlaesslichkeit|low reliability",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
+        if has_strong and (not has_route):
+            if has_uncertainty and has_downgrade:
+                pass
+            elif has_uncertainty and (not has_downgrade):
+                vios.append(
+                    "Verification Route Gate: strong-claim heuristic triggered; uncertainty label alone is insufficient. "
+                    "Add a verification route marker (Source/Measurement/Contrast/Web Check) or explicit downgrade wording."
+                )
+            elif has_downgrade and (not has_uncertainty):
+                vios.append(
+                    "Verification Route Gate: strong-claim heuristic triggered; downgraded wording without uncertainty label (U1-U6)."
+                )
+            else:
+                vios.append(
+                    "Verification Route Gate: strong-claim heuristic triggered, but no verification route markers found "
+                    "(Source/Measurement/Contrast/Web Check)."
+                )
+
+        if has_red_claim:
+            if not has_uncertainty:
+                vios.append("Verification Route Gate: RED claim requires uncertainty label (U1-U6).")
+            if (not has_route) and not (has_uncertainty and has_downgrade):
+                vios.append(
+                    "Verification Route Gate: RED claim requires at least one verification route marker "
+                    "(Source/Measurement/Contrast/Web Check)."
+                )
+
         return vios
-    
+
     # -------- Epistemic provenance (soft) --------
     def validate_epistemic_provenance(self, text: str):
         """Soft check: if Evidence-Linker tags are used without an origin suffix, warn (default origin is usually TRAIN)."""
@@ -6924,46 +7306,99 @@ class OutputComplianceValidator:
             vios.append(f"Epistemic provenance: Evidence-Linker tags without origin suffix detected. Consider adding '-{default_origin}' (e.g. [GREEN-{default_origin}]).")
         return vios
 
-    def validate_language(self, text: str):
-        """Heuristic language drift detection (soft warning).
+    def _strip_language_exception_spans(self, text: str) -> str:
+        src = str(text or "")
 
-        Strategy: score common DE vs EN stopwords on the first explanatory slice,
-        excluding code blocks, to reduce false positives in technical answers.
-        """
+        # Technical spans: code + URLs.
+        src = re.sub(r"```[\s\S]*?```", " ", src)
+        src = re.sub(r"`[^`]*`", " ", src)
+        src = re.sub(r"https?://\S+", " ", src)
+
+        # Citation/source lines are allowed to keep original language.
+        cleaned_lines = []
+        cite_re = re.compile(
+            r"(?i)^\s*(?:>|[-*]\s*)?(?:source|quelle|reference|references|citation|zitat|quote|doi|url|link|arxiv|isbn)\s*[:\-]"
+        )
+        for ln in src.splitlines():
+            if cite_re.search(ln):
+                cleaned_lines.append(" ")
+            else:
+                cleaned_lines.append(ln)
+        src = "\n".join(cleaned_lines)
+
+        # Quotes are an explicit exception.
+        src = re.sub(r"\"(?:[^\"\\\\]|\\\\.)*\"", " ", src)
+        src = re.sub(r"'(?:[^'\\]|\\.)*'", " ", src)
+        src = re.sub(r"„[^“]*“", " ", src)
+        src = re.sub(r"‚[^‘]*‘", " ", src)
+        src = re.sub(r"»[^«]*«", " ", src)
+        src = re.sub(r"«[^»]*»", " ", src)
+
+        # Drop HTML tags before script checks.
+        src = re.sub(r"<[^>]+>", " ", src)
+        return src
+
+    def validate_language_script_contract(self, text: str, *, expected_lang: str, is_command: bool = False):
+        """Hard check: no foreign scripts outside explicit exceptions (quotes/sources/code)."""
         vios = []
-        tgt = self._conversation_lang()
-        if not tgt:
+        tgt = str(expected_lang or "").strip().lower()
+        if tgt not in ("de", "en"):
             return vios
 
-        # Strip code blocks and inline code to avoid bias from snippets
-        sample = re.sub(r"```[\s\S]*?```", " ", text)
+        scoped = self._extract_language_contract_scope(text, is_command=is_command)
+        cleaned = self._strip_language_exception_spans(scoped)
+        m = self._NON_LATIN_SCRIPT_RE.search(cleaned)
+        if m:
+            vios.append(
+                f"Language contract: expected {tgt.upper()} content; found non-{tgt.upper()} script outside allowed quote/source contexts."
+            )
+        return vios
+
+    def validate_language(self, text: str, *, expected_lang: str = "", is_command: bool = False):
+        """Heuristic DE/EN drift detection on explanatory text (excluding code spans)."""
+        vios = []
+        tgt = str(expected_lang or "").strip().lower() or self._conversation_lang()
+        if tgt not in ("de", "en"):
+            return vios
+
+        scoped = self._extract_language_contract_scope(text, is_command=is_command)
+
+        # Strip code blocks and inline code to avoid bias from snippets.
+        sample = re.sub(r"```[\s\S]*?```", " ", str(scoped or ""))
         sample = re.sub(r"`[^`]*`", " ", sample)
-        sample = sample[:700]
+
+        # Allowed protocol tokens should not count as EN drift in DE answers.
+        sample = re.sub(
+            r"(?i)\b(?:SCI|Trace|Self-?Debunking|QC-?Matrix|Verification|Route|Source|Measurement|Contrast|Web-?Check|Profile|Overlay|Control|Layer)\b",
+            " ",
+            sample,
+        )
+        sample = sample[:1200]
 
         tokens = re.findall(r"[A-Za-zÄÖÜäöüß]+", sample.lower())
         if not tokens:
             return vios
 
         de_markers = {
-            "der","die","das","und","ist","sind","wird","wurde","mit","für","nicht",
-            "dass","ich","du","wir","sie","es","ein","eine","als","auch","bei","auf",
-            "im","in","zu","von","oder","wenn","dann","weil"
+            "der", "die", "das", "und", "ist", "sind", "wird", "wurde", "mit", "fuer", "für", "nicht",
+            "dass", "ich", "du", "wir", "sie", "es", "ein", "eine", "als", "auch", "bei", "auf",
+            "im", "in", "zu", "von", "oder", "wenn", "dann", "weil", "den", "dem", "des",
         }
         en_markers = {
-            "the","and","is","are","will","was","were","with","for","not","that","this",
-            "you","your","we","they","a","an","as","also","in","to","of","or","if",
-            "then","because"
+            "the", "and", "is", "are", "will", "was", "were", "with", "for", "not", "that", "this",
+            "you", "your", "we", "they", "a", "an", "as", "also", "in", "to", "of", "or", "if",
+            "then", "because", "which", "who", "from",
         }
 
         de_score = sum(1 for t in tokens if t in de_markers)
         en_score = sum(1 for t in tokens if t in en_markers)
 
-        # Require a minimum signal to avoid noisy warnings
+        # Keep threshold robust against short snippets.
         if tgt == "de":
-            if en_score >= 8 and en_score > max(2, de_score) * 2:
+            if en_score >= 6 and en_score > max(2, de_score) * 2:
                 vios.append("Language drift: expected DE, output appears predominantly EN.")
         elif tgt == "en":
-            if de_score >= 8 and de_score > max(2, en_score) * 2:
+            if de_score >= 6 and de_score > max(2, en_score) * 2:
                 vios.append("Language drift: expected EN, output appears predominantly DE.")
         return vios
 
@@ -7005,15 +7440,36 @@ class OutputComplianceValidator:
         # Self-Debunking is a hard contract when module is active (skip for commands)
         hard += self.validate_self_debunking(text, profile_name, is_command=is_command)
 
-        # Language drift: follow the dialog language contract.
-        # - For command outputs (help/state/config/audit/menu), enforce HARD.
-        # - For content answers, keep SOFT (the wrapper may intentionally request a different answer language).
+        # Language contract:
+        # - Commands/UI: conversation language.
+        # - Content answers: configured answer_language.
         try:
-            lang_vios = self.validate_language(text)
-            if is_command and lang_vios:
-                hard += lang_vios
+            expected_lang = ""
+            if is_command:
+                expected_lang = str(self._conversation_lang() or "").strip().lower()
             else:
-                soft += lang_vios
+                expected_lang = str(getattr(state, "answer_language", "") or "").strip().lower()
+                if expected_lang not in ("de", "en"):
+                    expected_lang = str(self._conversation_lang() or "").strip().lower()
+
+            language_mode = self._language_policy_mode(state)
+
+            script_vios = self.validate_language_script_contract(
+                text,
+                expected_lang=expected_lang,
+                is_command=is_command,
+            )
+            lang_vios = self.validate_language(
+                text,
+                expected_lang=expected_lang,
+                is_command=is_command,
+            )
+            language_vios = list(script_vios or []) + list(lang_vios or [])
+            if language_vios:
+                if language_mode == "benchmark":
+                    soft += [f"Language policy benchmark: {v}" for v in language_vios]
+                else:
+                    hard += language_vios
         except Exception:
             pass
 
@@ -7066,6 +7522,19 @@ class OutputComplianceValidator:
             parts.append("  - Contrast: plausible alternative noted but not evaluated")
             parts.append("  - Web-Check: not performed")
             parts.append("- If you cannot support the strong claim, downgrade it and include an uncertainty label U1–U6.")
+            parts.append("")
+
+        all_hard_vios = [str(v) for v in (hard_violations or [])]
+        need_lang_contract = any(("Language contract" in v) or ("Language drift" in v) for v in all_hard_vios)
+        if need_lang_contract:
+            parts.append("Language contract repair guidance:")
+            if (lang or "").lower() == "de":
+                parts.append("- Keep answer content in German (Latin script).")
+            else:
+                parts.append("- Keep answer content in English (Latin script).")
+            parts.append("- If foreign-script names/terms appear in running text, transliterate them into the answer-language script.")
+            parts.append("- Keep original-script forms only in explicit quotes, source/citation lines, code blocks, and URLs.")
+            parts.append("- Do not rely on name-specific whitelists.")
             parts.append("")
 
         # SCI Trace guidance: required whenever SCI is active and the ruleset defines steps for the chosen variant.
@@ -7846,6 +8315,7 @@ class CSCRefiner:
         comm = "on" if getattr(self.gov_state, "comm_active", False) else "off"
         overlay = getattr(self.gov_state, "overlay", "") or "off"
         color = getattr(self.gov_state, "color", "off") or "off"
+        language_policy = self._language_policy_mode()
         ctl = getattr(self.gov_state, "control_layer", "on") or "on"
         qc = getattr(self.gov_state, "qc", "on") or "on"
         cgi = getattr(self.gov_state, "cgi", "on") or "on"
@@ -7862,7 +8332,10 @@ class CSCRefiner:
         dyn = getattr(self.gov_state, "dynamic_nudge", "") or ""
 
         out = []
-        out.append(f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}")
+        out.append(
+            f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · "
+            f"Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color} · Language policy: {language_policy}"
+        )
         try:
             ds = getattr(self, 'deps_status', {}) or {}
             parts = []
@@ -7904,6 +8377,7 @@ class CSCRefiner:
         comm = "on" if getattr(self.gov_state, "comm_active", False) else "off"
         overlay = getattr(self.gov_state, "overlay", "") or "off"
         color = getattr(self.gov_state, "color", "off") or "off"
+        language_policy = self._language_policy_mode()
         ctl = getattr(self.gov_state, "control_layer", "on") or "on"
         qc = getattr(self.gov_state, "qc", "on") or "on"
         cgi = getattr(self.gov_state, "cgi", "on") or "on"
@@ -7916,7 +8390,10 @@ class CSCRefiner:
         user_turns = int(getattr(self.gov_state, "user_turns", 0) or 0)
         dyn = getattr(self.gov_state, "dynamic_nudge", "") or ""
 
-        status = f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
+        status = (
+            f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · "
+            f"Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color} · Language policy: {language_policy}"
+        )
 
         rows = [
             ("Comm active", comm),
@@ -7927,6 +8404,7 @@ class CSCRefiner:
             ("QC", qc),
             ("CGI", cgi),
             ("Color", color),
+            ("Language policy", language_policy),
             ("Anchor auto", anchor_auto),
             ("User turns", str(user_turns)),
         ]
@@ -8444,6 +8922,183 @@ class CSCRefiner:
             return bool(getattr(self.gov_state, 'comm_active', False))
         except Exception:
             return False
+
+    def _cgi_ui_texts(self, *, lang: str = "") -> dict:
+        use_en = str(lang or self._answer_lang() or "").strip().lower().startswith("en")
+        if use_en:
+            return {
+                "saved": "CGI saved: C={c} · I={i} · E={e}",
+                "applied": "CGI applied (one-shot): C={c} · I={i} · E={e}",
+                "no_prompt": "No previous content question available for repeat.",
+                "invalid": "Please provide values from 0 to 3 for all three CGI criteria.",
+                "repeat_failed": "CGI repeat could not be executed.",
+            }
+        return {
+            "saved": "CGI gespeichert: K={c} · E={i} · F={e}",
+            "applied": "CGI angewendet (one-shot): K={c} · E={i} · F={e}",
+            "no_prompt": "Keine vorherige Inhaltsfrage für die Wiederholung vorhanden.",
+            "invalid": "Bitte für alle drei CGI-Kriterien Werte von 0 bis 3 angeben.",
+            "repeat_failed": "CGI-Wiederholung konnte nicht ausgeführt werden.",
+        }
+
+    def _parse_cgi_triplet(self, triplet: str):
+        m = re.fullmatch(r"\s*([0-3])\s*,\s*([0-3])\s*,\s*([0-3])\s*", str(triplet or ""))
+        if not m:
+            return None
+        try:
+            return int(m.group(1)), int(m.group(2)), int(m.group(3))
+        except Exception:
+            return None
+
+    def _qc_current_value(self, key: str, default: int = 2) -> int:
+        try:
+            qc = getattr(self.gov_state, "last_qc", {}) or {}
+            if not isinstance(qc, dict):
+                return int(default)
+            key_l = str(key or "").strip().lower()
+            for cand in (key_l, key_l.capitalize(), key_l.upper()):
+                if cand in qc:
+                    return int(qc.get(cand))
+        except Exception:
+            pass
+        return int(default)
+
+    def _build_cgi_one_shot_constraints(self, triplet: str, *, lang: str = "") -> list[str]:
+        vals = self._parse_cgi_triplet(triplet)
+        if not vals:
+            return []
+        c, i, e = vals
+        use_en = str(lang or self._answer_lang() or "").strip().lower().startswith("en")
+
+        lines = []
+        if use_en:
+            lines.append("- Apply only to this next answer.")
+            lines.append("- Keep hard contracts unchanged (language contract, uncertainty markers, verification gates, self-debunking, QC footer).")
+        else:
+            lines.append("- Nur fuer diese naechste Antwort anwenden.")
+            lines.append("- Harte Vertraege unveraendert einhalten (Sprachvertrag, Unsicherheitsmarker, Verification-Gates, Self-Debunking, QC-Footer).")
+
+        if c <= 1 or i <= 1 or e <= 1:
+            if use_en:
+                lines.append("- Treat this as a rewrite, not a paraphrase: use a different opening sentence and a different section order.")
+                lines.append("- Include at least 3 concrete additions that were not present in the previous answer.")
+            else:
+                lines.append("- Behandle dies als Ueberarbeitung, nicht als Paraphrase: nutze einen anderen Einstiegssatz und eine andere Abschnittsreihenfolge.")
+                lines.append("- Fuege mindestens 3 konkrete Ergaenzungen ein, die in der vorherigen Antwort noch nicht enthalten waren.")
+
+        if c <= 1:
+            cur_clarity = self._qc_current_value("clarity", default=2)
+            if use_en:
+                if cur_clarity >= 3:
+                    lines.append("- Clarity QC already at 3 (numeric cap): enforce qualitative rewrite (clearer structure, simpler sentence flow).")
+                else:
+                    lines.append("- QC direction for this turn: Clarity >= 3.")
+                lines.append("- Add a short summary first, then at least 4 clearly titled sections.")
+                lines.append("- Define key terms and include at least 1 concrete example.")
+            else:
+                if cur_clarity >= 3:
+                    lines.append("- Clarity-QC ist bereits 3 (numerisches Limit): erzwinge qualitative Ueberarbeitung (klarere Struktur, einfacherer Satzfluss).")
+                else:
+                    lines.append("- QC-Richtung fuer diesen Turn: Clarity >= 3.")
+                lines.append("- Starte mit einer Kurzfassung, danach mindestens 4 klar betitelte Abschnitte.")
+                lines.append("- Definiere Schluesselbegriffe und fuege mindestens 1 konkretes Beispiel ein.")
+
+        if i <= 1:
+            cur_evidence = self._qc_current_value("evidence", default=2)
+            cur_consistency = self._qc_current_value("consistency", default=2)
+            if use_en:
+                if cur_evidence >= 3 and cur_consistency >= 3:
+                    lines.append("- Evidence/Consistency already at QC 3: enforce qualitative insight delta instead of numeric increase.")
+                else:
+                    lines.append("- QC direction for this turn: Evidence >= 3 and Consistency >= 3.")
+                lines.append("- Add at least 2 new concrete insights (not rephrased duplicates).")
+                lines.append("- Add 1 counterpoint and 1 explicit verification route.")
+            else:
+                if cur_evidence >= 3 and cur_consistency >= 3:
+                    lines.append("- Evidence/Consistency sind bereits bei QC 3: erzwinge qualitative Erkenntnis-Differenz statt numerischer Erhoehung.")
+                else:
+                    lines.append("- QC-Richtung fuer diesen Turn: Evidence >= 3 und Consistency >= 3.")
+                lines.append("- Fuege mindestens 2 neue konkrete Erkenntnisse ein (keine reinen Umformulierungen).")
+                lines.append("- Fuege 1 Gegenperspektive und 1 explizite Verification-Route hinzu.")
+
+        if e <= 1:
+            cur_brevity = self._qc_current_value("brevity", default=2)
+            if use_en:
+                if cur_brevity <= 0:
+                    lines.append("- Brevity already at depth cap (0): enforce qualitative depth expansion.")
+                else:
+                    lines.append("- QC direction for this turn: Brevity -> deeper style (towards 0), not shorter.")
+                lines.append("- Prefer depth over brevity for this turn: target about >=300 words unless the user explicitly requested concise output.")
+            else:
+                if cur_brevity <= 0:
+                    lines.append("- Brevity ist bereits am Tiefen-Limit (0): erzwinge qualitative Tiefen-Erweiterung.")
+                else:
+                    lines.append("- QC-Richtung fuer diesen Turn: Brevity -> tiefere Ausfuehrung (Richtung 0), nicht kuerzer.")
+                lines.append("- Fuer diesen Turn Tiefe vor Kuerze: Ziel grob >=300 Woerter, ausser der Nutzer fordert explizit eine kurze Antwort.")
+
+        if use_en:
+            lines.append("- Ensure the revised answer differs substantially from the previous answer (structure + concrete detail delta).")
+        else:
+            lines.append("- Stelle sicher, dass die ueberarbeitete Antwort deutlich von der vorherigen abweicht (Struktur + konkrete Detaildifferenz).")
+        return lines
+
+    def submit_cgi_feedback(self, clarity, insight, efficiency, mode: str = "repeat"):
+        """Record CGI feedback via UI widgets; optionally re-answer the last content question."""
+        texts = self._cgi_ui_texts()
+        try:
+            c = int(str(clarity).strip())
+            i = int(str(insight).strip())
+            e = int(str(efficiency).strip())
+        except Exception:
+            return {"ok": False, "error": texts["invalid"]}
+
+        if any(v < 0 or v > 3 for v in (c, i, e)):
+            return {"ok": False, "error": texts["invalid"]}
+
+        triplet = f"{c},{i},{e}"
+        try:
+            self.gov_state.last_user_feedback_triplet = triplet
+            self.gov_state.cgi_feedback_pending_for_model = True
+        except Exception:
+            pass
+
+        mode_s = str(mode or "save").strip().lower()
+        try:
+            self.log_event("cgi_feedback", {"value": triplet, "kind": "widget_triplet", "mode": mode_s})
+        except Exception:
+            pass
+
+        if mode_s not in {"repeat", "rerun", "reanswer"}:
+            return {
+                "ok": True,
+                "repeated": False,
+                "saved_triplet": triplet,
+                "message": texts["saved"].format(c=c, i=i, e=e),
+            }
+
+        last_prompt = str(getattr(self, "_last_content_user_prompt", "") or "").strip()
+        if not last_prompt:
+            return {"ok": False, "error": texts["no_prompt"]}
+
+        try:
+            res = self.ask(last_prompt)
+        except Exception:
+            return {"ok": False, "error": texts["repeat_failed"]}
+
+        if isinstance(res, dict):
+            payload = dict(res)
+        else:
+            payload = {"html": str(res or ""), "csc": None}
+        payload.setdefault("cgi_bar", bool(payload.get("cgi_bar", False)))
+        payload.setdefault("answer_lang", self._answer_lang())
+
+        return {
+            "ok": True,
+            "repeated": True,
+            "saved_triplet": triplet,
+            "message": texts["applied"].format(c=c, i=i, e=e),
+            "response": payload,
+        }
 
     def load_rule_file(self):
         """Öffnet Dateidialog und lädt neues JSON (robust gegen versehentliches Laden von Comm-SCI-Config.json).
@@ -9341,6 +9996,11 @@ class CSCRefiner:
                     final_html_body or "",
                     lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
                 )
+            except Exception:
+                pass
+            try:
+                # Second pass: html_number_self_debunking may surface orphan "*" lines from weak markdown output.
+                final_html_body = sanitize_self_debunking_markdown_in_html(final_html_body or "")
             except Exception:
                 pass
 
@@ -10871,6 +11531,7 @@ class CSCRefiner:
         try:
             timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             raw_txt = txt or ""
+            self._last_response_is_content_answer = False
 
             # STUFE 0: lightweight observability (never raises)
             try:
@@ -10902,7 +11563,7 @@ class CSCRefiner:
                             self.history.append({"role": "bot", "content": msg, "ts": datetime.now().isoformat(), "csc": None})
                         except Exception:
                             pass
-                        return {"html": msg, "csc": None}
+                        return {"html": msg, "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
                     self._bring_qc_override_to_front()
                     try:
                         self.log_event('qc_override_modal_block', {'source': 'ask', 'preview': _safe_preview_text(raw_txt, 80)})
@@ -10914,7 +11575,7 @@ class CSCRefiner:
                         self.history.append({"role": "bot", "content": _blocked_html, "ts": datetime.now().isoformat(), "csc": None})
                     except Exception:
                         pass
-                    return {"html": _blocked_html, "csc": None}
+                    return {"html": _blocked_html, "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
             except Exception:
                 pass
 
@@ -10951,7 +11612,7 @@ class CSCRefiner:
                     self.log_event('blocked', {'reason': _safe_preview_text(route.get('html') or '', 120)})
                 except Exception:
                     pass
-                return {"html": route["html"], "csc": None}
+                return {"html": route["html"], "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
             # SCI Selection (A-H)
             if route.get("is_sci_selection"):
@@ -10960,10 +11621,15 @@ class CSCRefiner:
                     self.log_event('sci_selection', {'value': _safe_preview_text(route.get('query_text') or '', 16)})
                 except Exception:
                     pass
-                return self._handle_sci_selection(route["query_text"])
+                sci_res = self._handle_sci_selection(route["query_text"])
+                if isinstance(sci_res, dict):
+                    sci_res.setdefault("cgi_bar", False)
+                    sci_res.setdefault("answer_lang", self._answer_lang())
+                    return sci_res
+                return {"html": str(sci_res or ""), "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
             if route["kind"] == "noop":
-                return {"html": "", "csc": None}
+                return {"html": "", "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
             # 2. Commands
             if route["kind"] == "command":
@@ -10987,7 +11653,11 @@ class CSCRefiner:
                         self.log_event('command', {'cmd': cmd, 'phase': 'deterministic'})
                     except Exception:
                         pass
-                    return handled_res
+                    if isinstance(handled_res, dict):
+                        handled_res.setdefault("cgi_bar", False)
+                        handled_res.setdefault("answer_lang", self._answer_lang())
+                        return handled_res
+                    return {"html": str(handled_res or ""), "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
                 # State Change (Phase 3): explicit intent dispatch at the router boundary.
                 _applied_via_intent = False
@@ -11094,7 +11764,7 @@ class CSCRefiner:
                     self.log_event('command', {'cmd': cmd, 'phase': 'end', 'profile': getattr(self.gov_state, 'active_profile', '')})
                 except Exception:
                     pass
-                return {"html": html_content, "csc": None}
+                return {"html": html_content, "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
             # 3. Chat (Normal Question)
             self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
@@ -11124,7 +11794,7 @@ class CSCRefiner:
                         + html.escape(fb) +
                         "</div>"
                     )
-                    return {"html": note + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None}
+                    return {"html": note + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
             except Exception:
                 pass
 
@@ -11207,7 +11877,7 @@ class CSCRefiner:
                             "</div>"
                         )
                         menu_html = self._render_sci_menu_html(lang=self._lang())
-                        return {"html": note + "\n" + menu_html, "csc": None}
+                        return {"html": note + "\n" + menu_html, "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
                     if self.gov_state.sci_pending_turns >= max_turns:
                         # Timeout fallback → assume Variant A
@@ -11299,8 +11969,15 @@ class CSCRefiner:
                         fb_parts.append(f"User feedback triplet (CGI): {lu}")
                     if lp:
                         fb_parts.append(f"Process CGI feedback: {lp}")
+                    extra_blocks = []
                     if fb_parts:
-                        user_for_model = (user_for_model.rstrip() + "\n\n[CGI Feedback]\n" + "\n".join(fb_parts)).strip()
+                        extra_blocks.append("[CGI Feedback]\n" + "\n".join(fb_parts))
+                    if lu:
+                        cgi_constraints = self._build_cgi_one_shot_constraints(lu, lang=self._answer_lang())
+                        if cgi_constraints:
+                            extra_blocks.append("[CGI One-Shot Rewrite Constraints]\n" + "\n".join(cgi_constraints))
+                    if extra_blocks:
+                        user_for_model = (user_for_model.rstrip() + "\n\n" + "\n\n".join(extra_blocks)).strip()
                     # Mark as sent (single-use)
                     self.gov_state.cgi_feedback_pending_for_model = False
             except Exception:
@@ -11354,7 +12031,7 @@ class CSCRefiner:
                             "Tip: adjust limits in Config/Comm-SCI-Config.json (rate_limit_per_minute / rate_limit_per_hour; optional rate_limit_scopes)"
                             "</span></div>"
                         )
-                        return {"html": warn + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None}
+                        return {"html": warn + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
             except Exception:
                 pass
 
@@ -11463,7 +12140,7 @@ class CSCRefiner:
                                         "Tip: adjust limits in Config/Comm-SCI-Config.json (rate_limit_per_minute / rate_limit_per_hour; optional rate_limit_scopes)"
                                         "</span></div>"
                                     )
-                                    return {"html": warn + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None}
+                                    return {"html": warn + f"<div class='ts-footer'>Response at {html.escape(ts)}</div>", "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
                         except Exception:
                             pass
                             self.session_requests = int(getattr(self, 'session_requests', 0) or 0) + 1
@@ -11493,18 +12170,18 @@ class CSCRefiner:
                         # Banner (visible; does not claim perfection beyond one pass)
                         try:
                             if _should_show_repair_pass_banner(hard_vios):
-                                items = "".join([f"<li>{html.escape(str(v))}</li>" for v in hard_vios])
+                                items = "".join([f"<li class='control-layer-violation'>{html.escape(str(v))}</li>" for v in hard_vios])
                                 repair_banner_html = (
-                                    "<div style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
+                                    "<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
                                     "border-radius:10px; margin:8px 0; color:#92400e;'>"
                                     "<b>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
-                                    f"<ul style='margin:6px 0 0 18px; padding:0;'>{items}</ul></div>"
+                                    f"<ul class='control-layer-violations' style='margin:6px 0 0 18px; padding:0;'>{items}</ul></div>"
                                 )
                             else:
                                 repair_banner_html = ""
                         except Exception:
                             repair_banner_html = (
-                                "<div style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
+                                "<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
                                 "border-radius:10px; margin:8px 0; color:#92400e;'>"
                                 "<b>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
                                 "</div>"
@@ -11700,7 +12377,12 @@ class CSCRefiner:
             except Exception:
                 safe_meta = None
 
-            return {"html": final, "csc": safe_meta}
+            self._last_response_is_content_answer = True
+            try:
+                self._last_content_user_prompt = str(raw_txt or "").strip()
+            except Exception:
+                pass
+            return {"html": final, "csc": safe_meta, "cgi_bar": True, "answer_lang": self._answer_lang()}
 
         except Exception as e:
             # Always persist a bot entry so exported logs are complete.
@@ -11709,7 +12391,8 @@ class CSCRefiner:
                 self.history.append({"role": "bot", "content": err_html, "ts": datetime.now().isoformat(), "csc": None})
             except Exception:
                 err_html = _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error')
-            return {"html": err_html, "csc": None}
+            self._last_response_is_content_answer = False
+            return {"html": err_html, "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
     
     def update_stats_ui(self):
         if self.main_win:
@@ -11929,20 +12612,26 @@ class CSCRefiner:
             ui_lang = "de"
         return "de" if ui_lang.startswith("de") else "en"
 
+    def _language_policy_mode(self) -> str:
+        """Return active language policy mode (production|benchmark)."""
+        try:
+            mode = str(getattr(getattr(self, "gov_state", None), "language_policy_mode", "") or "").strip().lower()
+        except Exception:
+            mode = ""
+        if mode not in ("production", "benchmark"):
+            try:
+                cfg_obj = getattr(self, "cfg_mgr", None) or globals().get("cfg")
+                mode = str(getattr(cfg_obj, "get_language_policy_mode", lambda: "production")() or "").strip().lower()
+            except Exception:
+                mode = ""
+        return "benchmark" if mode == "benchmark" else "production"
+
     def _append_uncertainty_explanation_if_needed(self, html_text: str, user_text: str = "") -> str:
         txt = str(html_text or "")
         if not txt:
             return txt
         lang = self._answer_lang()
         out = txt
-        color_on = False
-        try:
-            color_on = (
-                bool(getattr(getattr(self, "gov_state", None), "comm_active", False))
-                and str(getattr(getattr(self, "gov_state", None), "color", "off") or "off").strip().lower() == "on"
-            )
-        except Exception:
-            color_on = False
         try:
             if _uncertainty_codes_mod is not None and hasattr(_uncertainty_codes_mod, "ensure_uncertainty_annotations_html"):
                 out = _uncertainty_codes_mod.ensure_uncertainty_annotations_html(
@@ -11956,15 +12645,6 @@ class CSCRefiner:
             out = txt
         try:
             out = annotate_signal_dot_tooltips_html(out, lang=lang)
-        except Exception:
-            pass
-        if color_on:
-            try:
-                out = inject_fallback_signal_dots_html(out, lang=lang)
-            except Exception:
-                pass
-        try:
-            out = strip_signal_dots_from_heading_only_blocks_html(out)
         except Exception:
             pass
         try:
@@ -12416,6 +13096,7 @@ class CSCRefiner:
             'current_model': 'gemini-2.0-flash',
             'available_models': ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-pro'],
             'answer_language': 'de',
+            'language_policy_mode': 'production',
             'comm': [{'name': 'Comm Start', 'cmd': 'Comm Start', 'desc': 'Start Comm Control Layer'}],
             'profiles': [],
             'sci': [],
@@ -12901,6 +13582,26 @@ class CSCRefiner:
             except Exception:
                 pass
             self._ui_add_system_message(f"Answer language (LLM) set to: {lang}.")
+            self._ui_refresh_panel()
+        except Exception:
+            pass
+
+    def set_language_policy_mode(self, mode: str):
+        """Set language policy mode: production (enforce) or benchmark (log-only)."""
+        try:
+            m = (mode or "production").strip().lower()
+            if m not in ("production", "benchmark"):
+                m = "production"
+            try:
+                self.gov_state.language_policy_mode = m
+            except Exception:
+                pass
+            try:
+                if hasattr(cfg, "set_language_policy_mode"):
+                    cfg.set_language_policy_mode(m)
+            except Exception:
+                pass
+            self._ui_add_system_message(f"Language policy mode set to: {m}.")
             self._ui_refresh_panel()
         except Exception:
             pass
@@ -14427,6 +15128,7 @@ class CSCRefiner:
                 'ruleset_hash': ruleset_hash(),
                 'default_profile': (getattr(gov, 'data', {}) or {}).get('default_profile', 'Standard'),
                 'cross_version_guard_enabled': True,
+                'language_policy_mode': getattr(getattr(self, 'gov_state', None), 'language_policy_mode', 'production'),
             },
             'conversation': getattr(self, 'history', []) or [],
             'governance_logs_tail': (getattr(gov, 'logs', []) or [])[-50:],
@@ -16568,12 +17270,14 @@ def _build_jsonl_meta(api) -> dict:
     ruleset_version = None
     provider = None
     model = None
+    language_policy_mode = None
 
     try:
         gov = getattr(api, 'gov_state', None)
         try:
             provider = getattr(gov, 'provider', None) or getattr(gov, 'provider_name', None)
             model = getattr(gov, 'model', None) or getattr(gov, 'model_name', None)
+            language_policy_mode = getattr(gov, 'language_policy_mode', None)
         except Exception:
             pass
         try:
@@ -16593,6 +17297,7 @@ def _build_jsonl_meta(api) -> dict:
                 ruleset_version=str(ruleset_version) if ruleset_version is not None else None,
                 provider=str(provider) if provider is not None else None,
                 model=str(model) if model is not None else None,
+                language_policy_mode=str(language_policy_mode) if language_policy_mode is not None else None,
             )
         except Exception:
             pass
@@ -16604,6 +17309,8 @@ def _build_jsonl_meta(api) -> dict:
         meta['provider'] = provider
     if model:
         meta['model'] = model
+    if language_policy_mode:
+        meta['language_policy_mode'] = language_policy_mode
     return meta
 
 
@@ -16791,6 +17498,8 @@ class Api(CSCRefiner):
 
         # Chat history for export
         self.history = []
+        self._last_content_user_prompt = ""
+        self._last_response_is_content_answer = False
 
         # Runtime governance state (fail-safe default)
         try:
@@ -16883,6 +17592,7 @@ class Api(CSCRefiner):
                 'sci_active': getattr(_gs, 'sci_active', None),
                 'sci_variant': getattr(_gs, 'sci_variant', None),
                 'comm_active': getattr(_gs, 'comm_active', None),
+                'language_policy_mode': getattr(_gs, 'language_policy_mode', None),
                 'data': data,
             })
 
@@ -16911,6 +17621,7 @@ class Api(CSCRefiner):
                         'sci_variant': getattr(gs, 'sci_variant', None),
                         'ui_lang': getattr(gs, 'ui_lang', None),
                         'color': getattr(gs, 'color', None),
+                        'language_policy_mode': getattr(gs, 'language_policy_mode', None),
                     },
                     'data': data,
                     'meta': _build_jsonl_meta(self),
@@ -17078,6 +17789,7 @@ else:
     for _mb_name in (
         "ask",
         "remote_cmd",
+        "submit_cgi_feedback",
         "ui_qc_bar_enabled",
         "is_ready",
         "ping",

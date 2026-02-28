@@ -94,6 +94,13 @@ class UIController:
                 lang = payload.get("lang", "")
                 return _ok(fn(str(lang or "")))
 
+            if action_s == "set_language_policy_mode":
+                fn = getattr(app, "set_language_policy_mode", None)
+                if not callable(fn):
+                    return _err("set_language_policy_mode unavailable")
+                mode = payload.get("mode", "")
+                return _ok(fn(str(mode or "")))
+
             if action_s == "refresh_models":
                 fn_refresh = getattr(app, "refresh_models", None)
                 if not callable(fn_refresh):
