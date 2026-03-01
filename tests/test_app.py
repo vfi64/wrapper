@@ -1597,6 +1597,29 @@ def test_panel_html_uses_panel_action_and_not_remote_cmd():
     assert 'remote_cmd' not in html
 
 
+def test_panel_manual_test_ask_fallback_uses_literal_method_check():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_PANEL", "")
+    assert "msg.toLowerCase().includes('pywebview api method not available: ask')" in html
+    assert "panel_action', ['ask', {text: t}]" in html
+
+
+def test_panel_manual_test_export_uses_panel_action_fallback():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_PANEL", "")
+    assert "msg.toLowerCase().includes('pywebview api method not available: export')" in html
+    assert "panel_action', ['export', {}]" in html
+
+
+def test_external_panel_asset_manual_test_regexes_are_not_overescaped():
+    panel_asset = ROOT / "src" / "ui_assets" / "panel.html"
+    txt = panel_asset.read_text(encoding="utf-8")
+    assert "pywebview api method not available:\\\\s*ask" not in txt
+    assert "qc.search(/\\\\bResponse at\\\\b/i)" not in txt
+    assert "qc.replace(/\\\\s+/g, ' ')" not in txt
+    assert "const hasNumbered = /\\\\b1\\\\.\\\\s*" not in txt
+
+
 def test_chat_header_displays_wrapper_prompt_label():
     """UI invariant: the chat header must show the current Wrapper-NNN label (no legacy tag)."""
     mod = load_fix_module()
@@ -1625,11 +1648,26 @@ def test_chat_uncertainty_tooltip_supports_mouse_hold():
     mod = load_fix_module()
     html = getattr(mod, "HTML_CHAT", "")
     assert isinstance(html, str) and html
+    assert "__uTipTargets" in html
     assert "_uTipShow(" in html
     assert ".uncertainty-inline-marker" in html
     assert ".signal-dot-marker" in html
+    assert ".csc-badge" in html
+    assert ".csc-warning" in html
+    assert ".control-layer-note" in html
+    assert "csc-help-icon" in html
     assert "document.addEventListener('mousedown'" in html
     assert "document.addEventListener('mouseup', _uTipHide)" in html
+
+
+def test_chat_csc_block_reads_tooltip_metadata():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_CHAT", "")
+    assert isinstance(html, str) and html
+    assert "const scoreTip = escHtml(csc.score_tooltip || '');" in html
+    assert "const thrTip = escHtml(csc.thresholds_tooltip || '');" in html
+    assert "class=\"cgi-help csc-help-icon\"" in html
+    assert "data-u-title" in html
 
 
 def test_chat_cgi_widget_uses_dropdowns_and_repeat_action_only():
@@ -1756,6 +1794,87 @@ def test_uncertainty_tooltip_uses_answer_language_german():
     )
     assert "data-u-title='U5 - Strukturelle Grenze" in out
     assert "uncertainty-legend" not in out
+
+
+def test_control_layer_alert_tooltip_uses_language_english():
+    mod = load_fix_module()
+    out = mod._control_layer_alert_html(
+        "Contract adjusted.",
+        title="CONTROL LAYER NOTE",
+        severity="warn",
+        lang="en",
+    )
+    assert "data-u-title='Control Layer note: deterministic safety/contract guard adjusted output." in out
+
+
+def test_control_layer_alert_tooltip_uses_language_german():
+    mod = load_fix_module()
+    out = mod._control_layer_alert_html(
+        "Vertrag angepasst.",
+        title="CONTROL LAYER NOTE",
+        severity="warn",
+        lang="de",
+    )
+    assert "data-u-title='Control-Layer-Hinweis: deterministische Sicherheits-/Vertragspruefung hat Ausgabe angepasst." in out
+
+
+def test_csc_meta_tooltip_uses_answer_language_english():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api.gov_state.answer_language = "en"
+    html_out, meta = api._apply_csc_strict(
+        raw_response="I guarantee this is correct.",
+        user_raw="x",
+        is_command=False,
+    )
+    assert isinstance(html_out, str) and html_out
+    assert isinstance(meta, dict)
+    assert bool(meta.get("applied"))
+    score_tip = str(meta.get("score_tooltip") or "")
+    thr_tip = str(meta.get("thresholds_tooltip") or "")
+    assert "score line: f=" in score_tip.lower()
+    assert "tokens=" in score_tip.lower()
+    assert "complex/technical" in score_tip.lower()
+    assert "thresholds line:" in thr_tip.lower()
+    assert "f>=" in thr_tip
+    assert "tok>=" in thr_tip
+    assert "gov_tok>=" in thr_tip
+    assert "x1 normal, x2 stricter" in thr_tip.lower()
+
+
+def test_csc_meta_tooltip_uses_answer_language_german():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api.gov_state.answer_language = "de"
+    html_out, meta = api._apply_csc_strict(
+        raw_response="Das ist definitiv korrekt.",
+        user_raw="x",
+        is_command=False,
+    )
+    assert isinstance(html_out, str) and html_out
+    assert isinstance(meta, dict)
+    assert bool(meta.get("applied"))
+    score_tip = str(meta.get("score_tooltip") or "")
+    thr_tip = str(meta.get("thresholds_tooltip") or "")
+    assert "Score-Zeile: f=" in score_tip
+    assert "tokens=" in score_tip
+    assert "komplex/technisch" in score_tip
+    assert "Thresholds-Zeile:" in thr_tip
+    assert "f>=" in thr_tip
+    assert "tok>=" in thr_tip
+    assert "gov_tok>=" in thr_tip
+    assert "x1 normal, x2 strenger" in thr_tip
+
+
+def test_response_timestamp_contains_explicit_utc_offset():
+    mod = load_fix_module()
+    ts = mod._format_response_timestamp()
+    assert isinstance(ts, str) and ts
+    assert re.search(r"UTC[+-]\d{2}:\d{2}", ts) is not None
 
 
 def test_signal_dot_tooltip_uses_answer_language_english():
@@ -3965,6 +4084,32 @@ def test_html_number_self_debunking_removes_orphan_markers_and_no_double_prefix(
     assert "1. <strong>Schwäche</strong>: Punkt eins." in out
     assert "2. <strong>Schwäche</strong>: Punkt zwei." in out
 
+
+def test_html_number_self_debunking_fallback_cleans_markdown_leaks_without_box():
+    mod = load_fix_module()
+    html_in = (
+        "<p><strong>Self-Debunking:</strong></p>\n"
+        "<li><p><strong><em>*Schwäche</em>*:</strong> Punkt eins.\n"
+        "*\n"
+        "<strong><strong>Warum das wichtig ist</strong>:</strong> Relevanz eins.\n"
+        "*\n"
+        "<strong><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:</strong> Test eins.</p></li>\n"
+        "<li><p><strong><em>*Schwäche</em>*:</strong> Punkt zwei.\n"
+        "*\n"
+        "<strong><strong>Warum das wichtig ist</strong>:</strong> Relevanz zwei.</p></li>\n"
+        "<p>QC-Matrix: Clarity 3 (Δ0)</p>\n"
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "<em>*Schwäche</em>*" not in out
+    assert "<strong><strong>" not in out
+    assert "<p>*</p>" not in out
+    assert ">*\n" not in out
+    assert "1. <strong>Schwäche</strong>: Punkt eins." in out or "1. Schwäche: Punkt eins." in out
+    assert "2. <strong>Schwäche</strong>: Punkt zwei." in out or "2. Schwäche: Punkt zwei." in out
+    assert "<strong>Warum das wichtig ist</strong>:" in out
+    assert "<strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:" in out
+
+
 def test_normalize_known_markdown_control_headings_converts_prefixed_subheadings():
     mod = load_fix_module()
     raw = (
@@ -4111,6 +4256,19 @@ def test_strip_internal_scaffolding_status_lines_removes_profile_with_inline_pro
     assert "Hier startet der eigentliche Inhalt." in out
 
 
+def test_strip_internal_scaffolding_status_lines_removes_profile_without_colon():
+    mod = load_fix_module()
+    raw = (
+        "Active profile: Standard · SCI: off · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
+        "Profile Standard\n"
+        "Hier startet der eigentliche Inhalt.\n"
+    )
+    out = mod.strip_internal_scaffolding_status_lines(raw)
+    assert "Active profile:" in out
+    assert "Profile Standard" not in out
+    assert "Hier startet der eigentliche Inhalt." in out
+
+
 def test_strip_internal_scaffolding_status_html_removes_profile_block():
     mod = load_fix_module()
     html_in = (
@@ -4146,6 +4304,19 @@ def test_strip_internal_scaffolding_status_html_removes_profile_plus_prompt_echo
     out = mod.strip_internal_scaffolding_status_html(html_in)
     assert "Profile: Standard" not in out
     assert "Wie kann man das fair umsetzen?" not in out
+    assert "Hier startet der eigentliche Inhalt." in out
+
+
+def test_strip_internal_scaffolding_status_html_removes_profile_without_colon():
+    mod = load_fix_module()
+    html_in = (
+        "<p>Active profile: Standard · SCI: off · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on</p>"
+        "<p>Profile Standard</p>"
+        "<p>Hier startet der eigentliche Inhalt.</p>"
+    )
+    out = mod.strip_internal_scaffolding_status_html(html_in)
+    assert "Active profile:" in out
+    assert "Profile Standard" not in out
     assert "Hier startet der eigentliche Inhalt." in out
 
 
@@ -4980,6 +5151,26 @@ def test_panel_action_manual_test_stop_routes_to_manual_test_request_stop():
     assert out.get("ok") is True
     assert out.get("running") is False
     assert calls and calls[0] == {"lang": "en"}
+
+
+def test_panel_action_export_routes_to_export():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    calls = []
+
+    def _exp(*_a, **_k):
+        calls.append(True)
+        return ("/tmp/chat.json", "/tmp/audit.json")
+
+    api.export = _exp  # type: ignore[assignment]
+    out = api.panel_action("export", {})
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    assert out.get("chat_path") == "/tmp/chat.json"
+    assert out.get("audit_path") == "/tmp/audit.json"
+    assert calls == [True]
 
 
 def test_panel_action_blocks_stale_rule_actions_when_comm_off():

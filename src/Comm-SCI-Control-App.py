@@ -2404,6 +2404,9 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
         profile_only_pat = re.compile(
             r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
         )
+        profile_plain_pat = re.compile(
+            r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
+        )
         profile_title_pat = re.compile(
             r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
         )
@@ -2486,7 +2489,7 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
                 if _is_prompt_echo_line(tail):
                     i += 1
                     continue
-            if profile_only_pat.match(s):
+            if profile_only_pat.match(s) or profile_plain_pat.match(s):
                 # Optionally consume a leaked prompt-echo line directly below.
                 j = i + 1
                 while j < n and not (lines[j] or "").strip():
@@ -2661,6 +2664,9 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
             profile_only_pat = re.compile(
                 r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
             )
+            profile_plain_pat = re.compile(
+                r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
+            )
             profile_title_pat = re.compile(
                 r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
             )
@@ -2685,13 +2691,17 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
 
             if profile_only_pat.match(txt or ""):
                 return True
+            if profile_plain_pat.match(txt or ""):
+                return True
             if profile_title_pat.match(txt or ""):
                 return True
             m_tail = profile_with_tail_pat.match(txt or "")
             if m_tail and _is_prompt_echo_line((m_tail.group("tail") or "").strip()):
                 return True
             if len(lines) >= 2 and (
-                profile_only_pat.match(lines[0] or "") or profile_title_pat.match(lines[0] or "")
+                profile_only_pat.match(lines[0] or "")
+                or profile_plain_pat.match(lines[0] or "")
+                or profile_title_pat.match(lines[0] or "")
             ):
                 nxt = (lines[1] or "").strip()
                 if (
@@ -3376,6 +3386,21 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                 return cleaned
 
             # Drop standalone marker lines ("1.", "2.") that cause visible double numbering.
+            # Also normalize common markdown-leak patterns from weak model output where
+            # labels appear as "*Schwäche*" and nested <strong> tags.
+            body = re.sub(
+                r"(?is)<strong>\s*<em>\s*\*?\s*(Schwäche|Weakness)\s*\*?\s*</em>\s*\*?\s*:\s*</strong>",
+                r"<strong>\1</strong>:",
+                body,
+            )
+            body = re.sub(
+                r"(?is)<strong>\s*<strong>\s*([^<]+?)\s*</strong>\s*:\s*</strong>",
+                r"<strong>\1</strong>:",
+                body,
+            )
+            body = re.sub(r"(?is)<em>\s*\*?\s*(Schwäche|Weakness)\s*\*?\s*</em>\s*\*?", r"\1", body)
+            body = re.sub(r"(?im)^\s*(?:<[^>]+>\s*)*\*\s*(?:</[^>]+>\s*)*$", "", body)
+            body = re.sub(r"(?is)>\s*\*\s*(?=<br\s*/?>|</(?:p|div|li)>)", ">", body)
             body = re.sub(
                 r'(?im)^\s*<div[^>]*>\s*\d+\.\s*</div>\s*$',
                 '',
@@ -3405,6 +3430,12 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
                     ln = ln.replace('Schwäche:', 'Weakness:')
                     ln = ln.replace('Warum das wichtig ist:', 'Why it matters:')
                     ln = ln.replace('Was würde verifizieren/falsifizieren (nächster Check):', 'What would verify/falsify (next check):')
+
+                ln = re.sub(r"(?is)<em>\s*\*?\s*(Schwäche|Weakness)\s*\*?\s*</em>\s*\*?", r"\1", ln)
+                ln = re.sub(r"(?i)\*+\s*(Schwäche|Weakness)\s*\*+\s*:", r"\1:", ln)
+                ln = re.sub(r"(?is)<strong>\s*<strong>\s*", "<strong>", ln)
+                ln = re.sub(r"(?is)</strong>\s*</strong>", "</strong>", ln)
+                ln = re.sub(r"(?is)(<strong>[^<]+</strong>:)\s*</strong>", r"\1", ln)
 
                 # Bold known labels (formatting only).
                 for lab in (
@@ -3439,15 +3470,17 @@ def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
 
                 # Count/number only Weakness lines.
                 plain = re.sub(r'<[^>]+>', '', ln).strip()
+                plain_norm = re.sub(r"\*+", "", plain).strip()
                 # Non-Weakness field labels must not carry list numbering.
                 if re.match(
                     r"(?i)^(?:\d+\.\s*)(Why it matters|Warum relevant|Warum es wichtig ist|Warum das wichtig ist|What would verify/falsify \(next check\)|What would verify or falsify \(next check\)|Was würde verifizieren/falsifizieren \(nächster Check\)|Was würde verifizieren oder falsifizieren \(nächster Check\)|Next check|Nächster Check|Nächste Prüfung|Prüfen/Widerlegen \(nächster Schritt\))\s*:",
-                    plain,
+                    plain_norm,
                 ):
                     ln = re.sub(r'(?i)(<div[^>]*>\s*)\d+\.\s*', r'\1', ln, count=1)
                     ln = re.sub(r'(?i)^\s*\d+\.\s*', '', ln, count=1)
                     plain = re.sub(r'<[^>]+>', '', ln).strip()
-                if re.match(r'(?i)^(?:\d+\.\s*)?(Weakness|Schwäche)\b\s*:', plain):
+                    plain_norm = re.sub(r"\*+", "", plain).strip()
+                if re.match(r'(?i)^(?:\d+\.\s*)?(Weakness|Schwäche)\b\s*:', plain_norm):
                     n += 1
                     # Remove any existing numeric prefix immediately after opening div/start.
                     ln = re.sub(r'(?i)(<div[^>]*>\s*)\d+\.\s*', r'\1', ln, count=1)
@@ -3896,6 +3929,102 @@ def _signal_dot_tooltip_text(icon: str, *, lang: str = "de") -> str:
             else "Rot: niedrige Verlaesslichkeit; erhebliche Unsicherheit oder schwache Absicherung."
         )
     return ""
+
+
+def _tooltip_lang(lang: str = "de") -> str:
+    l = str(lang or "").strip().lower()
+    return "en" if l.startswith("en") else "de"
+
+
+def _format_response_timestamp(dt_obj=None) -> str:
+    """Return deterministic chat timestamp with explicit local timezone."""
+    try:
+        dt = dt_obj if dt_obj is not None else datetime.now()
+        try:
+            dt = dt.astimezone()
+        except Exception:
+            pass
+        base = dt.strftime("%d.%m.%Y %H:%M:%S")
+        tz_name = str(dt.tzname() or "").strip()
+        off = dt.strftime("%z")
+        off_fmt = ""
+        if len(off) == 5 and off[0] in "+-":
+            off_fmt = off[:3] + ":" + off[3:]
+        elif off:
+            off_fmt = off
+
+        if tz_name and off_fmt:
+            return f"{base} {tz_name} (UTC{off_fmt})"
+        if off_fmt:
+            return f"{base} (UTC{off_fmt})"
+        if tz_name:
+            return f"{base} {tz_name}"
+        return base
+    except Exception:
+        return datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+
+
+def _csc_score_tooltip_text(*, lang: str = "de", f_score: int = 0, token_count: int = 0) -> str:
+    if _tooltip_lang(lang) == "en":
+        return (
+            f"Score line: f={int(f_score)}, tokens={int(token_count)}. "
+            "f = how complex/technical your prompt is (based on code/math patterns). "
+            "tokens = approximate prompt length in words."
+        )
+    return (
+        f"Score-Zeile: f={int(f_score)}, tokens={int(token_count)}. "
+        "f = wie komplex/technisch dein Prompt ist (anhand von Code-/Mathe-Mustern). "
+        "tokens = ungefaehre Prompt-Laenge in Woertern."
+    )
+
+
+def _csc_thresholds_tooltip_text(
+    *,
+    lang: str = "de",
+    thr_fs: int = 0,
+    thr_tok: int = 0,
+    gov_min_tok: int = 0,
+    mult: int = 1,
+) -> str:
+    if _tooltip_lang(lang) == "en":
+        return (
+            f"Thresholds line: f>={int(thr_fs)}, tok>={int(thr_tok)}, gov_tok>={int(gov_min_tok)}, x{int(mult or 1)}. "
+            "x = threshold multiplier (x1 normal, x2 stricter). "
+            "f = minimum complexity needed for CSC complexity trigger. "
+            "tok = minimum prompt length for the complexity trigger. "
+            "gov_tok = minimum prompt length when a governance trigger is active."
+        )
+    return (
+        f"Thresholds-Zeile: f>={int(thr_fs)}, tok>={int(thr_tok)}, gov_tok>={int(gov_min_tok)}, x{int(mult or 1)}. "
+        "x = Schwellen-Multiplikator (x1 normal, x2 strenger). "
+        "f = minimale Komplexitaet fuer den CSC-Komplexitaets-Trigger. "
+        "tok = minimale Prompt-Laenge fuer den Komplexitaets-Trigger. "
+        "gov_tok = minimale Prompt-Laenge, wenn ein Governance-Trigger aktiv ist."
+    )
+
+
+def _control_layer_tooltip_text(*, lang: str = "de", severity: str = "warn") -> str:
+    use_en = (_tooltip_lang(lang) == "en")
+    sev = str(severity or "").strip().lower()
+    if sev == "error":
+        return (
+            "Control Layer error: deterministic safety/contract guard stopped or corrected output."
+            if use_en
+            else "Control-Layer-Fehler: deterministische Sicherheits-/Vertragspruefung hat Ausgabe gestoppt oder korrigiert."
+        )
+    if sev == "warn":
+        return (
+            "Control Layer note: deterministic safety/contract guard adjusted output. "
+            "Please cross-check critical parts."
+            if use_en
+            else "Control-Layer-Hinweis: deterministische Sicherheits-/Vertragspruefung hat Ausgabe angepasst. "
+                 "Kritische Teile bitte gegenpruefen."
+        )
+    return (
+        "Control Layer info: deterministic wrapper guard information."
+        if use_en
+        else "Control-Layer-Info: deterministische Schutzinformation des Wrappers."
+    )
 
 
 def annotate_signal_dot_tooltips_html(html_text: str, *, lang: str = "de") -> str:
@@ -4946,8 +5075,12 @@ HTML_CHAT_TEMPLATE = """
       const tok = escHtml(csc.token_count ?? '');
       const mult = escHtml(csc.threshold_multiplier ?? '');
       const thrFs = escHtml(csc.threshold_f_score ?? '');
-      const thrTok = escHtml(csc.min_token_count ?? '');
+      const thrTok = escHtml((csc.min_token_count ?? csc.threshold_token_count) ?? '');
       const thrGov = escHtml(csc.min_token_count_governance ?? '');
+      const scoreTip = escHtml(csc.score_tooltip || '');
+      const thrTip = escHtml(csc.thresholds_tooltip || '');
+      const scoreInfo = scoreTip ? ` <span class="cgi-help csc-help-icon" data-u-title="${scoreTip}">i</span>` : '';
+      const thrInfo = thrTip ? ` <span class="cgi-help csc-help-icon" data-u-title="${thrTip}">i</span>` : '';
 
       let details = '';
       details += `<details><summary>Details</summary>`;
@@ -4955,11 +5088,11 @@ HTML_CHAT_TEMPLATE = """
       details += `Trigger: ${trig || '—'}<br>`;
       details += `Mode: ${mode || '—'}${csc.governance_triggered ? ' (governance)' : ''}<br>`;
       details += `Overlay: ${ov || 'off'} · Profile: ${prof || '—'}<br>`;
-      details += `Score: f=${fs} · tokens=${tok}<br>`;
-      details += `Thresholds (x${mult || 1}): f≥${thrFs}, tok≥${thrTok}, gov_tok≥${thrGov}`;
+      details += `Score: f=${fs} · tokens=${tok}${scoreInfo}<br>`;
+      details += `Thresholds (x${mult || 1}): f>=${thrFs}, tok>=${thrTok}, gov_tok>=${thrGov}${thrInfo}`;
       details += `</div></details>`;
 
-      return `<span class="csc-badge" title="CSC applied">CSC applied</span>` +
+      return `<span class="csc-badge">CSC applied</span>` +
              `<div class="csc-warning"><b>CSC</b>: ${msg}${details}</div>`;
   }
 
@@ -5172,24 +5305,25 @@ HTML_CHAT_TEMPLATE = """
       } catch(e) {}
   }
 
+  const __uTipTargets = '.uncertainty-inline-marker, .signal-dot-marker, .cgi-help, .csc-badge, .csc-warning, .control-layer-note';
   document.addEventListener('mousedown', (e)=>{
       if(typeof e.button === 'number' && e.button !== 0) return;
       const t = (e.target && e.target.closest)
-          ? e.target.closest('.uncertainty-inline-marker, .signal-dot-marker, .cgi-help')
+          ? e.target.closest(__uTipTargets)
           : null;
       if(!t) return;
       _uTipShow(t, e);
   });
   document.addEventListener('mouseover', (e)=>{
       const t = (e.target && e.target.closest)
-          ? e.target.closest('.cgi-help')
+          ? e.target.closest(__uTipTargets)
           : null;
       if(!t) return;
       _uTipShow(t, e);
   });
   document.addEventListener('mouseout', (e)=>{
       const t = (e.target && e.target.closest)
-          ? e.target.closest('.cgi-help')
+          ? e.target.closest(__uTipTargets)
           : null;
       if(!t) return;
       _uTipHide();
@@ -6118,7 +6252,21 @@ async function _mtExportChatAudit(label){
     _mtLog('PASS: Export ausgefuehrt', 'ok');
     return true;
   } catch(e) {
-    _mtWarn('Export nicht ausgefuehrt: ' + String(e && e.message ? e.message : e));
+    const msg = String(e && e.message ? e.message : e);
+    if(msg.toLowerCase().includes('pywebview api method not available: export')){
+      try {
+        const res = await _apiCall('panel_action', ['export', {}], 25000);
+        if(!res || res.ok === false){
+          throw new Error((res && res.error) ? res.error : 'panel_action export failed');
+        }
+        _mtLog('PASS: Export ausgefuehrt', 'ok');
+        return true;
+      } catch(e2) {
+        _mtWarn('Export nicht ausgefuehrt: ' + String(e2 && e2.message ? e2.message : e2));
+        return false;
+      }
+    }
+    _mtWarn('Export nicht ausgefuehrt: ' + msg);
     return false;
   }
 }
@@ -6211,7 +6359,7 @@ async function _mtAsk(text, timeoutMs){
     res = await _apiCall('ask', [t], askTimeout);
   } catch(e) {
     const msg = String(e && e.message ? e.message : e);
-    if(/pywebview api method not available:\\s*ask/i.test(msg)){
+    if(msg.toLowerCase().includes('pywebview api method not available: ask')){
       try {
         const mt = window.__manualTestRunner || {};
         if(!mt.askFallbackNoted){
@@ -9797,15 +9945,42 @@ class CSCRefiner:
                 
                 # Metadata bauen (für Badge)
                 if dec.apply:
-                    lang = self._lang()
+                    ans_lang = self._answer_lang()
                     msg = CSC_WARNING_TEXT
+                    thr_fs = int(getattr(refiner, '_refine_params', {}).get('threshold_f_score', 8) or 8)
+                    thr_tok = int(getattr(refiner, '_refine_params', {}).get('min_token_count', 80) or 80)
+                    gov_min_tok = int(getattr(refiner, '_gov_params', {}).get('min_token_count_governance', 40) or 40)
+                    if mult != 1:
+                        thr_fs *= mult
+                        thr_tok *= mult
+                        gov_min_tok *= mult
                     csc_meta = {
                         "applied": True, "message": msg,
                         "trigger": str(getattr(dec, 'trigger_source', '')),
                         "mode": str(getattr(dec, 'mode', '')),
                         "governance_triggered": bool(getattr(dec, 'governance_triggered', False)),
+                        "token_count": int(getattr(dec, 'token_count', 0)),
                         "f_score": int(getattr(dec, 'f_score', 0)),
-                        "overlay": overlay
+                        "score_tooltip": _csc_score_tooltip_text(
+                            lang=ans_lang,
+                            f_score=int(getattr(dec, 'f_score', 0)),
+                            token_count=int(getattr(dec, 'token_count', 0)),
+                        ),
+                        "thresholds_tooltip": _csc_thresholds_tooltip_text(
+                            lang=ans_lang,
+                            thr_fs=thr_fs,
+                            thr_tok=thr_tok,
+                            gov_min_tok=gov_min_tok,
+                            mult=mult,
+                        ),
+                        "overlay": overlay,
+                        "profile": str(prof or ''),
+                        "threshold_multiplier": int(mult or 1),
+                        "threshold_f_score": int(thr_fs),
+                        "threshold_token_count": int(thr_tok),
+                        "min_token_count": int(thr_tok),
+                        "min_token_count_governance": int(gov_min_tok),
+                        "schema_version": "1.0",
                     }
 
             # 4. Alerts generieren (Wiederhergestellt aus alter Version)
@@ -10409,6 +10584,7 @@ class CSCRefiner:
                         _trunc_msg + " Bitte gegenprüfen oder Antwort neu generieren.",
                         title="CONTROL LAYER NOTE",
                         severity="warn",
+                        lang=self._answer_lang(),
                     ) + (alert_html or "")
                     try:
                         if csc_meta is None:
@@ -10432,7 +10608,7 @@ class CSCRefiner:
             except Exception:
                 pass
 
-            timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            timestamp = _format_response_timestamp()
 
             if render_ok:
                 raw_details = ""
@@ -10764,14 +10940,41 @@ class CSCRefiner:
             injected = "\n".join([l for l in add_lines if l.strip()])
             wrapped = user_raw + "\n\n" + injected
 
+            thr_fs = int(getattr(refiner, '_refine_params', {}).get('threshold_f_score', 8) or 8)
+            thr_tok = int(getattr(refiner, '_refine_params', {}).get('min_token_count', 80) or 80)
+            gov_min_tok = int(getattr(refiner, '_gov_params', {}).get('min_token_count_governance', 40) or 40)
+            if mult != 1:
+                thr_fs *= mult
+                thr_tok *= mult
+                gov_min_tok *= mult
             pre_meta = {
                 'applied': True,
                 'message': CSC_WARNING_TEXT,
                 'trigger': str(getattr(dec, 'trigger_source', '')),
                 'mode': str(getattr(dec, 'mode', '')),
                 'governance_triggered': bool(getattr(dec, 'governance_triggered', False)),
+                'token_count': int(getattr(dec, 'token_count', 0)),
                 'f_score': int(getattr(dec, 'f_score', 0)),
+                'score_tooltip': _csc_score_tooltip_text(
+                    lang=self._answer_lang(),
+                    f_score=int(getattr(dec, 'f_score', 0)),
+                    token_count=int(getattr(dec, 'token_count', 0)),
+                ),
+                'thresholds_tooltip': _csc_thresholds_tooltip_text(
+                    lang=self._answer_lang(),
+                    thr_fs=thr_fs,
+                    thr_tok=thr_tok,
+                    gov_min_tok=gov_min_tok,
+                    mult=mult,
+                ),
                 'overlay': overlay,
+                'profile': str(prof or ''),
+                'threshold_multiplier': int(mult or 1),
+                'threshold_f_score': int(thr_fs),
+                'threshold_token_count': int(thr_tok),
+                'min_token_count': int(thr_tok),
+                'min_token_count_governance': int(gov_min_tok),
+                'schema_version': '1.0',
             }
             return wrapped, pre_meta
         except Exception:
@@ -11797,7 +12000,7 @@ class CSCRefiner:
                 return ("Standard", "", "off", False, "", "", False, False)
 
         try:
-            timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            timestamp = _format_response_timestamp()
             raw_txt = txt or ""
             self._last_response_is_content_answer = False
 
@@ -12054,7 +12257,7 @@ class CSCRefiner:
                         self.log_event('cgi_feedback', {'value': _safe_preview_text(fb, 32), 'kind': 'user_feedback_triplet' if bool(route.get('is_user_feedback_triplet')) else 'process_cgi_feedback'})
                     except Exception:
                         pass
-                    ts = datetime.now().isoformat()
+                    ts = _format_response_timestamp()
                     note = (
                         "<div style='border:1px solid #bbf7d0; background:#f0fdf4; padding:10px; "
                         "border-radius:10px; margin:8px 0; color:#166534;'>"
@@ -12289,7 +12492,7 @@ class CSCRefiner:
                             self.session_events.append({'ts': datetime.now().isoformat(), 'type': 'rate_limit_hit', 'data': {'message': msg}})
                         except Exception:
                             pass
-                        ts = datetime.now().isoformat()
+                        ts = _format_response_timestamp()
                         warn = (
                             "<div style='border:1px solid #fca5a5; background:#fef2f2; padding:10px; "
                             "border-radius:10px; margin:8px 0; color:#991b1b;'>"
@@ -12399,7 +12602,7 @@ class CSCRefiner:
 
                                 ok, msg, retry_s = self.rate_limiter.allow_call(provider=_provider_rl, model=_model_rl, reason='repair', consume=True, return_retry=True)
                                 if not ok:
-                                    ts = datetime.now().isoformat()
+                                    ts = _format_response_timestamp()
                                     warn = (
                                         "<div style='border:1px solid #fca5a5; background:#fef2f2; padding:10px; "
                                         "border-radius:10px; margin:8px 0; color:#991b1b;'>"
@@ -12436,22 +12639,32 @@ class CSCRefiner:
                         )
 
                         # Banner (visible; does not claim perfection beyond one pass)
+                        note_tip_attr = ""
+                        try:
+                            note_tip = html.escape(
+                                _control_layer_tooltip_text(lang=self._answer_lang(), severity="warn"),
+                                quote=True,
+                            )
+                            if note_tip:
+                                note_tip_attr = f" data-u-title='{note_tip}' style='cursor:help;'"
+                        except Exception:
+                            note_tip_attr = ""
                         try:
                             if _should_show_repair_pass_banner(hard_vios):
                                 items = "".join([f"<li class='control-layer-violation'>{html.escape(str(v))}</li>" for v in hard_vios])
                                 repair_banner_html = (
-                                    "<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
+                                    f"<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
                                     "border-radius:10px; margin:8px 0; color:#92400e;'>"
-                                    "<b>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
+                                    f"<b{note_tip_attr}>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
                                     f"<ul class='control-layer-violations' style='margin:6px 0 0 18px; padding:0;'>{items}</ul></div>"
                                 )
                             else:
                                 repair_banner_html = ""
                         except Exception:
                             repair_banner_html = (
-                                "<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
+                                f"<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
                                 "border-radius:10px; margin:8px 0; color:#92400e;'>"
-                                "<b>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
+                                f"<b{note_tip_attr}>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
                                 "</div>"
                             )
             except Exception:
@@ -12655,10 +12868,10 @@ class CSCRefiner:
         except Exception as e:
             # Always persist a bot entry so exported logs are complete.
             try:
-                err_html = _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error')
+                err_html = _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error', lang=self._answer_lang())
                 self.history.append({"role": "bot", "content": err_html, "ts": datetime.now().isoformat(), "csc": None})
             except Exception:
-                err_html = _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error')
+                err_html = _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error', lang=self._answer_lang())
             self._last_response_is_content_answer = False
             return {"html": err_html, "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
     
@@ -12856,7 +13069,7 @@ class CSCRefiner:
                 "QC Override ist geöffnet. Bitte zuerst mit Apply, Clear Overrides oder Cancel beenden, "
                 "bevor Main- oder Panel-Aktionen genutzt werden."
             )
-        return _control_layer_alert_html(msg, title="QC Override aktiv", severity="warn")
+        return _control_layer_alert_html(msg, title="QC Override aktiv", severity="warn", lang=self._answer_lang())
 
     def _answer_lang(self) -> str:
         """Return answer language (de/en), independent of UI language."""
@@ -13044,6 +13257,14 @@ class CSCRefiner:
                 except Exception as e:
                     return _err(str(e))
                 return _err('ask_unavailable')
+            if action_s == 'export':
+                # Panel bridge does not expose api.export directly; provide a deterministic
+                # route through panel_action for manual-test checkpoints.
+                try:
+                    chat_path, audit_path = self.export()
+                    return _ok({'chat_path': chat_path, 'audit_path': audit_path}, chat_path=chat_path, audit_path=audit_path)
+                except Exception as e:
+                    return _err(str(e))
             if action_s == 'manual_test_stop':
                 fn = getattr(self, 'manual_test_request_stop', None)
                 res = fn(payload or {}) if callable(fn) else {'ok': False, 'error': 'manual_test_request_stop unavailable'}
@@ -15775,7 +15996,13 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
 # ----------------------------
 
 
-def _control_layer_alert_html(message: str, *, title: str = "CONTROL LAYER ALERT", severity: str = "error") -> str:
+def _control_layer_alert_html(
+    message: str,
+    *,
+    title: str = "CONTROL LAYER ALERT",
+    severity: str = "error",
+    lang: str = "de",
+) -> str:
     """Render a human-friendly Control-Layer box for UI (HTML).
     - No raw JSON blobs in the chat UI.
     - Keep logs complete by returning deterministic HTML.
@@ -15818,9 +16045,14 @@ def _control_layer_alert_html(message: str, *, title: str = "CONTROL LAYER ALERT
         t = html.escape(str(title or "CONTROL LAYER ALERT"))
     except Exception:
         t = "CONTROL LAYER ALERT"
+    try:
+        tip = html.escape(_control_layer_tooltip_text(lang=lang, severity=severity), quote=True)
+    except Exception:
+        tip = ""
+    tip_attr = f" data-u-title='{tip}' style='cursor:help;'" if tip else ""
     return (
-        f"<details class='csc-warning' open style='{style}'>"
-        f"<summary>⚠️ {t}</summary>"
+        f"<details class='csc-warning' open style='{style}'{tip_attr}>"
+        f"<summary{tip_attr}>⚠️ {t}</summary>"
         f"<div class='csc-details'>{safe}{action_html}</div>"
         f"</details>"
     )
@@ -15879,7 +16111,12 @@ def _safe_html(self, context: str, fn):
             return _render_error_html(self, context, e)
         except Exception:
             # last resort: plain div
-            return _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error')
+            lang = "de"
+            try:
+                lang = str(getattr(self, "_answer_lang", lambda: "de")() or "de")
+            except Exception:
+                lang = "de"
+            return _control_layer_alert_html(str(e), title='CONTROL LAYER ERROR', severity='error', lang=lang)
 
 
 def _build_profile_switch_audit_line(command: str, from_profile: str, to_profile: str) -> str:

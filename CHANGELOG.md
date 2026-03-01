@@ -2,6 +2,22 @@
 
 All notable changes are documented in this file.
 
+## 20.0.17-s15.2 - 2026-03-01
+
+- Fixed recurring duplicate header leak in answer rendering:
+  - removes isolated `Profile <KnownProfile>` scaffold lines without `:` in plain-text cleanup
+  - removes `<p>Profile <KnownProfile></p>` scaffold blocks in HTML fallback cleanup.
+- Hardened manual-test panel bridge reliability (pywebview fallback paths):
+  - robust `ask` fallback detection via literal bridge error matching
+  - deterministic `export` fallback via `panel_action('export')` route when direct API export is unavailable.
+- Stabilized Self-Debunking formatting under malformed model markdown in HTML fallback:
+  - normalizes leaked emphasis patterns and nested `<strong>` artifacts
+  - preserves deterministic numbering of weakness entries.
+- Added regression tests for:
+  - plain/HTML profile-without-colon scaffold removal
+  - manual-test ask/export fallbacks and regex escaping invariants
+  - Self-Debunking markdown-leak cleanup in fallback numbering path.
+
 ## 20.0.16-s15 - 2026-03-01
 
 - Added S15.1 deterministic scenario-harness foundation:

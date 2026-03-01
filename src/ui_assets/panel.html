@@ -1090,7 +1090,21 @@ async function _mtExportChatAudit(label){
     _mtLog(_mtL('PASS: Export ausgefuehrt', 'PASS: export executed'), 'ok');
     return true;
   } catch(e) {
-    _mtWarn(_mtL('Export nicht ausgefuehrt: ', 'Export not executed: ') + String(e && e.message ? e.message : e));
+    const msg = String(e && e.message ? e.message : e);
+    if(msg.toLowerCase().includes('pywebview api method not available: export')){
+      try {
+        const res = await _apiCall('panel_action', ['export', {}], 25000);
+        if(!res || res.ok === false){
+          throw new Error((res && res.error) ? res.error : 'panel_action export failed');
+        }
+        _mtLog(_mtL('PASS: Export ausgefuehrt', 'PASS: export executed'), 'ok');
+        return true;
+      } catch(e2) {
+        _mtWarn(_mtL('Export nicht ausgefuehrt: ', 'Export not executed: ') + String(e2 && e2.message ? e2.message : e2));
+        return false;
+      }
+    }
+    _mtWarn(_mtL('Export nicht ausgefuehrt: ', 'Export not executed: ') + msg);
     return false;
   }
 }
@@ -1106,7 +1120,7 @@ function _mtStripHtml(html){
   try{
     const d = document.createElement('div');
     d.innerHTML = String(html || '');
-    return (d.textContent || d.innerText || '').replace(/\\u00a0/g, ' ');
+    return (d.textContent || d.innerText || '').replace(/\u00a0/g, ' ');
   }catch(e){ return String(html || ''); }
 }
 
@@ -1117,9 +1131,9 @@ function _mtHasCompleteQcFooter(html){
   const idx = Math.max(idxMatrix, idxQC);
   if(idx < 0) return false;
   let qc = txt.slice(idx);
-  const tsIdx = qc.search(/\\bResponse at\\b/i);
+  const tsIdx = qc.search(/\bResponse at\b/i);
   if(tsIdx >= 0) qc = qc.slice(0, tsIdx);
-  qc = qc.replace(/\\s+/g, ' ').trim();
+  qc = qc.replace(/\s+/g, ' ').trim();
   const en = ['Clarity','Brevity','Evidence','Empathy','Consistency','Neutrality'];
   const de = ['Klarheit','Evidenz','Empathie','Konsistenz'];
   const hasEN = en.every(k => qc.includes(k + ' '));
@@ -1142,8 +1156,8 @@ function _mtHasSciTraceStructure(html){
   const txt = _mtStripHtml(html);
   if(!/SCI Trace/i.test(txt)) return false;
   // Accept numbered or bullet-style step labels (models/renderers vary).
-  const hasNumbered = /\\b1\\.\\s*(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic)/i.test(txt);
-  const hasBulletLabels = /(?:^|\\n)\\s*(?:[-•*]\\s*)?(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic(?:_[0-9]+_[A-Za-z]+)?)\\s*:/im.test(txt);
+  const hasNumbered = /\b1\.\s*(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic)/i.test(txt);
+  const hasBulletLabels = /(?:^|\n)\s*(?:[-•*]\s*)?(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic(?:_[0-9]+_[A-Za-z]+)?)\s*:/im.test(txt);
   return !!(hasNumbered || hasBulletLabels);
 }
 
@@ -1184,7 +1198,7 @@ async function _mtAsk(text, timeoutMs){
     res = await _apiCall('ask', [t], askTimeout);
   } catch(e) {
     const msg = String(e && e.message ? e.message : e);
-    if(/pywebview api method not available:\\s*ask/i.test(msg)){
+    if(msg.toLowerCase().includes('pywebview api method not available: ask')){
       try {
         const mt = window.__manualTestRunner || {};
         if(!mt.askFallbackNoted){
