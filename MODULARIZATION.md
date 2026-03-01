@@ -446,6 +446,33 @@ Planned S13 slice order (pragmatic):
 - Treat line-count reduction as an explicit acceptance metric in S13, not a side effect.
 - Keep user-facing regression fixes separate from S13 scope accounting unless they are caused by S13 changes.
 
+### S15 — Scenario harness + Manual-Test Komplextest hardening
+**Goal:** provide reproducible, GUI-near scenario checks with machine-readable output and safe interruption paths.
+
+#### S15.1 snapshot (2026-03-01)
+- Deterministic harness groundwork added:
+  - `src/manual_scenario_harness.py`
+  - `scripts/run_scenario_harness.py`
+  - `tests/test_manual_scenario_harness.py`
+  - `docs/manual_scenario_protocol.md`
+- Scope:
+  - mandatory prompts (including long governance/fairness prompt),
+  - deterministic matrix generation over `profile x sci_variant x qc_override x color`,
+  - structured checks for QC footer, U markers, color markers, CGI/dynamic influence.
+
+#### S15.1.1 snapshot (2026-03-01)
+- Panel `komplexttest` now writes export checkpoints before destructive `clear_chat` steps and at finalization.
+- Manual-test abort path hardened:
+  - monitor window gets active `Stop` action,
+  - new backend route `manual_test_stop` sets the running test to stop safely,
+  - `STOPPED`/`ERROR` finalization now writes partial export snapshots and report JSON.
+- Localization parity in monitor improved:
+  - header/stop labels and status feedback respond to selected answer language (`de`/`en`).
+- Focused verification gates:
+  - `tests/test_panel_manual_test_scenarios.py`
+  - `tests/test_app.py` (manual-test stop route and monitor wiring subset)
+  - app selftest (`Comm-SCI-Control-App.py --selftest`)
+
 
 ---
 

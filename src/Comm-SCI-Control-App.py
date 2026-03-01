@@ -5431,6 +5431,7 @@ HTML_PANEL = """
     <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
     <option value="sci_format">SCI-Format (A/B)</option>
     <option value="qc_override_footer">QC-Override + Footer (SCI B, Gemini-Referenz)</option>
+    <option value="komplexttest">Komplexttest (Matrix + Pflichtprompts + Influence-Checks)</option>
     <option value="full_regression_light">A-F (leicht, HF optional)</option>
   </select>
   <div class="row" style="margin-top:6px;">
@@ -6108,6 +6109,20 @@ async function _mtSaveReport(extra){
   }
 }
 
+async function _mtExportChatAudit(label){
+  const suffix = String(label || '').trim();
+  const tag = suffix ? (' [' + suffix + ']') : '';
+  _mtLog('EXPORT > Chat/Audit' + tag);
+  try {
+    await _apiCall('export', [], 25000);
+    _mtLog('PASS: Export ausgefuehrt', 'ok');
+    return true;
+  } catch(e) {
+    _mtWarn('Export nicht ausgefuehrt: ' + String(e && e.message ? e.message : e));
+    return false;
+  }
+}
+
 function _mtSetButtons(running){
   const a = document.getElementById('manualTestStartBtn');
   const b = document.getElementById('manualTestStopBtn');
@@ -6145,7 +6160,7 @@ function _mtHasCompleteQcFooter(html){
 function _mtHasSelfDebunkingBox(html){
   const h = String(html || '').toLowerCase();
   const hasDebunkLabel = h.includes('self-debunking') || h.includes('selbst-debunking');
-  const hasDebunkClass = h.includes('class=\"self-debunk') || h.includes(\"class='self-debunk\");
+  const hasDebunkClass = h.includes('class=\"self-debunk') || h.includes("class='self-debunk");
   const hasBoxStyle = (h.includes('background') || h.includes('background-color')) &&
                       (h.includes('border-left') || h.includes('border-radius'));
   return hasDebunkLabel && (hasDebunkClass || hasBoxStyle);
@@ -6390,13 +6405,148 @@ async function _mtScenarioFullRegressionLight(){
     const r = await fn();
     fails += (r && r.fails) ? r.fails : 0;
   }
-  try {
-    _mtLog('EXPORT > Chat/Audit');
-    await _apiCall('export', [], 20000);
-    _mtLog('PASS: Export ausgefuehrt', 'ok');
-  } catch(e) {
-    _mtWarn('Export nicht ausgefuehrt: ' + String(e && e.message ? e.message : e));
+  await _mtExportChatAudit('full_regression_light');
+  return {fails};
+}
+
+async function _mtScenarioKomplexttest(){
+  let fails = 0;
+  const prompts = [
+    'Was ist Zeit?',
+    'Was ist die objektiv beste und dauerhaft faire Strategie, um ab heute weltweit ein einheitliches KI-Regelwerk verbindlich durchzusetzen, sodass alle LLMs in jeder Sprache, Kultur und Rechtsordnung identische Antworten liefern, ohne negative Folgen fuer Datenschutz, Demokratie, Kreativitaet, Wissenschaft und Arbeitsmarkt?',
+  ];
+  const profiles = ['Standard', 'Expert'];
+  const sciVariants = ['off', 'A', 'B'];
+  const qcStates = [false, true];
+  const colorStates = ['on', 'off'];
+  const totalCases = profiles.length * sciVariants.length * qcStates.length * colorStates.length;
+  let caseIdx = 0;
+
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetProvider('gemini');
+  await _mtSetAnswerLanguage('de');
+
+  for(const profile of profiles){
+    for(const sci of sciVariants){
+      for(const qcOn of qcStates){
+        for(const color of colorStates){
+          _mtEnsureRunning();
+          caseIdx += 1;
+          _mtLog(
+            'CASE ' + caseIdx + '/' + totalCases
+            + ' > profile=' + profile
+            + ' · sci=' + sci
+            + ' · qc_override=' + (qcOn ? 'on' : 'off')
+            + ' · color=' + color
+          );
+
+          if(caseIdx > 1){
+            await _mtExportChatAudit('case_checkpoint_before_clear_chat_' + caseIdx);
+          }
+          await _mtPanelAction('clear_chat', {}, 8000);
+          await _mtAsk(profile, 30000);
+          if(color === 'on') await _mtAsk('Color on', 30000);
+          else await _mtAsk('Color off', 30000);
+
+          if(sci === 'off'){
+            await _mtAsk('SCI off', 30000);
+          } else {
+            await _mtAsk('SCI menu', 30000);
+            await _mtAsk(sci, 30000);
+          }
+
+          if(qcOn){
+            await _mtApplyQcOverride({Clarity:3, Brevity:0, Evidence:3, Empathy:3, Consistency:3, Neutrality:3});
+          } else {
+            try { await _mtClearQcOverride(); } catch(e) {}
+          }
+
+          for(let i = 0; i < prompts.length; i += 1){
+            _mtEnsureRunning();
+            const prompt = prompts[i];
+            const res = await _mtAsk(prompt, 180000);
+            const txt = _mtStripHtml(res.html || '');
+            const caseLabel = 'CASE ' + caseIdx + ' P' + String(i + 1);
+
+            if(!_mtCheck(
+              _mtHasCompleteQcFooter(res.html),
+              caseLabel + ': QC-Footer vollstaendig',
+              caseLabel + ': QC-Footer fehlt/unvollstaendig'
+            )) fails++;
+
+            if(!_mtCheck(
+              /\bU[1-6]\b/.test(txt),
+              caseLabel + ': U-Marker vorhanden',
+              caseLabel + ': kein U-Marker gefunden'
+            )) fails++;
+
+            const hasTagMarker = /\[(GREEN|YELLOW|RED|GRAY|WHITE)(-[A-Z0-9]+)*\]/i.test(txt);
+            const hasEmojiMarker = txt.indexOf('🟢') >= 0 || txt.indexOf('🟡') >= 0 || txt.indexOf('🔴') >= 0 || txt.indexOf('⚪') >= 0;
+            const hasColorMarker = hasTagMarker || hasEmojiMarker;
+            if(color === 'on'){
+              if(!_mtCheck(
+                hasColorMarker,
+                caseLabel + ': Farbmarker vorhanden (Color on)',
+                caseLabel + ': Farbmarker fehlen (Color on)'
+              )) fails++;
+            } else if(hasColorMarker){
+              _mtWarn(caseLabel + ': Farbmarker trotz Color off erkannt (modell-/renderpfadabhaengig).');
+            }
+          }
+
+          if(qcOn){
+            try { await _mtClearQcOverride(); } catch(e) { _mtWarn('QC-Override clear fehlgeschlagen: ' + String(e && e.message ? e.message : e)); }
+          }
+        }
+      }
+    }
   }
+
+  _mtEnsureRunning();
+  await _mtExportChatAudit('before_influence_checks');
+  _mtLog('INFLUENCE-CHECKS > CGI / QC-Override / Dynamic one-shot');
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtAsk('Standard', 30000);
+  await _mtAsk('SCI off', 30000);
+  await _mtAsk('Color on', 30000);
+
+  const baseline = await _mtAsk('Was ist Zeit?', 180000);
+  const baselineTxt = _mtStripHtml(baseline.html || '');
+
+  const cgiNote = await _mtAsk('3,3,3', 30000);
+  if(!_mtCheck(
+    /cgi/i.test(_mtStripHtml(cgiNote.html || '')),
+    'CGI-Feedback wurde vom Wrapper registriert',
+    'CGI-Feedback wurde nicht registriert'
+  )) fails++;
+  const afterCgi = await _mtAsk('Was ist Zeit?', 180000);
+  const afterCgiTxt = _mtStripHtml(afterCgi.html || '');
+  if(!_mtCheck(
+    baselineTxt !== afterCgiTxt,
+    'CGI-Feedback beeinflusst Folgeresponse',
+    'CGI-Feedback beeinflusst Folgeresponse nicht sichtbar'
+  )) fails++;
+
+  const baselineQc = await _mtAsk('Was ist Zeit?', 180000);
+  await _mtApplyQcOverride({Clarity:3, Brevity:0, Evidence:3, Empathy:3, Consistency:3, Neutrality:3});
+  const afterQc = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(
+    _mtStripHtml(baselineQc.html || '') !== _mtStripHtml(afterQc.html || ''),
+    'QC-Override beeinflusst Folgeresponse',
+    'QC-Override beeinflusst Folgeresponse nicht sichtbar'
+  )) fails++;
+  try { await _mtClearQcOverride(); } catch(e) { _mtWarn('QC-Override clear fehlgeschlagen: ' + String(e && e.message ? e.message : e)); }
+
+  const baselineDyn = await _mtAsk('Was ist Zeit?', 180000);
+  await _mtAsk('Dynamic one-shot on', 30000);
+  const afterDyn = await _mtAsk('Was ist Zeit?', 180000);
+  if(!_mtCheck(
+    _mtStripHtml(baselineDyn.html || '') !== _mtStripHtml(afterDyn.html || ''),
+    'Dynamic one-shot beeinflusst Folgeresponse',
+    'Dynamic one-shot beeinflusst Folgeresponse nicht sichtbar'
+  )) fails++;
+
+  await _mtExportChatAudit('komplexttest_final');
   return {fails};
 }
 
@@ -6419,6 +6569,7 @@ async function startManualTestRunner(){
   mt.summary = null;
   mt.monitorEnabled = _mtMonitorEnabled();
   mt.askFallbackNoted = false;
+  mt.monitorLang = (String(((document.getElementById('anslang') || {}).value || 'de')).trim().toLowerCase() === 'en') ? 'en' : 'de';
   const myRun = mt.runId;
   _mtSetButtons(true);
   _mtClearLog();
@@ -6429,7 +6580,12 @@ async function startManualTestRunner(){
   try {
     if(mt.monitorEnabled){
       await _apiCall('panel_action', ['manual_test_monitor_show', {}], 8000);
-      await _apiCall('panel_action', ['manual_test_monitor_reset', {scenario: scenario, status: 'running', summary: '-'}], 8000);
+      await _apiCall('panel_action', ['manual_test_monitor_reset', {
+        scenario: scenario,
+        status: 'running',
+        summary: '-',
+        lang: mt.monitorLang,
+      }], 8000);
     }
   } catch(e) {
     _mtWarn('Manual-Test-Monitor konnte nicht initialisiert werden: ' + String(e && e.message ? e.message : e));
@@ -6442,18 +6598,19 @@ async function startManualTestRunner(){
     else if(scenario === 'provider_switch') result = await _mtScenarioProviderSwitch();
     else if(scenario === 'sci_format') result = await _mtScenarioSciFormat();
     else if(scenario === 'qc_override_footer') result = await _mtScenarioQcOverrideFooter();
+    else if(scenario === 'komplexttest') result = await _mtScenarioKomplexttest();
     else if(scenario === 'full_regression_light') result = await _mtScenarioFullRegressionLight();
     else throw new Error('unknown scenario: ' + scenario);
     _mtEnsureRunning();
     const ms = Date.now() - t0;
     if((result && result.fails) > 0){
       mt.summary = { status: 'FAIL', fails: Number(result.fails||0) };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'FAIL', summary: mt.summary}], 4000); } catch(e) {}
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'FAIL', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
       _mtLog('SUMMARY: FAILS=' + result.fails + ' · Dauer=' + ms + 'ms', 'err');
       _setStatus('Manual Test fertig: ' + result.fails + ' Fehler', 'err');
     } else {
       mt.summary = { status: 'PASS', fails: 0 };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'PASS', summary: mt.summary}], 4000); } catch(e) {}
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'PASS', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
       _mtLog('SUMMARY: PASS · Dauer=' + ms + 'ms', 'ok');
       _setStatus('Manual Test fertig: PASS', 'ok');
     }
@@ -6462,15 +6619,17 @@ async function startManualTestRunner(){
     const stopped = (String(e && e.message ? e.message : e).indexOf('manual_test_stopped') >= 0);
     if(stopped){
       mt.summary = { status: 'STOPPED' };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'STOPPED', summary: mt.summary}], 4000); } catch(e) {}
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'STOPPED', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
       _mtLog('SUMMARY: STOPPED', 'warn');
       _setStatus('Manual Test gestoppt', 'err');
+      await _mtExportChatAudit('manual_test_stopped_partial');
       await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
     } else {
       mt.summary = { status: 'ERROR', error: String(e && e.message ? e.message : e) };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'ERROR', summary: mt.summary}], 4000); } catch(e) {}
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'ERROR', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
       _mtLog('ERROR: ' + String(e && e.message ? e.message : e), 'err');
       _setStatus('Manual Test error: ' + String(e && e.message ? e.message : e), 'err');
+      await _mtExportChatAudit('manual_test_error_partial');
       await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
     }
   } finally {
@@ -6719,6 +6878,14 @@ HTML_QC_OVERRIDE = """
 HTML_CHAT_TEMPLATE = _load_ui_asset_text("chat_template.html", HTML_CHAT_TEMPLATE)
 HTML_PANEL_EMBEDDED = HTML_PANEL
 HTML_PANEL, PANEL_HTML_ASSET_META = _load_panel_asset_text_s7(HTML_PANEL)
+try:
+    # Keep fallback panel content in sync with the externally loaded panel asset when available.
+    # This avoids feature drift between primary panel and runtime embedded fallback.
+    if isinstance(PANEL_HTML_ASSET_META, dict) and str(PANEL_HTML_ASSET_META.get("source") or "") == "external":
+        if str(HTML_PANEL or "").strip():
+            HTML_PANEL_EMBEDDED = HTML_PANEL
+except Exception:
+    pass
 HTML_QC_OVERRIDE = _load_ui_asset_text("qc_override.html", HTML_QC_OVERRIDE)
 
 HTML_MANUAL_TEST_MONITOR = """
@@ -6730,7 +6897,10 @@ HTML_MANUAL_TEST_MONITOR = """
 <style>
   body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 10px; background:#f7f8fa; color:#222; }
   .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .actions { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
   .pill { border:1px solid #ccc; border-radius: 10px; padding: 3px 8px; background:#fff; font-size: 12px; }
+  .btn { border:1px solid #b5b5b5; border-radius: 6px; padding: 4px 10px; background:#fff; font-size: 12px; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
   .ok { color: #0b6b0b; }
   .warn { color: #a05a00; }
   .err { color: #b00020; }
@@ -6749,24 +6919,84 @@ HTML_MANUAL_TEST_MONITOR = """
     <div id="status" class="pill">Status: idle</div>
     <div id="summary" class="pill muted">Summary: -</div>
   </div>
+  <div class="actions">
+    <button id="stopBtn" class="btn" onclick="mtmRequestStop()">Stop Test</button>
+    <div id="stopState" class="muted"></div>
+  </div>
   <div class="box">
     <div id="log"></div>
   </div>
 <script>
-window.__mtm = window.__mtm || {events:[]};
+window.__mtm = window.__mtm || {events:[], status:'idle', lang:'en'};
+const _MTM_I18N = {
+  de: {
+    scenario: 'Szenario',
+    status: 'Status',
+    summary: 'Zusammenfassung',
+    idle: 'bereit',
+    stop_button: 'Test stoppen',
+    stop_requesting: 'Stop wird angefordert ...',
+    stop_requested: 'Stop angefordert.',
+    stop_failed: 'Stop fehlgeschlagen: ',
+  },
+  en: {
+    scenario: 'Scenario',
+    status: 'Status',
+    summary: 'Summary',
+    idle: 'idle',
+    stop_button: 'Stop Test',
+    stop_requesting: 'Requesting stop ...',
+    stop_requested: 'Stop requested.',
+    stop_failed: 'Stop failed: ',
+  },
+};
+function _mtmLang(){
+  return (window.__mtm && window.__mtm.lang === 'de') ? 'de' : 'en';
+}
+function _mtmT(key){
+  const lang = _mtmLang();
+  const dict = _MTM_I18N[lang] || _MTM_I18N.en;
+  return (dict && dict[key]) ? dict[key] : String(key || '');
+}
+function _mtmApplyLabels(){
+  try {
+    const btn = document.getElementById('stopBtn');
+    if(btn) btn.textContent = _mtmT('stop_button');
+  } catch(e) {}
+}
+function _mtmUpdateStopButton(){
+  try {
+    const btn = document.getElementById('stopBtn');
+    if(!btn) return;
+    const status = String((window.__mtm && window.__mtm.status) || 'idle').toLowerCase();
+    btn.disabled = (status !== 'running');
+  } catch(e) {}
+}
 function mtmClear(){
   const el = document.getElementById('log');
   if(el) el.innerHTML = '';
   window.__mtm.events = [];
+  try {
+    const stopState = document.getElementById('stopState');
+    if(stopState) stopState.textContent = '';
+  } catch(e) {}
 }
 function mtmSetHeader(data){
   data = data || {};
-  try { document.getElementById('scenario').textContent = 'Scenario: ' + String(data.scenario || '-'); } catch(e) {}
-  try { document.getElementById('status').textContent = 'Status: ' + String(data.status || 'idle'); } catch(e) {}
+  try {
+    const lang = String(data.lang || '').trim().toLowerCase();
+    if(lang === 'de' || lang === 'en') window.__mtm.lang = lang;
+  } catch(e) {}
+  _mtmApplyLabels();
+  const statusValue = String(data.status || 'idle');
+  window.__mtm.status = statusValue;
+  try { document.getElementById('scenario').textContent = _mtmT('scenario') + ': ' + String(data.scenario || '-'); } catch(e) {}
+  try { document.getElementById('status').textContent = _mtmT('status') + ': ' + statusValue; } catch(e) {}
   try {
     const s = data.summary || '-';
-    document.getElementById('summary').textContent = 'Summary: ' + (typeof s === 'string' ? s : JSON.stringify(s));
+    document.getElementById('summary').textContent = _mtmT('summary') + ': ' + (typeof s === 'string' ? s : JSON.stringify(s));
   } catch(e) {}
+  _mtmUpdateStopButton();
 }
 function mtmAppend(entry){
   try {
@@ -6783,6 +7013,42 @@ function mtmAppend(entry){
     return true;
   } catch(e) { return false; }
 }
+async function mtmRequestStop(){
+  const btn = document.getElementById('stopBtn');
+  const stopState = document.getElementById('stopState');
+  try {
+    if(btn) btn.disabled = true;
+    if(stopState){
+      stopState.className = 'muted';
+      stopState.textContent = _mtmT('stop_requesting');
+    }
+    const api = window.pywebview && window.pywebview.api;
+    if(!api) throw new Error('pywebview api unavailable');
+    let res = null;
+    if(typeof api.panel_action === 'function'){
+      res = await api.panel_action('manual_test_stop', {lang: _mtmLang()});
+    } else if(typeof api.manual_test_request_stop === 'function'){
+      res = await api.manual_test_request_stop({lang: _mtmLang()});
+    } else {
+      throw new Error('manual_test_stop unavailable');
+    }
+    if(!res || res.ok === false){
+      throw new Error(String((res && res.error) || 'manual_test_stop failed'));
+    }
+    if(stopState){
+      stopState.className = 'ok';
+      stopState.textContent = _mtmT('stop_requested');
+    }
+    return true;
+  } catch(e) {
+    if(stopState){
+      stopState.className = 'err';
+      stopState.textContent = _mtmT('stop_failed') + String(e && e.message ? e.message : e);
+    }
+    _mtmUpdateStopButton();
+    return false;
+  }
+}
 function mtmReplace(data){
   try {
     mtmClear();
@@ -6792,6 +7058,8 @@ function mtmReplace(data){
     return true;
   } catch(e) { return false; }
 }
+_mtmApplyLabels();
+_mtmUpdateStopButton();
 </script>
 </body>
 </html>
@@ -12724,6 +12992,7 @@ class CSCRefiner:
                 'qc_override_apply', 'qc_override_clear',
                 'manual_test_monitor_show', 'manual_test_monitor_hide', 'manual_test_monitor_reset',
                 'manual_test_monitor_append', 'manual_test_monitor_header', 'save_manual_test_report',
+                'manual_test_main_chat_append',
             }
             if action_s in _blocked_actions:
                 return _err("comm_off_blocked")
@@ -12775,6 +13044,14 @@ class CSCRefiner:
                 except Exception as e:
                     return _err(str(e))
                 return _err('ask_unavailable')
+            if action_s == 'manual_test_stop':
+                fn = getattr(self, 'manual_test_request_stop', None)
+                res = fn(payload or {}) if callable(fn) else {'ok': False, 'error': 'manual_test_request_stop unavailable'}
+                if isinstance(res, dict):
+                    if bool(res.get('ok', True)):
+                        return _ok(res, **res)
+                    return _err(str(res.get('error', 'manual_test_stop_failed')))
+                return _ok({'ok': True})
         except Exception as e:
             return _err(str(e))
         return _err('unknown action')
@@ -12866,6 +13143,79 @@ class CSCRefiner:
         except Exception as e:
             return {'ok': False, 'error': f'{type(e).__name__}: {e}', 'path': target}
         return {'ok': bool(ok), 'path': target}
+
+    def manual_test_main_chat_append(self, payload=None):
+        """Best-effort append helper for mirroring manual-test steps into the main chat UI."""
+        p = payload if isinstance(payload, dict) else {}
+        role = str((p or {}).get("role") or "sys").strip().lower()
+        if role not in {"user", "bot", "sys"}:
+            role = "sys"
+        text = str((p or {}).get("text") or "")
+        html_text = str((p or {}).get("html") or "")
+        cgi_bar = bool((p or {}).get("cgi_bar", False))
+        answer_lang = str((p or {}).get("answer_lang") or "").strip().lower()
+        if answer_lang not in {"de", "en"}:
+            answer_lang = ""
+
+        csc = (p or {}).get("csc")
+        if not isinstance(csc, (dict, list, str, int, float, bool)) and csc is not None:
+            try:
+                csc = str(csc)
+            except Exception:
+                csc = None
+
+        win = getattr(self, "main_win", None)
+        if win is None:
+            return {"ok": False, "error": "main_win unavailable"}
+
+        try:
+            if role == "bot":
+                content = html_text if html_text else text
+                opts = {"answerLang": answer_lang} if answer_lang else {}
+                js = (
+                    f"addMsg('bot', {json.dumps(str(content or ''), ensure_ascii=False)}, "
+                    f"{'true' if cgi_bar else 'false'}, "
+                    f"{json.dumps(csc, ensure_ascii=False)}, "
+                    f"{json.dumps(opts, ensure_ascii=False)});"
+                )
+            elif role == "user":
+                content = text if text else html_text
+                js = f"addMsg('user', {json.dumps(str(content or ''), ensure_ascii=False)});"
+            else:
+                content = text if text else html_text
+                js = f"addMsg('sys', {json.dumps(str(content or ''), ensure_ascii=False)});"
+            win.evaluate_js(js)
+            return {"ok": True, "role": role}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def manual_test_request_stop(self, payload=None):
+        """Request stop for the running panel-side manual-test runner."""
+        p = payload if isinstance(payload, dict) else {}
+        lang = str((p or {}).get("lang") or "").strip().lower()
+        msg = "Stop requested (monitor)." if lang == "en" else "Stop angefordert (Monitor)."
+        try:
+            win = getattr(self, "panel_win", None)
+            if win is None:
+                return {"ok": False, "error": "panel_win unavailable"}
+            js = (
+                "(function(){"
+                "try{"
+                "if(!window.__manualTestRunner){return {ok:false,error:'manual_test_runner unavailable'};}"
+                "window.__manualTestRunner.stop = true;"
+                f"if(typeof _mtLog==='function'){{_mtLog({json.dumps(msg, ensure_ascii=False)});}}"
+                "return {ok:true,running:!!window.__manualTestRunner.running};"
+                "}catch(e){return {ok:false,error:String(e&&e.message?e.message:e)};}"
+                "})();"
+            )
+            out = win.evaluate_js(js)
+            if isinstance(out, dict):
+                if bool(out.get("ok", True)):
+                    return {"ok": True, "running": bool(out.get("running", False))}
+                return {"ok": False, "error": str(out.get("error") or "manual_test_stop_failed")}
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     def on_manual_test_monitor_closed(self):
         try:

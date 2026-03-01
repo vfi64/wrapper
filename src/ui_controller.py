@@ -259,6 +259,15 @@ class UIController:
                     return _err(str(res.get("error", "manual_test_monitor_set_header_failed")))
                 return _ok({"ok": True})
 
+            if action_s == "manual_test_stop":
+                fn = getattr(app, "manual_test_request_stop", None)
+                res = fn(payload or {}) if callable(fn) else {"ok": False, "error": "manual_test_request_stop unavailable"}
+                if isinstance(res, dict):
+                    if bool(res.get("ok", True)):
+                        return _ok(res, **res)
+                    return _err(str(res.get("error", "manual_test_stop_failed")))
+                return _ok({"ok": True})
+
             if action_s == "save_manual_test_report":
                 fn = getattr(app, "save_manual_test_report", None)
                 res = fn(payload.get("report", {})) if callable(fn) else {"ok": False, "error": "save_manual_test_report unavailable"}
@@ -266,6 +275,15 @@ class UIController:
                     if bool(res.get("ok", True)):
                         return _ok(res, **res)
                     return _err(str(res.get("error", "save_manual_test_report_failed")))
+                return _ok({"ok": True})
+
+            if action_s == "manual_test_main_chat_append":
+                fn = getattr(app, "manual_test_main_chat_append", None)
+                res = fn(payload.get("payload", {})) if callable(fn) else {"ok": False, "error": "manual_test_main_chat_append unavailable"}
+                if isinstance(res, dict):
+                    if bool(res.get("ok", True)):
+                        return _ok(res, **res)
+                    return _err(str(res.get("error", "manual_test_main_chat_append_failed")))
                 return _ok({"ok": True})
         except Exception as e:
             return _err(str(e))

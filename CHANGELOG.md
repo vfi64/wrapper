@@ -2,6 +2,23 @@
 
 All notable changes are documented in this file.
 
+## 20.0.16-s15 - 2026-03-01
+
+- Added S15.1 deterministic scenario-harness foundation:
+  - `src/manual_scenario_harness.py`
+  - `scripts/run_scenario_harness.py`
+  - `tests/test_manual_scenario_harness.py`
+  - `docs/manual_scenario_protocol.md`
+- Added S15.1.1 manual-panel `komplexttest` hardening:
+  - export checkpoints before destructive `clear_chat` phases and at finalization
+  - partial export snapshots on `STOPPED` and `ERROR` test termination
+  - monitor-driven stop route (`manual_test_stop`) with safe report persistence
+  - localized monitor labels and stop-feedback in DE/EN
+- Added/extended test coverage for:
+  - `komplexttest` export checkpoints and stop wiring
+  - monitor stop action + controller/API route integration
+  - manual-test panel option/route invariants.
+
 ## 20.0.15-s14 - 2026-02-28
 
 - Added explicit language-policy modes for output validation:

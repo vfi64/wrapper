@@ -6,7 +6,10 @@
 <style>
   body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 10px; background:#f7f8fa; color:#222; }
   .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .actions { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
   .pill { border:1px solid #ccc; border-radius: 10px; padding: 3px 8px; background:#fff; font-size: 12px; }
+  .btn { border:1px solid #b5b5b5; border-radius: 6px; padding: 4px 10px; background:#fff; font-size: 12px; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
   .ok { color: #0b6b0b; }
   .warn { color: #a05a00; }
   .err { color: #b00020; }
@@ -25,24 +28,84 @@
     <div id="status" class="pill">Status: idle</div>
     <div id="summary" class="pill muted">Summary: -</div>
   </div>
+  <div class="actions">
+    <button id="stopBtn" class="btn" onclick="mtmRequestStop()">Stop Test</button>
+    <div id="stopState" class="muted"></div>
+  </div>
   <div class="box">
     <div id="log"></div>
   </div>
 <script>
-window.__mtm = window.__mtm || {events:[]};
+window.__mtm = window.__mtm || {events:[], status:'idle', lang:'en'};
+const _MTM_I18N = {
+  de: {
+    scenario: 'Szenario',
+    status: 'Status',
+    summary: 'Zusammenfassung',
+    idle: 'bereit',
+    stop_button: 'Test stoppen',
+    stop_requesting: 'Stop wird angefordert ...',
+    stop_requested: 'Stop angefordert.',
+    stop_failed: 'Stop fehlgeschlagen: ',
+  },
+  en: {
+    scenario: 'Scenario',
+    status: 'Status',
+    summary: 'Summary',
+    idle: 'idle',
+    stop_button: 'Stop Test',
+    stop_requesting: 'Requesting stop ...',
+    stop_requested: 'Stop requested.',
+    stop_failed: 'Stop failed: ',
+  },
+};
+function _mtmLang(){
+  return (window.__mtm && window.__mtm.lang === 'de') ? 'de' : 'en';
+}
+function _mtmT(key){
+  const lang = _mtmLang();
+  const dict = _MTM_I18N[lang] || _MTM_I18N.en;
+  return (dict && dict[key]) ? dict[key] : String(key || '');
+}
+function _mtmApplyLabels(){
+  try {
+    const btn = document.getElementById('stopBtn');
+    if(btn) btn.textContent = _mtmT('stop_button');
+  } catch(e) {}
+}
+function _mtmUpdateStopButton(){
+  try {
+    const btn = document.getElementById('stopBtn');
+    if(!btn) return;
+    const status = String((window.__mtm && window.__mtm.status) || 'idle').toLowerCase();
+    btn.disabled = (status !== 'running');
+  } catch(e) {}
+}
 function mtmClear(){
   const el = document.getElementById('log');
   if(el) el.innerHTML = '';
   window.__mtm.events = [];
+  try {
+    const stopState = document.getElementById('stopState');
+    if(stopState) stopState.textContent = '';
+  } catch(e) {}
 }
 function mtmSetHeader(data){
   data = data || {};
-  try { document.getElementById('scenario').textContent = 'Scenario: ' + String(data.scenario || '-'); } catch(e) {}
-  try { document.getElementById('status').textContent = 'Status: ' + String(data.status || 'idle'); } catch(e) {}
+  try {
+    const lang = String(data.lang || '').trim().toLowerCase();
+    if(lang === 'de' || lang === 'en') window.__mtm.lang = lang;
+  } catch(e) {}
+  _mtmApplyLabels();
+  const statusValue = String(data.status || 'idle');
+  window.__mtm.status = statusValue;
+  try { document.getElementById('scenario').textContent = _mtmT('scenario') + ': ' + String(data.scenario || '-'); } catch(e) {}
+  try { document.getElementById('status').textContent = _mtmT('status') + ': ' + statusValue; } catch(e) {}
   try {
     const s = data.summary || '-';
-    document.getElementById('summary').textContent = 'Summary: ' + (typeof s === 'string' ? s : JSON.stringify(s));
+    document.getElementById('summary').textContent = _mtmT('summary') + ': ' + (typeof s === 'string' ? s : JSON.stringify(s));
   } catch(e) {}
+  _mtmUpdateStopButton();
 }
 function mtmAppend(entry){
   try {
@@ -59,6 +122,42 @@ function mtmAppend(entry){
     return true;
   } catch(e) { return false; }
 }
+async function mtmRequestStop(){
+  const btn = document.getElementById('stopBtn');
+  const stopState = document.getElementById('stopState');
+  try {
+    if(btn) btn.disabled = true;
+    if(stopState){
+      stopState.className = 'muted';
+      stopState.textContent = _mtmT('stop_requesting');
+    }
+    const api = window.pywebview && window.pywebview.api;
+    if(!api) throw new Error('pywebview api unavailable');
+    let res = null;
+    if(typeof api.panel_action === 'function'){
+      res = await api.panel_action('manual_test_stop', {lang: _mtmLang()});
+    } else if(typeof api.manual_test_request_stop === 'function'){
+      res = await api.manual_test_request_stop({lang: _mtmLang()});
+    } else {
+      throw new Error('manual_test_stop unavailable');
+    }
+    if(!res || res.ok === false){
+      throw new Error(String((res && res.error) || 'manual_test_stop failed'));
+    }
+    if(stopState){
+      stopState.className = 'ok';
+      stopState.textContent = _mtmT('stop_requested');
+    }
+    return true;
+  } catch(e) {
+    if(stopState){
+      stopState.className = 'err';
+      stopState.textContent = _mtmT('stop_failed') + String(e && e.message ? e.message : e);
+    }
+    _mtmUpdateStopButton();
+    return false;
+  }
+}
 function mtmReplace(data){
   try {
     mtmClear();
@@ -68,6 +167,8 @@ function mtmReplace(data){
     return true;
   } catch(e) { return false; }
 }
+_mtmApplyLabels();
+_mtmUpdateStopButton();
 </script>
 </body>
 </html>

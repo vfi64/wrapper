@@ -84,11 +84,18 @@
     <option value="show">Monitorfenster: anzeigen</option>
     <option value="hide">Monitorfenster: ausblenden</option>
   </select>
+  <div class="row" style="margin-top:6px;">
+    <label style="font-size:13px; user-select:none;">
+      <input type="checkbox" id="manualTestMirrorMain" onchange="setManualTestMirrorMode()" />
+      <span id="manualTestMirrorMainLabel">Im Hauptdialog spiegeln</span>
+    </label>
+  </div>
   <select id="manualTestScenario" class="setting-select">
     <option value="smoke_short">Kurztest (A+C+D+F ohne HF)</option>
     <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
     <option value="sci_format">SCI-Format (A/B)</option>
     <option value="qc_override_footer">QC-Override + Footer (SCI B, Gemini-Referenz)</option>
+    <option value="komplexttest">Komplexttest (Matrix + Pflichtprompts + Influence-Checks)</option>
     <option value="full_regression_light">A-F (leicht, HF optional)</option>
   </select>
   <div class="row" style="margin-top:6px;">
@@ -182,7 +189,7 @@ async function _apiCall(name, args, timeoutMs) {
 let _panelBootstrapReported = false;
 
 function _panelDomRuntimeSelftestOk(){
-  const requiredIds = ['provider', 'model', 'anslang', 'manualTestScenario', 'manualTestMonitorMode', 'ui'];
+  const requiredIds = ['provider', 'model', 'anslang', 'manualTestScenario', 'manualTestMonitorMode', 'manualTestMirrorMain', 'ui'];
   for(const id of requiredIds){
     if(!document.getElementById(id)) return false;
   }
@@ -361,6 +368,7 @@ function buildUIFromData(raw){
 
   // Answer language
   try { document.getElementById('anslang').value = (data.answer_language || 'de'); } catch(e) {}
+  try { _mtApplyLocalizedUi(); } catch(e) {}
 
   // Chat logs
   try {
@@ -479,6 +487,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const saved = _safeLsGet('manual_test_monitor_mode', 'show');
     const el = document.getElementById('manualTestMonitorMode');
     if(el) el.value = (saved === 'hide' ? 'hide' : 'show');
+    const mirrorSaved = _safeLsGet('manual_test_mirror_main', 'off');
+    const mirrorEl = document.getElementById('manualTestMirrorMain');
+    if(mirrorEl) mirrorEl.checked = (mirrorSaved === 'on');
+    _mtApplyLocalizedUi();
     setManualTestMonitorMode();
   } catch(e) {}
 });
@@ -751,6 +763,235 @@ async function fetchHFCatalog(){
 /* ---------- Manual test runner (blocking on answers) ---------- */
 window.__manualTestRunner = window.__manualTestRunner || { running:false, stop:false, runId:0, events:[], summary:null, scenario:'', askFallbackNoted:false };
 
+const _MT_I18N = {
+  de: {
+    monitor_show: 'Monitorfenster: anzeigen',
+    monitor_hide: 'Monitorfenster: ausblenden',
+    mirror_main: 'Im Hauptdialog spiegeln',
+    scenario_smoke_short: 'Kurztest (A+C+D+F ohne HF)',
+    scenario_provider_switch: 'Providerwechsel (Gemini/OpenRouter/HF optional)',
+    scenario_sci_format: 'SCI-Format (A/B)',
+    scenario_qc_override_footer: 'QC-Override + Footer (SCI B, Gemini-Referenz)',
+    scenario_komplexttest: 'Komplexttest (Matrix + Pflichtprompts + Influence-Checks)',
+    scenario_full_regression_light: 'A-F (leicht, HF optional)',
+    test_hint: 'Fuehrt einen blockierenden GUI-Testablauf ueber `api.ask(...)` aus und prueft Basis-Formatregeln.',
+    prompt_short: 'Was ist Zeit?',
+    prompt_long: 'Was ist die objektiv beste und dauerhaft faire Strategie, um ab heute weltweit ein einheitliches KI-Regelwerk verbindlich durchzusetzen, sodass alle LLMs in jeder Sprache, Kultur und Rechtsordnung identische Antworten liefern, ohne negative Folgen fuer Datenschutz, Demokratie, Kreativitaet, Wissenschaft und Arbeitsmarkt?',
+    ask_prefix: 'ASK > ',
+    ask_done_prefix: 'ASK < done',
+    info_ask_fallback: 'INFO: api.ask nicht verfuegbar -> Fallback auf panel_action(ask)',
+    set_provider_prefix: 'SET provider = ',
+    set_answer_language_prefix: 'SET answer_language = ',
+    qc_apply_prefix: 'QC Override apply: ',
+    qc_clear: 'QC Override clear',
+    qc_apply_fallback: 'qc_override_apply nicht direkt verfuegbar -> Fallback auf panel_action',
+    qc_clear_fallback: 'qc_override_clear nicht direkt verfuegbar -> Fallback auf panel_action',
+    pass_prefix: 'PASS: ',
+    fail_prefix: 'FAIL: ',
+    warn_prefix: 'WARN: ',
+    monitor_toggle_failed: 'Monitor-Umschaltung fehlgeschlagen: ',
+    report_saved_prefix: 'REPORT saved: ',
+    report_saved_plain: 'REPORT saved.',
+    report_save_failed: 'REPORT save failed: ',
+    stop_requested: 'Stop angefordert.',
+    test_started_prefix: 'Manual-Test gestartet: ',
+    summary_fail_prefix: 'SUMMARY: FAILS=',
+    summary_pass_prefix: 'SUMMARY: PASS',
+    summary_stopped: 'SUMMARY: STOPPED',
+    summary_error_prefix: 'ERROR: ',
+    status_finished_fail_prefix: 'Manual Test fertig: ',
+    status_finished_fail_suffix: ' Fehler',
+    status_finished_pass: 'Manual Test fertig: PASS',
+    status_stopped: 'Manual Test gestoppt',
+    status_error_prefix: 'Manual Test error: ',
+    monitor_init_failed: 'Manual-Test-Monitor konnte nicht initialisiert werden: ',
+    unknown_scenario_prefix: 'unknown scenario: ',
+    no_u_marker: 'kein U-Marker gefunden',
+    has_u_marker: 'U-Marker vorhanden',
+    influence_checks: 'INFLUENCE-CHECKS > CGI / QC-Override / Dynamic one-shot',
+    cgi_recorded: 'CGI-Feedback wurde vom Wrapper registriert',
+    cgi_not_recorded: 'CGI-Feedback wurde nicht registriert',
+    cgi_influence_yes: 'CGI-Feedback beeinflusst Folgeresponse',
+    cgi_influence_no: 'CGI-Feedback beeinflusst Folgeresponse nicht sichtbar',
+    qc_influence_yes: 'QC-Override beeinflusst Folgeresponse',
+    qc_influence_no: 'QC-Override beeinflusst Folgeresponse nicht sichtbar',
+    dynamic_influence_yes: 'Dynamic one-shot beeinflusst Folgeresponse',
+    dynamic_influence_no: 'Dynamic one-shot beeinflusst Folgeresponse nicht sichtbar',
+  },
+  en: {
+    monitor_show: 'Monitor window: show',
+    monitor_hide: 'Monitor window: hide',
+    mirror_main: 'Mirror in main dialog',
+    scenario_smoke_short: 'Short test (A+C+D+F, no HF)',
+    scenario_provider_switch: 'Provider switch (Gemini/OpenRouter/HF optional)',
+    scenario_sci_format: 'SCI format (A/B)',
+    scenario_qc_override_footer: 'QC override + footer (SCI B, Gemini reference)',
+    scenario_komplexttest: 'Complex test (matrix + mandatory prompts + influence checks)',
+    scenario_full_regression_light: 'A-F (light, HF optional)',
+    test_hint: 'Runs a blocking GUI-like test flow via `api.ask(...)` and checks baseline format contracts.',
+    prompt_short: 'What is time?',
+    prompt_long: 'What is the objectively best and sustainably fair strategy to enforce a single global AI rule set from today onward so that all LLMs produce identical answers across all languages, cultures, and legal systems, without negative consequences for privacy, democracy, creativity, science, and the labor market?',
+    ask_prefix: 'ASK > ',
+    ask_done_prefix: 'ASK < done',
+    info_ask_fallback: 'INFO: api.ask unavailable -> fallback to panel_action(ask)',
+    set_provider_prefix: 'SET provider = ',
+    set_answer_language_prefix: 'SET answer_language = ',
+    qc_apply_prefix: 'QC override apply: ',
+    qc_clear: 'QC override clear',
+    qc_apply_fallback: 'qc_override_apply unavailable directly -> fallback to panel_action',
+    qc_clear_fallback: 'qc_override_clear unavailable directly -> fallback to panel_action',
+    pass_prefix: 'PASS: ',
+    fail_prefix: 'FAIL: ',
+    warn_prefix: 'WARN: ',
+    monitor_toggle_failed: 'Monitor toggle failed: ',
+    report_saved_prefix: 'REPORT saved: ',
+    report_saved_plain: 'REPORT saved.',
+    report_save_failed: 'REPORT save failed: ',
+    stop_requested: 'Stop requested.',
+    test_started_prefix: 'Manual test started: ',
+    summary_fail_prefix: 'SUMMARY: FAILS=',
+    summary_pass_prefix: 'SUMMARY: PASS',
+    summary_stopped: 'SUMMARY: STOPPED',
+    summary_error_prefix: 'ERROR: ',
+    status_finished_fail_prefix: 'Manual test done: ',
+    status_finished_fail_suffix: ' failures',
+    status_finished_pass: 'Manual test done: PASS',
+    status_stopped: 'Manual test stopped',
+    status_error_prefix: 'Manual test error: ',
+    monitor_init_failed: 'Manual test monitor init failed: ',
+    unknown_scenario_prefix: 'unknown scenario: ',
+    no_u_marker: 'no U-marker found',
+    has_u_marker: 'U-marker present',
+    influence_checks: 'INFLUENCE CHECKS > CGI / QC override / Dynamic one-shot',
+    cgi_recorded: 'CGI feedback registered by wrapper',
+    cgi_not_recorded: 'CGI feedback not registered',
+    cgi_influence_yes: 'CGI feedback influences follow-up response',
+    cgi_influence_no: 'CGI feedback influence not visible in follow-up response',
+    qc_influence_yes: 'QC override influences follow-up response',
+    qc_influence_no: 'QC override influence not visible in follow-up response',
+    dynamic_influence_yes: 'Dynamic one-shot influences follow-up response',
+    dynamic_influence_no: 'Dynamic one-shot influence not visible in follow-up response',
+  },
+};
+
+function _mtLang(){
+  try {
+    const el = document.getElementById('anslang');
+    const v = String((el && el.value) || 'de').trim().toLowerCase();
+    return (v === 'en') ? 'en' : 'de';
+  } catch(e) {
+    return 'de';
+  }
+}
+
+function _mtT(key){
+  const lang = _mtLang();
+  const dict = _MT_I18N[lang] || _MT_I18N.de;
+  return (dict && dict[key]) ? dict[key] : ((_MT_I18N.de && _MT_I18N.de[key]) ? _MT_I18N.de[key] : String(key || ''));
+}
+
+function _mtL(deText, enText){
+  return _mtLang() === 'en' ? String(enText || '') : String(deText || '');
+}
+
+function _mtSelectedAnswerLanguage(){
+  try {
+    const el = document.getElementById('anslang');
+    const v = String((el && el.value) || 'de').trim().toLowerCase();
+    return (v === 'en') ? 'en' : 'de';
+  } catch(e) {
+    return 'de';
+  }
+}
+
+function _mtPromptShort(){
+  return _mtT('prompt_short');
+}
+
+function _mtPromptLong(){
+  return _mtT('prompt_long');
+}
+
+function _mtContainsUCode(html, plainText){
+  const raw = String(html || '');
+  const txt = String(plainText || '');
+  if(/\bU[1-6]\b/i.test(txt)) return true;
+  if(/data-u-code\s*=\s*(?:\"|')?U[1-6](?:\"|')?/i.test(raw)) return true;
+  return false;
+}
+
+function _mtMirrorMainEnabled(){
+  try {
+    const el = document.getElementById('manualTestMirrorMain');
+    return !!(el && el.checked);
+  } catch(e) {
+    return false;
+  }
+}
+
+function setManualTestMirrorMode(){
+  try {
+    _safeLsSet('manual_test_mirror_main', _mtMirrorMainEnabled() ? 'on' : 'off');
+  } catch(e) {}
+}
+
+async function _mtMirrorMainAppend(payload){
+  try {
+    if(!_mtMirrorMainEnabled()) return false;
+    const mt = window.__manualTestRunner || {};
+    const res = await _apiCall('panel_action', ['manual_test_main_chat_append', {payload: payload || {}}], 12000);
+    if(!res || res.ok === false){
+      if(!mt.mainMirrorWarned){
+        mt.mainMirrorWarned = true;
+        _mtWarn('main-chat mirror unavailable: ' + String((res && res.error) || 'unknown'));
+      }
+      return false;
+    }
+    return true;
+  } catch(e) {
+    try {
+      const mt = window.__manualTestRunner || {};
+      if(!mt.mainMirrorWarned){
+        mt.mainMirrorWarned = true;
+        _mtWarn('main-chat mirror failed: ' + String(e && e.message ? e.message : e));
+      }
+    } catch(_e) {}
+    return false;
+  }
+}
+
+function _mtApplyLocalizedUi(){
+  try {
+    const monitor = document.getElementById('manualTestMonitorMode');
+    if(monitor && monitor.options && monitor.options.length >= 2){
+      monitor.options[0].textContent = _mtT('monitor_show');
+      monitor.options[1].textContent = _mtT('monitor_hide');
+    }
+    const mirrorLbl = document.getElementById('manualTestMirrorMainLabel');
+    if(mirrorLbl) mirrorLbl.textContent = _mtT('mirror_main');
+
+    const scenarioSelect = document.getElementById('manualTestScenario');
+    if(scenarioSelect && scenarioSelect.options){
+      const map = {
+        smoke_short: 'scenario_smoke_short',
+        provider_switch: 'scenario_provider_switch',
+        sci_format: 'scenario_sci_format',
+        qc_override_footer: 'scenario_qc_override_footer',
+        komplexttest: 'scenario_komplexttest',
+        full_regression_light: 'scenario_full_regression_light',
+      };
+      for(let i = 0; i < scenarioSelect.options.length; i += 1){
+        const opt = scenarioSelect.options[i];
+        const k = map[String(opt.value || '')] || '';
+        if(k) opt.textContent = _mtT(k);
+      }
+    }
+
+    const hint = document.getElementById('manualTestHint');
+    if(hint) hint.textContent = _mtT('test_hint');
+  } catch(e) {}
+}
+
 function _mtMonitorEnabled(){
   try {
     const el = document.getElementById('manualTestMonitorMode');
@@ -768,7 +1009,7 @@ async function setManualTestMonitorMode(){
       await _apiCall('panel_action', ['manual_test_monitor_hide', {}], 8000);
     }
   } catch(e) {
-    _mtWarn('Monitor-Umschaltung fehlgeschlagen: ' + String(e && e.message ? e.message : e));
+    _mtWarn(_mtT('monitor_toggle_failed') + String(e && e.message ? e.message : e));
   }
 }
 
@@ -828,15 +1069,29 @@ async function _mtSaveReport(extra){
     const res = await _apiCall('panel_action', ['save_manual_test_report', {report: report}], 20000);
     if(res && res.ok !== false){
       const path = (res.path || (res.result && res.result.path) || '');
-      if(path) _mtLog('REPORT saved: ' + path, 'ok');
-      else _mtLog('REPORT saved.', 'ok');
+      if(path) _mtLog(_mtT('report_saved_prefix') + path, 'ok');
+      else _mtLog(_mtT('report_saved_plain'), 'ok');
       return res;
     }
-    _mtWarn('REPORT save failed: ' + String((res && res.error) || 'unknown'));
+    _mtWarn(_mtT('report_save_failed') + String((res && res.error) || 'unknown'));
     return res;
   } catch(e) {
-    _mtWarn('REPORT save failed: ' + String(e && e.message ? e.message : e));
+    _mtWarn(_mtT('report_save_failed') + String(e && e.message ? e.message : e));
     return null;
+  }
+}
+
+async function _mtExportChatAudit(label){
+  const suffix = String(label || '').trim();
+  const tag = suffix ? (' [' + suffix + ']') : '';
+  _mtLog(_mtL('EXPORT > Chat/Audit', 'EXPORT > Chat/Audit') + tag);
+  try {
+    await _apiCall('export', [], 25000);
+    _mtLog(_mtL('PASS: Export ausgefuehrt', 'PASS: export executed'), 'ok');
+    return true;
+  } catch(e) {
+    _mtWarn(_mtL('Export nicht ausgefuehrt: ', 'Export not executed: ') + String(e && e.message ? e.message : e));
+    return false;
   }
 }
 
@@ -877,7 +1132,7 @@ function _mtHasCompleteQcFooter(html){
 function _mtHasSelfDebunkingBox(html){
   const h = String(html || '').toLowerCase();
   const hasDebunkLabel = h.includes('self-debunking') || h.includes('selbst-debunking');
-  const hasDebunkClass = h.includes('class=\"self-debunk') || h.includes(\"class='self-debunk\");
+  const hasDebunkClass = h.includes('class=\"self-debunk') || h.includes("class='self-debunk");
   const hasBoxStyle = (h.includes('background') || h.includes('background-color')) &&
                       (h.includes('border-left') || h.includes('border-radius'));
   return hasDebunkLabel && (hasDebunkClass || hasBoxStyle);
@@ -922,7 +1177,8 @@ async function _mtAsk(text, timeoutMs){
   const t = String(text || '').trim();
   if(!t) return {html:'', csc:null};
   const askTimeout = _mtAskTimeoutForCurrentProvider(timeoutMs);
-  _mtLog('ASK > ' + t);
+  await _mtMirrorMainAppend({role: 'user', text: t});
+  _mtLog(_mtT('ask_prefix') + t);
   let res = null;
   try {
     res = await _apiCall('ask', [t], askTimeout);
@@ -933,7 +1189,7 @@ async function _mtAsk(text, timeoutMs){
         const mt = window.__manualTestRunner || {};
         if(!mt.askFallbackNoted){
           mt.askFallbackNoted = true;
-          _mtLog('INFO: api.ask nicht verfuegbar -> Fallback auf panel_action(ask)', 'info');
+          _mtLog(_mtT('info_ask_fallback'), 'info');
         }
       } catch(_e) {}
       res = await _apiCall('panel_action', ['ask', {text: t}], askTimeout);
@@ -946,7 +1202,14 @@ async function _mtAsk(text, timeoutMs){
   }
   _mtEnsureRunning();
   const html = (res && res.html) ? String(res.html) : '';
-  _mtLog('ASK < done (' + (html.length||0) + ' html chars)');
+  _mtLog(_mtT('ask_done_prefix') + ' (' + (html.length||0) + ' html chars)');
+  await _mtMirrorMainAppend({
+    role: 'bot',
+    html: html,
+    cgi_bar: !!(res && res.cgi_bar),
+    csc: (res && res.csc) ? res.csc : null,
+    answer_lang: ((document.getElementById('anslang') || {}).value || ''),
+  });
   await _mtSleep(150);
   try { await buildUI(); } catch(e) {}
   return res || {html:'', csc:null};
@@ -964,7 +1227,7 @@ async function _mtPanelAction(action, payload, timeoutMs){
 
 async function _mtSetProvider(provider){
   const p = String(provider || '').trim().toLowerCase();
-  _mtLog('SET provider = ' + p);
+  _mtLog(_mtT('set_provider_prefix') + p);
   // OpenRouter/Hugging Face can be slower due provider API latency / remote catalogs.
   const _setProviderTimeout = (p === 'openrouter' || p === 'huggingface') ? 45000 : 30000;
   const _refreshTimeout = (p === 'openrouter' || p === 'huggingface') ? 120000 : 60000;
@@ -976,14 +1239,15 @@ async function _mtSetProvider(provider){
 
 async function _mtSetAnswerLanguage(lang){
   const l = String(lang || 'de').trim().toLowerCase();
-  _mtLog('SET answer_language = ' + l);
+  _mtLog(_mtT('set_answer_language_prefix') + l);
   await _mtPanelAction('set_answer_language', {lang:l}, 10000);
+  try { _mtApplyLocalizedUi(); } catch(e) {}
   await _mtSleep(100);
 }
 
 async function _mtApplyQcOverride(values){
   _mtEnsureRunning();
-  _mtLog('QC Override apply: ' + JSON.stringify(values || {}));
+  _mtLog(_mtT('qc_apply_prefix') + JSON.stringify(values || {}));
   const api = _api();
   if(api && typeof api.qc_override_apply === 'function'){
     const res = await api.qc_override_apply(values || {});
@@ -991,7 +1255,7 @@ async function _mtApplyQcOverride(values){
     await _mtSleep(120);
     return;
   }
-  _mtWarn('qc_override_apply nicht direkt verfuegbar -> Fallback auf panel_action');
+  _mtWarn(_mtT('qc_apply_fallback'));
   const res = await _apiCall('panel_action', ['qc_override_apply', {values: values || {}}], 10000);
   if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_apply failed');
   await _mtSleep(120);
@@ -999,7 +1263,7 @@ async function _mtApplyQcOverride(values){
 
 async function _mtClearQcOverride(){
   _mtEnsureRunning();
-  _mtLog('QC Override clear');
+  _mtLog(_mtT('qc_clear'));
   const api = _api();
   if(api && typeof api.qc_override_clear === 'function'){
     const res = await api.qc_override_clear({});
@@ -1007,7 +1271,7 @@ async function _mtClearQcOverride(){
     await _mtSleep(120);
     return;
   }
-  _mtWarn('qc_override_clear nicht direkt verfuegbar -> Fallback auf panel_action');
+  _mtWarn(_mtT('qc_clear_fallback'));
   const res = await _apiCall('panel_action', ['qc_override_clear', {}], 10000);
   if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_clear failed');
   await _mtSleep(120);
@@ -1015,15 +1279,15 @@ async function _mtClearQcOverride(){
 
 function _mtCheck(cond, okMsg, failMsg){
   if(cond){
-    _mtLog('PASS: ' + okMsg, 'ok');
+    _mtLog(_mtT('pass_prefix') + okMsg, 'ok');
     return true;
   }
-  _mtLog('FAIL: ' + failMsg, 'err');
+  _mtLog(_mtT('fail_prefix') + failMsg, 'err');
   return false;
 }
 
 function _mtWarn(msg){
-  _mtLog('WARN: ' + msg, 'warn');
+  _mtLog(_mtT('warn_prefix') + msg, 'warn');
 }
 
 function _mtParseErrorTextFromAskResult(res){
@@ -1036,70 +1300,124 @@ function _mtParseErrorTextFromAskResult(res){
 
 async function _mtScenarioSmokeShort(){
   let fails = 0;
+  const q = _mtPromptShort();
   await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtSetAnswerLanguage('de');
+  await _mtSetAnswerLanguage(_mtSelectedAnswerLanguage());
   await _mtAsk('Standard', 30000);
   await _mtAsk('SCI off', 30000);
-  const r1 = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasCompleteQcFooter(r1.html), 'QC-Footer bei Basisantwort vollstaendig', 'QC-Footer bei Basisantwort fehlt/ist unvollstaendig')) fails++;
-  if(!_mtCheck(_mtStripHtml(r1.html).includes('Self-Debunking') || _mtStripHtml(r1.html).includes('Selbst-Debunking'),
-      'Self-Debunking vorhanden', 'Self-Debunking fehlt')) fails++;
+  const r1 = await _mtAsk(q, 180000);
+  if(!_mtCheck(
+    _mtHasCompleteQcFooter(r1.html),
+    _mtL('QC-Footer bei Basisantwort vollstaendig', 'QC footer complete for base answer'),
+    _mtL('QC-Footer bei Basisantwort fehlt/ist unvollstaendig', 'QC footer missing/incomplete for base answer')
+  )) fails++;
+  if(!_mtCheck(
+    _mtStripHtml(r1.html).includes('Self-Debunking') || _mtStripHtml(r1.html).includes('Selbst-Debunking'),
+    _mtL('Self-Debunking vorhanden', 'Self-debunking present'),
+    _mtL('Self-Debunking fehlt', 'Self-debunking missing')
+  )) fails++;
   return {fails};
 }
 
 async function _mtScenarioProviderSwitch(){
   let fails = 0;
+  const q = _mtPromptShort();
   await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtSetAnswerLanguage('de');
+  await _mtSetAnswerLanguage(_mtSelectedAnswerLanguage());
   await _mtSetProvider('gemini');
   await _mtAsk('Standard', 30000);
-  let rg = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasCompleteQcFooter(rg.html), 'Gemini: QC-Footer ok', 'Gemini: QC-Footer fehlt/unvollstaendig')) fails++;
+  let rg = await _mtAsk(q, 180000);
+  if(!_mtCheck(
+    _mtHasCompleteQcFooter(rg.html),
+    _mtL('Gemini: QC-Footer ok', 'Gemini: QC footer ok'),
+    _mtL('Gemini: QC-Footer fehlt/unvollstaendig', 'Gemini: QC footer missing/incomplete')
+  )) fails++;
 
   await _mtSetProvider('openrouter');
-  let ro = await _mtAsk('Was ist Zeit?', 180000);
+  let ro = await _mtAsk(q, 180000);
   const txtOR = _mtStripHtml(ro.html);
   if(/(insufficient credits|Nicht genügend Guthaben|rate limit|Limit erreicht)/i.test(txtOR)){
-    _mtWarn('OpenRouter lieferte Limit/Credit-Fehler (Test trotzdem ok, Providerpfad verifiziert).');
-    if(!_mtCheck(_mtIncludesProviderLimitLabel(ro.html, 'OpenRouter'), 'OpenRouter-Fehlerlabel korrekt', 'OpenRouter-Fehlerlabel unklar/falsch')) fails++;
+    _mtWarn(_mtL(
+      'OpenRouter lieferte Limit/Credit-Fehler (Test trotzdem ok, Providerpfad verifiziert).',
+      'OpenRouter returned limit/credit error (test still acceptable; provider path verified).'
+    ));
+    if(!_mtCheck(
+      _mtIncludesProviderLimitLabel(ro.html, 'OpenRouter'),
+      _mtL('OpenRouter-Fehlerlabel korrekt', 'OpenRouter error label correct'),
+      _mtL('OpenRouter-Fehlerlabel unklar/falsch', 'OpenRouter error label unclear/incorrect')
+    )) fails++;
   } else {
-    if(!_mtCheck(_mtHasCompleteQcFooter(ro.html), 'OpenRouter: QC-Footer ok', 'OpenRouter: QC-Footer fehlt/unvollstaendig')) fails++;
-    if(!_mtCheck(_mtHasSelfDebunkingBox(ro.html), 'OpenRouter: Self-Debunking-Box erkannt', 'OpenRouter: Self-Debunking nicht als Box erkannt')) fails++;
+    if(!_mtCheck(
+      _mtHasCompleteQcFooter(ro.html),
+      _mtL('OpenRouter: QC-Footer ok', 'OpenRouter: QC footer ok'),
+      _mtL('OpenRouter: QC-Footer fehlt/unvollstaendig', 'OpenRouter: QC footer missing/incomplete')
+    )) fails++;
+    if(!_mtCheck(
+      _mtHasSelfDebunkingBox(ro.html),
+      _mtL('OpenRouter: Self-Debunking-Box erkannt', 'OpenRouter: self-debunking box detected'),
+      _mtL('OpenRouter: Self-Debunking nicht als Box erkannt', 'OpenRouter: self-debunking box not detected')
+    )) fails++;
   }
 
   await _mtSetProvider('huggingface');
-  let rhf = await _mtAsk('Was ist Zeit?', 180000);
+  let rhf = await _mtAsk(q, 180000);
   const txtHF = _mtStripHtml(rhf.html);
   if(/(insufficient credits|Nicht genügend Guthaben|rate limit|Limit erreicht|quota)/i.test(txtHF)){
-    _mtWarn('Hugging Face lieferte Limit/Credit-Fehler (optional).');
-    if(!_mtCheck(_mtIncludesProviderLimitLabel(rhf.html, 'Hugging Face'), 'HF-Fehlerlabel korrekt', 'HF-Fehler wurde nicht als Hugging Face gekennzeichnet')) fails++;
+    _mtWarn(_mtL('Hugging Face lieferte Limit/Credit-Fehler (optional).', 'Hugging Face returned limit/credit error (optional).'));
+    if(!_mtCheck(
+      _mtIncludesProviderLimitLabel(rhf.html, 'Hugging Face'),
+      _mtL('HF-Fehlerlabel korrekt', 'HF error label correct'),
+      _mtL('HF-Fehler wurde nicht als Hugging Face gekennzeichnet', 'HF error not labeled as Hugging Face')
+    )) fails++;
   } else {
-    if(!_mtCheck(_mtHasCompleteQcFooter(rhf.html), 'HF: QC-Footer ok', 'HF: QC-Footer fehlt/unvollstaendig')) fails++;
+    if(!_mtCheck(
+      _mtHasCompleteQcFooter(rhf.html),
+      _mtL('HF: QC-Footer ok', 'HF: QC footer ok'),
+      _mtL('HF: QC-Footer fehlt/unvollstaendig', 'HF: QC footer missing/incomplete')
+    )) fails++;
   }
   return {fails};
 }
 
 async function _mtScenarioSciFormat(){
   let fails = 0;
+  const q = _mtPromptShort();
   await _mtPanelAction('clear_chat', {}, 8000);
   await _mtSetProvider('gemini');
   await _mtAsk('Expert', 30000);
   await _mtAsk('SCI menu', 30000);
   await _mtAsk('A', 30000);
-  const rA = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasSciTraceStructure(rA.html), 'SCI A: SCI-Trace-Struktur erkannt', 'SCI A: SCI-Trace-Struktur fehlt/unsauber')) fails++;
-  if(!_mtCheck(_mtHasCompleteQcFooter(rA.html), 'SCI A: QC-Footer ok', 'SCI A: QC-Footer fehlt/unvollstaendig')) fails++;
+  const rA = await _mtAsk(q, 180000);
+  if(!_mtCheck(
+    _mtHasSciTraceStructure(rA.html),
+    _mtL('SCI A: SCI-Trace-Struktur erkannt', 'SCI A: SCI trace structure detected'),
+    _mtL('SCI A: SCI-Trace-Struktur fehlt/unsauber', 'SCI A: SCI trace structure missing/invalid')
+  )) fails++;
+  if(!_mtCheck(
+    _mtHasCompleteQcFooter(rA.html),
+    _mtL('SCI A: QC-Footer ok', 'SCI A: QC footer ok'),
+    _mtL('SCI A: QC-Footer fehlt/unvollstaendig', 'SCI A: QC footer missing/incomplete')
+  )) fails++;
 
   await _mtAsk('SCI menu', 30000);
   await _mtAsk('B', 30000);
-  const rB = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasSciTraceStructure(rB.html), 'SCI B: SCI-Trace-Struktur erkannt', 'SCI B: SCI-Trace-Struktur fehlt/unsauber')) fails++;
-  if(!_mtCheck(_mtHasCompleteQcFooter(rB.html), 'SCI B: QC-Footer ok', 'SCI B: QC-Footer fehlt/unvollstaendig')) fails++;
+  const rB = await _mtAsk(q, 180000);
+  if(!_mtCheck(
+    _mtHasSciTraceStructure(rB.html),
+    _mtL('SCI B: SCI-Trace-Struktur erkannt', 'SCI B: SCI trace structure detected'),
+    _mtL('SCI B: SCI-Trace-Struktur fehlt/unsauber', 'SCI B: SCI trace structure missing/invalid')
+  )) fails++;
+  if(!_mtCheck(
+    _mtHasCompleteQcFooter(rB.html),
+    _mtL('SCI B: QC-Footer ok', 'SCI B: QC footer ok'),
+    _mtL('SCI B: QC-Footer fehlt/unvollstaendig', 'SCI B: QC footer missing/incomplete')
+  )) fails++;
   return {fails};
 }
 
 async function _mtScenarioQcOverrideFooter(){
   let fails = 0;
+  const q = _mtPromptShort();
   await _mtPanelAction('clear_chat', {}, 8000);
   // Deterministic reference provider for QC/SCI contract checks (credits/limits on
   // optional providers must not turn feature-contract tests into false FAILs).
@@ -1108,10 +1426,18 @@ async function _mtScenarioQcOverrideFooter(){
   await _mtAsk('SCI menu', 30000);
   await _mtAsk('B', 30000);
   await _mtApplyQcOverride({Clarity:3,Brevity:0,Evidence:3,Empathy:3,Consistency:3,Neutrality:3});
-  const r = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasCompleteQcFooter(r.html), 'SCI B + QC-Override: QC-Footer vollstaendig', 'SCI B + QC-Override: QC-Footer fehlt/unvollstaendig')) fails++;
-  if(!_mtCheck(_mtHasSelfDebunkingBox(r.html), 'SCI B + QC-Override: Self-Debunking-Box erkannt', 'SCI B + QC-Override: Self-Debunking nicht als Box erkannt')) fails++;
-  try { await _mtClearQcOverride(); } catch(e) { _mtWarn('QC-Override clear fehlgeschlagen: ' + String(e && e.message ? e.message : e)); }
+  const r = await _mtAsk(q, 180000);
+  if(!_mtCheck(
+    _mtHasCompleteQcFooter(r.html),
+    _mtL('SCI B + QC-Override: QC-Footer vollstaendig', 'SCI B + QC override: QC footer complete'),
+    _mtL('SCI B + QC-Override: QC-Footer fehlt/unvollstaendig', 'SCI B + QC override: QC footer missing/incomplete')
+  )) fails++;
+  if(!_mtCheck(
+    _mtHasSelfDebunkingBox(r.html),
+    _mtL('SCI B + QC-Override: Self-Debunking-Box erkannt', 'SCI B + QC override: self-debunking box detected'),
+    _mtL('SCI B + QC-Override: Self-Debunking nicht als Box erkannt', 'SCI B + QC override: self-debunking box not detected')
+  )) fails++;
+  try { await _mtClearQcOverride(); } catch(e) { _mtWarn(_mtL('QC-Override clear fehlgeschlagen: ', 'QC override clear failed: ') + String(e && e.message ? e.message : e)); }
   return {fails};
 }
 
@@ -1122,20 +1448,158 @@ async function _mtScenarioFullRegressionLight(){
     const r = await fn();
     fails += (r && r.fails) ? r.fails : 0;
   }
-  try {
-    _mtLog('EXPORT > Chat/Audit');
-    await _apiCall('export', [], 20000);
-    _mtLog('PASS: Export ausgefuehrt', 'ok');
-  } catch(e) {
-    _mtWarn('Export nicht ausgefuehrt: ' + String(e && e.message ? e.message : e));
+  await _mtExportChatAudit('full_regression_light');
+  return {fails};
+}
+
+async function _mtScenarioKomplexttest(){
+  let fails = 0;
+  const prompts = [
+    _mtPromptShort(),
+    _mtPromptLong(),
+  ];
+  const profiles = ['Standard', 'Expert'];
+  const sciVariants = ['off', 'A', 'B'];
+  const qcStates = [false, true];
+  const colorStates = ['on', 'off'];
+  const totalCases = profiles.length * sciVariants.length * qcStates.length * colorStates.length;
+  let caseIdx = 0;
+
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtSetProvider('gemini');
+  await _mtSetAnswerLanguage(_mtSelectedAnswerLanguage());
+
+  for(const profile of profiles){
+    for(const sci of sciVariants){
+      for(const qcOn of qcStates){
+        for(const color of colorStates){
+          _mtEnsureRunning();
+          caseIdx += 1;
+          _mtLog(
+            'CASE ' + caseIdx + '/' + totalCases
+            + ' > profile=' + profile
+            + ' · sci=' + sci
+            + ' · qc_override=' + (qcOn ? 'on' : 'off')
+            + ' · color=' + color
+          );
+
+          if(caseIdx > 1){
+            await _mtExportChatAudit('case_checkpoint_before_clear_chat_' + caseIdx);
+          }
+          await _mtPanelAction('clear_chat', {}, 8000);
+          await _mtAsk(profile, 30000);
+          if(color === 'on') await _mtAsk('Color on', 30000);
+          else await _mtAsk('Color off', 30000);
+
+          if(sci === 'off'){
+            await _mtAsk('SCI off', 30000);
+          } else {
+            await _mtAsk('SCI menu', 30000);
+            await _mtAsk(sci, 30000);
+          }
+
+          if(qcOn){
+            await _mtApplyQcOverride({Clarity:3, Brevity:0, Evidence:3, Empathy:3, Consistency:3, Neutrality:3});
+          } else {
+            try { await _mtClearQcOverride(); } catch(e) {}
+          }
+
+          for(let i = 0; i < prompts.length; i += 1){
+            _mtEnsureRunning();
+            const prompt = prompts[i];
+            const res = await _mtAsk(prompt, 180000);
+            const txt = _mtStripHtml(res.html || '');
+            const caseLabel = 'CASE ' + caseIdx + ' P' + String(i + 1);
+
+            if(!_mtCheck(
+              _mtHasCompleteQcFooter(res.html),
+              caseLabel + ': ' + _mtL('QC-Footer vollstaendig', 'QC footer complete'),
+              caseLabel + ': ' + _mtL('QC-Footer fehlt/unvollstaendig', 'QC footer missing/incomplete')
+            )) fails++;
+
+            if(!_mtCheck(
+              _mtContainsUCode(res.html || '', txt),
+              caseLabel + ': ' + _mtT('has_u_marker'),
+              caseLabel + ': ' + _mtT('no_u_marker')
+            )) fails++;
+
+            const hasTagMarker = /\[(GREEN|YELLOW|RED|GRAY|WHITE)(-[A-Z0-9]+)*\]/i.test(txt);
+            const hasEmojiMarker = txt.indexOf('🟢') >= 0 || txt.indexOf('🟡') >= 0 || txt.indexOf('🔴') >= 0 || txt.indexOf('⚪') >= 0;
+            const hasColorMarker = hasTagMarker || hasEmojiMarker;
+            if(color === 'on'){
+              if(!_mtCheck(
+                hasColorMarker,
+                caseLabel + ': ' + _mtL('Farbmarker vorhanden (Color on)', 'Color markers present (Color on)'),
+                caseLabel + ': ' + _mtL('Farbmarker fehlen (Color on)', 'Color markers missing (Color on)')
+              )) fails++;
+            } else if(hasColorMarker){
+              _mtWarn(caseLabel + ': ' + _mtL(
+                'Farbmarker trotz Color off erkannt (modell-/renderpfadabhaengig).',
+                'Color markers detected although Color is off (model/render-path dependent).'
+              ));
+            }
+          }
+
+          if(qcOn){
+            try { await _mtClearQcOverride(); } catch(e) { _mtWarn(_mtL('QC-Override clear fehlgeschlagen: ', 'QC override clear failed: ') + String(e && e.message ? e.message : e)); }
+          }
+        }
+      }
+    }
   }
+
+  _mtEnsureRunning();
+  await _mtExportChatAudit('before_influence_checks');
+  _mtLog(_mtT('influence_checks'));
+  await _mtPanelAction('clear_chat', {}, 8000);
+  await _mtAsk('Standard', 30000);
+  await _mtAsk('SCI off', 30000);
+  await _mtAsk('Color on', 30000);
+
+  const baseline = await _mtAsk(_mtPromptShort(), 180000);
+  const baselineTxt = _mtStripHtml(baseline.html || '');
+
+  const cgiNote = await _mtAsk('3,3,3', 30000);
+  if(!_mtCheck(
+    /cgi/i.test(_mtStripHtml(cgiNote.html || '')),
+    _mtT('cgi_recorded'),
+    _mtT('cgi_not_recorded')
+  )) fails++;
+  const afterCgi = await _mtAsk(_mtPromptShort(), 180000);
+  const afterCgiTxt = _mtStripHtml(afterCgi.html || '');
+  if(!_mtCheck(
+    baselineTxt !== afterCgiTxt,
+    _mtT('cgi_influence_yes'),
+    _mtT('cgi_influence_no')
+  )) fails++;
+
+  const baselineQc = await _mtAsk(_mtPromptShort(), 180000);
+  await _mtApplyQcOverride({Clarity:3, Brevity:0, Evidence:3, Empathy:3, Consistency:3, Neutrality:3});
+  const afterQc = await _mtAsk(_mtPromptShort(), 180000);
+  if(!_mtCheck(
+    _mtStripHtml(baselineQc.html || '') !== _mtStripHtml(afterQc.html || ''),
+    _mtT('qc_influence_yes'),
+    _mtT('qc_influence_no')
+  )) fails++;
+  try { await _mtClearQcOverride(); } catch(e) { _mtWarn(_mtL('QC-Override clear fehlgeschlagen: ', 'QC override clear failed: ') + String(e && e.message ? e.message : e)); }
+
+  const baselineDyn = await _mtAsk(_mtPromptShort(), 180000);
+  await _mtAsk('Dynamic one-shot on', 30000);
+  const afterDyn = await _mtAsk(_mtPromptShort(), 180000);
+  if(!_mtCheck(
+    _mtStripHtml(baselineDyn.html || '') !== _mtStripHtml(afterDyn.html || ''),
+    _mtT('dynamic_influence_yes'),
+    _mtT('dynamic_influence_no')
+  )) fails++;
+
+  await _mtExportChatAudit('komplexttest_final');
   return {fails};
 }
 
 function stopManualTestRunner(){
   if(!window.__manualTestRunner) return;
   window.__manualTestRunner.stop = true;
-  _mtLog('Stop angefordert.');
+  _mtLog(_mtT('stop_requested'));
 }
 
 async function startManualTestRunner(){
@@ -1151,6 +1615,8 @@ async function startManualTestRunner(){
   mt.summary = null;
   mt.monitorEnabled = _mtMonitorEnabled();
   mt.askFallbackNoted = false;
+  mt.mainMirrorWarned = false;
+  mt.monitorLang = _mtSelectedAnswerLanguage();
   const myRun = mt.runId;
   _mtSetButtons(true);
   _mtClearLog();
@@ -1161,12 +1627,17 @@ async function startManualTestRunner(){
   try {
     if(mt.monitorEnabled){
       await _apiCall('panel_action', ['manual_test_monitor_show', {}], 8000);
-      await _apiCall('panel_action', ['manual_test_monitor_reset', {scenario: scenario, status: 'running', summary: '-'}], 8000);
+      await _apiCall('panel_action', ['manual_test_monitor_reset', {
+        scenario: scenario,
+        status: 'running',
+        summary: '-',
+        lang: mt.monitorLang,
+      }], 8000);
     }
   } catch(e) {
-    _mtWarn('Manual-Test-Monitor konnte nicht initialisiert werden: ' + String(e && e.message ? e.message : e));
+    _mtWarn(_mtT('monitor_init_failed') + String(e && e.message ? e.message : e));
   }
-  _mtLog('Manual-Test gestartet: ' + scenario);
+  _mtLog(_mtT('test_started_prefix') + scenario);
   const t0 = Date.now();
   try {
     let result = {fails: 0};
@@ -1174,35 +1645,38 @@ async function startManualTestRunner(){
     else if(scenario === 'provider_switch') result = await _mtScenarioProviderSwitch();
     else if(scenario === 'sci_format') result = await _mtScenarioSciFormat();
     else if(scenario === 'qc_override_footer') result = await _mtScenarioQcOverrideFooter();
+    else if(scenario === 'komplexttest') result = await _mtScenarioKomplexttest();
     else if(scenario === 'full_regression_light') result = await _mtScenarioFullRegressionLight();
-    else throw new Error('unknown scenario: ' + scenario);
+    else throw new Error(_mtT('unknown_scenario_prefix') + scenario);
     _mtEnsureRunning();
     const ms = Date.now() - t0;
     if((result && result.fails) > 0){
       mt.summary = { status: 'FAIL', fails: Number(result.fails||0) };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'FAIL', summary: mt.summary}], 4000); } catch(e) {}
-      _mtLog('SUMMARY: FAILS=' + result.fails + ' · Dauer=' + ms + 'ms', 'err');
-      _setStatus('Manual Test fertig: ' + result.fails + ' Fehler', 'err');
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'FAIL', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
+      _mtLog(_mtT('summary_fail_prefix') + result.fails + ' · Duration=' + ms + 'ms', 'err');
+      _setStatus(_mtT('status_finished_fail_prefix') + result.fails + _mtT('status_finished_fail_suffix'), 'err');
     } else {
       mt.summary = { status: 'PASS', fails: 0 };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'PASS', summary: mt.summary}], 4000); } catch(e) {}
-      _mtLog('SUMMARY: PASS · Dauer=' + ms + 'ms', 'ok');
-      _setStatus('Manual Test fertig: PASS', 'ok');
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'PASS', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
+      _mtLog(_mtT('summary_pass_prefix') + ' · Duration=' + ms + 'ms', 'ok');
+      _setStatus(_mtT('status_finished_pass'), 'ok');
     }
     await _mtSaveReport({ duration_ms: ms, summary: mt.summary, finished_at: (_now ? _now() : null) });
   } catch(e) {
     const stopped = (String(e && e.message ? e.message : e).indexOf('manual_test_stopped') >= 0);
     if(stopped){
       mt.summary = { status: 'STOPPED' };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'STOPPED', summary: mt.summary}], 4000); } catch(e) {}
-      _mtLog('SUMMARY: STOPPED', 'warn');
-      _setStatus('Manual Test gestoppt', 'err');
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'STOPPED', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
+      _mtLog(_mtT('summary_stopped'), 'warn');
+      _setStatus(_mtT('status_stopped'), 'err');
+      await _mtExportChatAudit('manual_test_stopped_partial');
       await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
     } else {
       mt.summary = { status: 'ERROR', error: String(e && e.message ? e.message : e) };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'ERROR', summary: mt.summary}], 4000); } catch(e) {}
-      _mtLog('ERROR: ' + String(e && e.message ? e.message : e), 'err');
-      _setStatus('Manual Test error: ' + String(e && e.message ? e.message : e), 'err');
+      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'ERROR', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
+      _mtLog(_mtT('summary_error_prefix') + String(e && e.message ? e.message : e), 'err');
+      _setStatus(_mtT('status_error_prefix') + String(e && e.message ? e.message : e), 'err');
+      await _mtExportChatAudit('manual_test_error_partial');
       await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
     }
   } finally {

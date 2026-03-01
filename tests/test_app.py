@@ -4912,6 +4912,76 @@ def test_manual_test_monitor_state_mutators_update_state_and_emit_js_calls():
     assert any(c.startswith('mtmSetHeader(') for c in calls)
 
 
+def test_manual_test_main_chat_append_emits_expected_js_calls():
+    mod = load_fix_module()
+    api = mod.Api()
+    js_calls = []
+
+    class _MainWin:
+        def evaluate_js(self, js):
+            js_calls.append(str(js))
+
+    api.main_win = _MainWin()
+
+    r_user = api.manual_test_main_chat_append({"role": "user", "text": "Hallo"})
+    assert isinstance(r_user, dict)
+    assert r_user.get("ok") is True
+
+    r_bot = api.manual_test_main_chat_append({
+        "role": "bot",
+        "html": "<p>Antwort</p>",
+        "cgi_bar": True,
+        "csc": {"score": 3},
+        "answer_lang": "en",
+    })
+    assert isinstance(r_bot, dict)
+    assert r_bot.get("ok") is True
+
+    joined = "\n".join(js_calls)
+    assert "addMsg('user'" in joined
+    assert "addMsg('bot'" in joined
+    assert '"answerLang": "en"' in joined
+
+
+def test_manual_test_request_stop_sets_stop_flag_in_panel_runner():
+    mod = load_fix_module()
+    api = mod.Api()
+    js_calls = []
+
+    class _PanelWin:
+        def evaluate_js(self, js):
+            js_calls.append(str(js))
+            return {"ok": True, "running": True}
+
+    api.panel_win = _PanelWin()
+    out = api.manual_test_request_stop({"lang": "de"})
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    assert out.get("running") is True
+    joined = "\n".join(js_calls)
+    assert "window.__manualTestRunner.stop = true" in joined
+    assert "Stop angefordert (Monitor)." in joined
+
+
+def test_panel_action_manual_test_stop_routes_to_manual_test_request_stop():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    calls = []
+
+    def _stop(payload=None):
+        calls.append(payload if isinstance(payload, dict) else {})
+        return {"ok": True, "running": False}
+
+    api.manual_test_request_stop = _stop  # type: ignore[assignment]
+    out = api.panel_action("manual_test_stop", {"lang": "en"})
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    assert out.get("running") is False
+    assert calls and calls[0] == {"lang": "en"}
+
+
 def test_panel_action_blocks_stale_rule_actions_when_comm_off():
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -4927,6 +4997,11 @@ def test_panel_action_blocks_stale_rule_actions_when_comm_off():
     assert isinstance(r_ask, dict)
     assert r_ask.get('ok') is False
     assert r_ask.get('error') == 'comm_off_blocked'
+
+    r_mirror = api.panel_action('manual_test_main_chat_append', {'payload': {'role': 'sys', 'text': 'x'}})
+    assert isinstance(r_mirror, dict)
+    assert r_mirror.get('ok') is False
+    assert r_mirror.get('error') == 'comm_off_blocked'
 
     r_start = api.panel_action('ask', {'text': 'Comm Start'})
     assert isinstance(r_start, dict)
