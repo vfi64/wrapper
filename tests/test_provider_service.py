@@ -26,6 +26,9 @@ class _RouterOk:
     def get_huggingface_catalog_cached(self, *, top_n=200, provider_filter="all", force_refresh=False):
         return (["catalog/model-a", "catalog/model-b"], {"source": "live", "top_n": top_n, "provider_filter": provider_filter, "force_refresh": bool(force_refresh)})
 
+    def supports_native_retrieval(self, provider):
+        return str(provider or "").strip().lower() == "openrouter"
+
 
 class _RouterBoom:
     def get_active_provider(self):
@@ -79,6 +82,9 @@ def test_provider_service_delegates_to_router():
     assert meta.get("top_n") == 120
     assert meta.get("provider_filter") == "inference"
     assert meta.get("force_refresh") is True
+    assert svc.supports_native_retrieval("gemini") is True
+    assert svc.supports_native_retrieval("openrouter") is True
+    assert svc.supports_native_retrieval("huggingface") is False
 
 
 def test_provider_service_cfg_helpers():
@@ -109,6 +115,8 @@ def test_provider_service_is_fail_soft():
     assert svc.get_models_cached("huggingface", force_refresh=True) == ([], {"source": "none"})
     assert svc.get_models_from_config("huggingface") == []
     assert svc.get_huggingface_catalog_cached(top_n=50, provider_filter="all", force_refresh=True) == ([], {})
+    assert svc.supports_native_retrieval("gemini") is True
+    assert svc.supports_native_retrieval("openrouter") is False
 
 
 def test_build_model_candidates_prefers_free_when_primary_is_free():

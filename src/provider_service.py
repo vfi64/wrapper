@@ -33,6 +33,18 @@ class ProviderService:
             return "huggingface"
         return "gemini"
 
+    def supports_native_retrieval(self, provider: str) -> bool:
+        """Return whether native retrieval tool wiring is available for provider path."""
+        p = self.canonical_provider_id(provider)
+        if p == "gemini":
+            return True
+        try:
+            if self.router is not None and hasattr(self.router, "supports_native_retrieval"):
+                return bool(self.router.supports_native_retrieval(p))
+        except Exception:
+            pass
+        return False
+
     def get_active_provider(self) -> str:
         try:
             p = (self.router.get_active_provider() if self.router is not None else "gemini") or "gemini"

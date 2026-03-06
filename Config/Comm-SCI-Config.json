@@ -16,17 +16,18 @@
       "app_title": "Comm-SCI Desktop"
     },
     "huggingface": {
-      "default_model": "microsoft/Phi-3.5-mini-instruct"
+      "default_model": "meta-llama/Llama-3.3-70B-Instruct"
     }
   },
   "answer_language": "de",
+  "language_policy_mode": "production",
   "rate_limit_enabled": true,
   "rate_limit_per_minute": 30,
   "rate_limit_per_hour": 120,
   "panel_geom": {
-    "x": 1141,
+    "x": 1128,
     "y": 34,
-    "width": 340,
+    "width": 384,
     "height": 948
   },
   "rate_limit_scopes": {

@@ -139,6 +139,11 @@ except Exception:
     _uncertainty_codes_mod = None  # type: ignore
 
 try:
+    import help_i18n as _help_i18n_mod  # type: ignore
+except Exception:
+    _help_i18n_mod = None  # type: ignore
+
+try:
     from qc_bridge import QCBridge as _QCBridge  # type: ignore
 except Exception:
     _QCBridge = None  # type: ignore
@@ -465,6 +470,26 @@ def _try_decrypt_api_key(enc_b64: str, *, passphrase: str, salt_b64: str):
     except Exception:
         return None
 
+
+def _try_encrypt_api_key(plain_text: str, *, passphrase: str):
+    """Best-effort encrypt helper (Fernet). Returns (enc_b64, salt_b64) or (None, None)."""
+    if plain_text is None:
+        plain_text = ""
+    if not str(plain_text).strip() or not passphrase:
+        return None, None
+    try:
+        from cryptography.fernet import Fernet  # type: ignore
+    except Exception:
+        return None, None
+    try:
+        salt_b64 = base64.urlsafe_b64encode(os.urandom(16)).decode("utf-8")
+        fkey = _derive_fernet_key(passphrase, salt_b64)
+        f = Fernet(fkey)
+        enc_b64 = f.encrypt(str(plain_text).encode("utf-8")).decode("utf-8")
+        return enc_b64, salt_b64
+    except Exception:
+        return None, None
+
 try:
     import webview  # type: ignore
 except Exception:
@@ -496,11 +521,13 @@ CONFIG_DIR = os.path.join(PROJECT_DIR, 'Config')
 LOGS_DIR = os.path.join(PROJECT_DIR, 'Logs')
 AUDIT_LOG_DIR = os.path.join(LOGS_DIR, 'Audit')
 CHAT_LOG_DIR = os.path.join(LOGS_DIR, 'Chats')
+HISTORY_LOG_DIR = os.path.join(LOGS_DIR, 'History')
+CACHE_LOG_DIR = os.path.join(LOGS_DIR, 'Cache')
 SESSION_EVENTS_MAX = 2000  # cap in-memory session_events (JSONL is full history)
 USAGE_LOG_DIR = os.path.join(LOGS_DIR, 'Usage_statistics')
 
 # Create directories (idempotent)
-for _d in (JSON_DIR, CONFIG_DIR, LOGS_DIR, AUDIT_LOG_DIR, CHAT_LOG_DIR, USAGE_LOG_DIR):
+for _d in (JSON_DIR, CONFIG_DIR, LOGS_DIR, AUDIT_LOG_DIR, CHAT_LOG_DIR, HISTORY_LOG_DIR, CACHE_LOG_DIR, USAGE_LOG_DIR):
     try:
         os.makedirs(_d, exist_ok=True)
     except Exception:
@@ -698,13 +725,31 @@ def _safe_sha256(s: str) -> str:
     except Exception:
         return ""
 
-# Default ruleset location: ./JSON/Comm-SCI-v20.0.3.json
-DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.0.3.json')
-
-# Fallback: if the ruleset is placed next to the script (legacy layout), use it.
-_alt_ruleset = os.path.join(PROJECT_DIR, 'Comm-SCI-v20.0.3.json')
-if (not os.path.exists(DEFAULT_JSON)) and os.path.exists(_alt_ruleset):
-    DEFAULT_JSON = _alt_ruleset
+# Default ruleset location preference (latest first):
+#   1) ./JSON/Comm-SCI-v20.2.0.json
+#   2) ./JSON/Comm-SCI-v20.1.0.json
+#   3) legacy fallbacks (v20.0.3 / v20.0.2)
+_DEFAULT_RULESET_CANDIDATES = [
+    'Comm-SCI-v20.2.0.json',
+    'Comm-SCI-v20.1.0.json',
+    'Comm-SCI-v20.0.3.json',
+    'Comm-SCI-v20.0.2.json',
+]
+DEFAULT_JSON = ''
+for _name in _DEFAULT_RULESET_CANDIDATES:
+    _p = os.path.join(JSON_DIR, _name)
+    if os.path.exists(_p):
+        DEFAULT_JSON = _p
+        break
+if not DEFAULT_JSON:
+    for _name in _DEFAULT_RULESET_CANDIDATES:
+        _p = os.path.join(PROJECT_DIR, _name)
+        if os.path.exists(_p):
+            DEFAULT_JSON = _p
+            break
+if not DEFAULT_JSON:
+    # Final fallback path (may still fail later with clear file-not-found log).
+    DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.2.0.json')
 
 # Config/keys location: ./Config/
 CONFIG_FILENAME = 'Comm-SCI-Config.json'
@@ -766,6 +811,8 @@ def _load_keys_json():
 
 # Usage stats location: ./Logs/Usage_statistics/Comm-SCI-Use.txt
 STATS_FILENAME = os.path.join(USAGE_LOG_DIR, 'Comm-SCI-Use.txt')
+INPUT_HISTORY_FILENAME = 'InputLineHistory.json'
+INPUT_HISTORY_PATH = os.path.join(HISTORY_LOG_DIR, INPUT_HISTORY_FILENAME)
 
 # Backwards-compatible alias (some forks used STATS_PATH)
 STATS_PATH = STATS_FILENAME
@@ -1444,6 +1491,192 @@ class GovernanceManager:
         self.logs.append(msg)
 
 
+    def _adapt_operational_rules_json(self, data: dict):
+        """Best-effort adapter for operational v20.x rulesets to wrapper canonical shape.
+
+        The runtime is historically built for canonical files with top-level keys like
+        `commands`, `global_defaults`, and `version`. Operational files use
+        `command_model`, `contracts`, and `source.version`.
+        """
+        try:
+            if not isinstance(data, dict):
+                return data, ""
+
+            # Already canonical enough for the wrapper.
+            if isinstance(data.get("commands"), dict):
+                return data, ""
+
+            cmd_model = data.get("command_model") or {}
+            groups = cmd_model.get("groups") if isinstance(cmd_model, dict) else {}
+            profiles = data.get("profiles")
+            if not isinstance(groups, dict) or not isinstance(profiles, dict):
+                return data, ""
+
+            out = dict(data)
+
+            # Map operational contracts to legacy/global_defaults access paths.
+            if "global_defaults" not in out and isinstance(out.get("contracts"), dict):
+                out["global_defaults"] = out.get("contracts") or {}
+
+            # Bridge self-debunking module fields expected by legacy runtime helpers.
+            # Operational v20 keeps the normative contract at:
+            #   contracts.output_contract.self_debunking_contract
+            # but legacy enforcement also requires:
+            #   global_defaults.self_debunking.enabled + block.title
+            try:
+                gd = out.get("global_defaults")
+                if isinstance(gd, dict):
+                    oc_gd = gd.get("output_contract")
+                    if isinstance(oc_gd, dict):
+                        sdc = oc_gd.get("self_debunking_contract")
+                        if isinstance(sdc, dict) and not isinstance(gd.get("self_debunking"), dict):
+                            req_title = str(sdc.get("required_block_title") or "Self-Debunking").strip() or "Self-Debunking"
+                            gd["self_debunking"] = {
+                                "enabled": bool(sdc.get("enabled", False)),
+                                "exceptions": [],
+                                "block": {"title": req_title},
+                            }
+                            out["global_defaults"] = gd
+            except Exception:
+                pass
+
+            src = out.get("source") or {}
+            if not isinstance(src, dict):
+                src = {}
+            if "version" not in out:
+                ver = (
+                    src.get("version")
+                    or src.get("operational_profile_version")
+                    or src.get("canonical_version")
+                    or ""
+                )
+                if ver:
+                    out["version"] = str(ver)
+
+            state_defaults = ((out.get("state_model") or {}).get("defaults") or {})
+            if isinstance(state_defaults, dict):
+                if "default_profile" not in out and state_defaults.get("default_profile"):
+                    out["default_profile"] = state_defaults.get("default_profile")
+                if "default_code" not in out and state_defaults.get("default_code"):
+                    out["default_code"] = state_defaults.get("default_code")
+
+            cmd_desc = cmd_model.get("command_descriptions") if isinstance(cmd_model, dict) else {}
+            if not isinstance(cmd_desc, dict):
+                cmd_desc = {}
+            cmd_rc = cmd_model.get("command_output_contract_overrides") if isinstance(cmd_model, dict) else {}
+            if not isinstance(cmd_rc, dict):
+                cmd_rc = {}
+
+            commands = {}
+            for group_name, raw_tokens in groups.items():
+                gname = str(group_name or "").strip()
+                if not gname:
+                    continue
+                items = {}
+                tokens = []
+                if isinstance(raw_tokens, list):
+                    tokens = [str(t).strip() for t in raw_tokens if str(t).strip()]
+                elif isinstance(raw_tokens, dict):
+                    tokens = [str(t).strip() for t in raw_tokens.keys() if str(t).strip()]
+                for token in tokens:
+                    row = {}
+                    desc = cmd_desc.get(token)
+                    if isinstance(desc, str) and desc.strip():
+                        row["function"] = desc.strip()
+                    rc = cmd_rc.get(token)
+                    row["response_contract"] = rc if isinstance(rc, str) and rc.strip() else "status_and_qc_only"
+                    items[token] = row
+                commands[gname] = items
+
+            # Ensure required command groups exist for the schema guard.
+            for req in ("primary", "help_and_codes", "sci_control", "profile_control", "mode_control", "color_control"):
+                if not isinstance(commands.get(req), dict):
+                    commands[req] = {}
+            out["commands"] = commands
+
+            # Normalize operational SCI layout to the legacy wrapper shape.
+            # v20 operational files expose `sci.variants` / `sci.menu_output`,
+            # while wrapper runtime paths expect `sci.variant_menu.*`.
+            try:
+                sci = out.get("sci")
+                if isinstance(sci, dict):
+                    variant_menu = sci.get("variant_menu")
+                    if not isinstance(variant_menu, dict):
+                        variant_menu = {}
+
+                    if (
+                        ("variants" not in variant_menu)
+                        and isinstance(sci.get("variants"), dict)
+                    ):
+                        variant_menu["variants"] = sci.get("variants")
+
+                    if (
+                        ("menu_output" not in variant_menu)
+                        and isinstance(sci.get("menu_output"), dict)
+                    ):
+                        variant_menu["menu_output"] = sci.get("menu_output")
+
+                    if variant_menu:
+                        sci["variant_menu"] = variant_menu
+
+                    # Bridge operational timeout config into legacy syntax_rules path.
+                    vsel = sci.get("variant_selection")
+                    if isinstance(vsel, dict):
+                        syntax_rules = out.get("syntax_rules")
+                        if not isinstance(syntax_rules, dict):
+                            syntax_rules = {}
+                        sp = syntax_rules.get("special_parsing")
+                        if not isinstance(sp, dict):
+                            sp = {}
+                        if not isinstance(sp.get("sci_variant_selection"), dict):
+                            timeout_turns = 2
+                            timeout_turns_ext = 3
+                            try:
+                                timeout_turns = int(vsel.get("timeout_turns", 2) or 2)
+                            except Exception:
+                                timeout_turns = 2
+                            try:
+                                timeout_turns_ext = int(vsel.get("timeout_turns_extended", 3) or 3)
+                            except Exception:
+                                timeout_turns_ext = 3
+                            sp["sci_variant_selection"] = {
+                                "pattern": "^[A-Ha-h]$",
+                                "on_match": "set_sci_variant_if_pending",
+                                "only_when_sci_pending": True,
+                                "timeout_turns": timeout_turns,
+                                "timeout_turns_extended": timeout_turns_ext,
+                                "extension_condition": str(vsel.get("extension_condition") or ""),
+                                "default_variant_if_no_selection": str(vsel.get("default_variant_if_no_selection") or "A"),
+                            }
+                        syntax_rules["special_parsing"] = sp
+                        out["syntax_rules"] = syntax_rules
+
+                    out["sci"] = sci
+            except Exception:
+                pass
+
+            # Strip deprecated Anchor auto aliases from operational transitions/tokens.
+            try:
+                cm = out.get("command_model") or {}
+                dts = cm.get("deterministic_transitions") if isinstance(cm, dict) else None
+                if isinstance(dts, list):
+                    for tr in dts:
+                        if not isinstance(tr, dict):
+                            continue
+                        on = tr.get("on")
+                        if isinstance(on, list):
+                            tr["on"] = [x for x in on if str(x) not in ("Anchor auto on", "Anchor auto off")]
+                pc = out.get("parser_contract")
+                if isinstance(pc, dict) and isinstance(pc.get("command_tokens"), list):
+                    pc["command_tokens"] = [x for x in pc["command_tokens"] if str(x) not in ("Anchor auto on", "Anchor auto off")]
+            except Exception:
+                pass
+
+            out["_schema_adapted_from"] = "operational_v20"
+            return out, "Schema adapter: operational ruleset mapped to wrapper runtime schema."
+        except Exception as e:
+            return data, f"Schema adapter skipped (error): {e}"
+
     def _is_valid_rules_json(self, data: dict):
         """Minimal schema guard to prevent accidentally loading non-rule JSON (e.g., Comm-SCI-Config.json)."""
         try:
@@ -1498,6 +1731,9 @@ class GovernanceManager:
             with open(resolved, "r", encoding="utf-8") as f:
                 raw = f.read()
             data = json.loads(raw)
+            data, adapt_msg = self._adapt_operational_rules_json(data)
+            if isinstance(adapt_msg, str) and adapt_msg.strip():
+                self.log(adapt_msg)
 
             ok, why = self._is_valid_rules_json(data)
             if not ok:
@@ -1518,9 +1754,11 @@ class GovernanceManager:
 
     def get_system_instruction(self):
         if not self.loaded: return "System Error."
-        
-        lang_code = UI_LANG
-        lang_instruction = "IMPORTANT: You must reply in English. All explanations and outputs must be in English unless the active profile explicitly requires otherwise."
+
+        lang_instruction = (
+            "IMPORTANT: Reply in the current conversation language for explanations and content answers. "
+            "Keep canonical command tokens in English."
+        )
 
         version_info = f"loaded_file: {os.path.basename(self.current_filename)}"
         return f"GOVERNANCE RULES ({WRAPPER_NAME} - {version_info}):\n{self.raw_json}\n\n--- LANGUAGE SETTING ---\n{lang_instruction}\n\nAdhere strictly to these rules."
@@ -1676,6 +1914,7 @@ class GovernanceManager:
         s = ("" if k is None else str(k)).strip().lower()
         m = {
             "clarity":"clarity","brevity":"brevity","evidence":"evidence","empathy":"empathy","consistency":"consistency","neutrality":"neutrality",
+            "bravity":"brevity",
             "klarheit":"clarity","kürze":"brevity","kuerze":"brevity","evidenz":"evidence","empathie":"empathy","konsistenz":"consistency","neutralität":"neutrality","neutralitaet":"neutrality",
         }
         return m.get(s, s)
@@ -1766,6 +2005,7 @@ class GovernanceManager:
             # EN
             "Clarity": "clarity",
             "Brevity": "brevity",
+            "Bravity": "brevity",
             "Evidence": "evidence",
             "Empathy": "empathy",
             "Consistency": "consistency",
@@ -1903,6 +2143,7 @@ def enforce_qc_footer_deltas(text: str, gov_mgr_or_expected, profile_name: str =
     label_map = {
         'clarity': 'clarity',
         'brevity': 'brevity',
+        'bravity': 'brevity',
         'evidence': 'evidence',
         'neutrality': 'neutrality',
         'consistency': 'consistency',
@@ -2552,7 +2793,7 @@ def strip_sci_trace_line_when_inactive(
     sci_variant: str = "",
     sci_pending: bool = False,
 ) -> str:
-    """Remove leaked plain-text 'SCI Trace:' lines when SCI is inactive.
+    """Remove leaked SCI Trace lines/sections when SCI is inactive.
 
     This is display cleanup only and intentionally conservative:
     - Runs only when SCI is effectively OFF (no active variant, not pending).
@@ -2564,9 +2805,20 @@ def strip_sci_trace_line_when_inactive(
         if bool(sci_active) or bool((sci_variant or "").strip()) or bool(sci_pending):
             return text
 
+        src = str(text)
+
+        # First remove section-style SCI Trace blocks (including numbered heading variants
+        # like "4. SCI Trace (Variante A: Standard)") up to Self-Debunking/QC/Final Answer or end.
+        src = re.sub(
+            r"(?is)(?:^|\n)\s*(?:#+\s*)?(?:\d+[\.\)]\s*)?SCI\s*Trace(?:\s*\([^\n]*\))?\s*:?\s*\n.*?"
+            r"(?=\n\s*(?:#+\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking|QC(?:-Matrix)?\s*:|Final\s+Answer)\b|\Z)",
+            "\n",
+            src,
+        )
+
         out_lines = []
         in_code = False
-        for ln in str(text).splitlines():
+        for ln in src.splitlines():
             s = (ln or "").strip()
             if s.startswith("```"):
                 in_code = not in_code
@@ -2576,7 +2828,10 @@ def strip_sci_trace_line_when_inactive(
                 out_lines.append(ln)
                 continue
 
-            if re.match(r"(?im)^\s*SCI\s*Trace\s*:\s*.*$", s):
+            if re.match(
+                r"(?im)^\s*(?:#+\s*)?(?:\d+[\.\)]\s*)?SCI\s*Trace(?:\s*\([^\n]*\))?\s*:?\s*.*$",
+                s,
+            ):
                 continue
             out_lines.append(ln)
 
@@ -4903,6 +5158,17 @@ HTML_CHAT_TEMPLATE = """
   .exit-btn { background: #a50e0e; font-size: 10px; height: auto; padding: 5px 10px; margin-left: 10px;}
   .menu-btn { font-size: 10px; height: auto; padding: 5px 10px; background: #444; }
   .load-btn { cursor: pointer; font-size: 12px; margin-right: 5px; background: transparent; border: none; color: white;}
+  .exit-confirm-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: none; align-items: center; justify-content: center; z-index: 120000; }
+  .exit-confirm-overlay.show { display: flex; }
+  .exit-confirm-dialog { width: min(360px, calc(100vw - 24px)); background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.25); padding: 14px; color: #0f172a; }
+  .exit-confirm-title { margin: 0 0 8px 0; font-size: 14px; font-weight: 700; }
+  .exit-confirm-text { margin: 0; font-size: 12px; color: #334155; }
+  .exit-confirm-actions { margin-top: 14px; display: flex; justify-content: flex-end; gap: 8px; }
+  .exit-confirm-actions button { height: auto; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; }
+  .exit-confirm-cancel { background: #f8fafc; color: #1f2937; }
+  .exit-confirm-cancel:hover { background: #e2e8f0; }
+  .exit-confirm-exit { background: #b91c1c; border-color: #b91c1c !important; color: #fff; }
+  .exit-confirm-exit:hover { background: #991b1b; }
 
   .qc-bar { margin-top: 8px; border-top: 1px solid #eee; padding-top: 5px; font-size: 11px; color:#555; }
   .qc-btn { cursor: pointer; margin-right: 8px; color: #1a73e8; background:#f1f3f4; padding:2px 6px; border-radius:4px; }
@@ -4990,8 +5256,6 @@ HTML_CHAT_TEMPLATE = """
 <body>
   <div class="top">
     <div style="display:flex; align-items:center;">
-        <span style="font-weight:bold; margin-right:10px;">__WRAPPER_LABEL__</span>
-        
         <button class="load-btn" onclick="window.pywebview.api.load_rule_file()" title="Load ruleset">📂</button>
         <span id="rulefile" style="font-size:11px; color:#8ab4f8; margin-right:10px;"></span>
         
@@ -5000,7 +5264,18 @@ HTML_CHAT_TEMPLATE = """
     <div>
        <button class="menu-btn" onclick="window.pywebview.api.export()">💾 EXPORT</button>
        <button class="menu-btn" onclick="window.pywebview.api.settings()">⚙️ PANEL</button>
-       <button class="exit-btn" onclick="window.pywebview.api.close_app()">❌ EXIT</button>
+       <button class="exit-btn" onclick="openExitConfirm()">❌ EXIT</button>
+    </div>
+  </div>
+
+  <div id="exitConfirmOverlay" class="exit-confirm-overlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="exitConfirmTitle">
+    <div class="exit-confirm-dialog" onclick="event.stopPropagation()">
+      <h3 id="exitConfirmTitle" class="exit-confirm-title">Exit Application</h3>
+      <p class="exit-confirm-text">Do you really want to close Comm-SCI-Control-App?</p>
+      <div class="exit-confirm-actions">
+        <button id="exitConfirmCancelBtn" class="exit-confirm-cancel" type="button" onclick="closeExitConfirm()">Cancel</button>
+        <button class="exit-confirm-exit" type="button" onclick="confirmExit()">Exit</button>
+      </div>
     </div>
   </div>
   
@@ -5059,6 +5334,48 @@ HTML_CHAT_TEMPLATE = """
       const parts = name.split(/[\\\\/]/);
       document.getElementById('rulefile').innerText = "[" + parts.pop() + "]";
   }
+
+  function openExitConfirm(){
+      const ov = document.getElementById('exitConfirmOverlay');
+      if(!ov) return;
+      ov.classList.add('show');
+      ov.setAttribute('aria-hidden', 'false');
+      try {
+          const btn = document.getElementById('exitConfirmCancelBtn');
+          if(btn) btn.focus();
+      } catch(e) {}
+  }
+
+  function closeExitConfirm(){
+      const ov = document.getElementById('exitConfirmOverlay');
+      if(!ov) return;
+      ov.classList.remove('show');
+      ov.setAttribute('aria-hidden', 'true');
+  }
+
+  async function confirmExit(){
+      closeExitConfirm();
+      try {
+          await window.pywebview.api.close_app();
+      } catch(e) {
+          console.error('close_app failed', e);
+      }
+  }
+
+  function _bindExitConfirm(){
+      const ov = document.getElementById('exitConfirmOverlay');
+      if(!ov) return;
+      ov.addEventListener('click', (e)=>{
+          if(e.target === ov) closeExitConfirm();
+      });
+      document.addEventListener('keydown', (e)=>{
+          if(String(e.key || '') !== 'Escape') return;
+          if(!ov.classList.contains('show')) return;
+          e.preventDefault();
+          closeExitConfirm();
+      });
+  }
+  _bindExitConfirm();
 
   function escHtml(s){
       return (''+s).replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -5151,11 +5468,122 @@ HTML_CHAT_TEMPLATE = """
           `<span class="cgi-sep">/</span>` +
           `<label class="cgi-field">${escHtml(t.efficiency)} <select class="cgi-select" data-cgi-field="efficiency">${_cgiOptions()}</select></label>` +
           `<button type="button" class="cgi-action repeat" onclick="submitCgi('${id}','repeat')">${escHtml(t.repeat)}</button>` +
-          `<span class="cgi-help" data-u-title="${escHtml(t.help)}" title="${escHtml(t.help)}">i</span>` +
+          `<span class="cgi-help" data-u-title="${escHtml(t.help)}">i</span>` +
           `<span class="cgi-status"></span>` +
           `<div class="cgi-hint-line">${escHtml(t.hint)}</div>` +
           `</div>`
       );
+  }
+
+  function _copyTip(answerLang){
+      return _cgiLang(answerLang) === 'en'
+          ? 'Copy message to clipboard.'
+          : 'Nachricht in die Zwischenablage kopieren.';
+  }
+
+  function _qcDimKey(label){
+      const raw = String(label || '').trim().toLowerCase();
+      const map = {
+          'clarity': 'clarity',
+          'brevity': 'brevity',
+          'evidence': 'evidence',
+          'empathy': 'empathy',
+          'consistency': 'consistency',
+          'neutrality': 'neutrality',
+          'klarheit': 'clarity',
+          'kürze': 'brevity',
+          'kuerze': 'brevity',
+          'evidenz': 'evidence',
+          'empathie': 'empathy',
+          'konsistenz': 'consistency',
+          'neutralität': 'neutrality',
+          'neutralitaet': 'neutrality',
+      };
+      return map[raw] || '';
+  }
+
+  function _qcDimScaleRows(dimKey, lang){
+      const de = {
+          clarity: ['unklar / schwer lesbar', 'grundlegend klar', 'klar und gut strukturiert', 'sehr klar, didaktisch stark'],
+          brevity: ['sehr ausfuehrlich / lang', 'eher ausfuehrlich', 'ausgewogen', 'sehr knapp / stark verdichtet'],
+          evidence: ['kaum Belege', 'einige Begruendungen', 'solide belegt', 'stark belegt, gut nachverfolgbar'],
+          empathy: ['sehr sachlich / distanziert', 'hoeflich, eher distanziert', 'ruecksichtsvoll', 'sehr unterstuetzend'],
+          consistency: ['Widersprueche moeglich', 'ueberwiegend konsistent', 'konsistente Logik', 'sehr strikt konsistent'],
+          neutrality: ['deutlich wertend', 'leichte Tendenz moeglich', 'weitgehend neutral', 'streng neutral / ausbalanciert'],
+      };
+      const en = {
+          clarity: ['unclear / hard to follow', 'basically clear', 'clear and well structured', 'very clear, highly didactic'],
+          brevity: ['very detailed / long', 'rather detailed', 'balanced length', 'very concise / compressed'],
+          evidence: ['little support', 'some justification', 'solid support', 'strongly supported and traceable'],
+          empathy: ['very factual / distant', 'polite but somewhat distant', 'considerate tone', 'highly supportive tone'],
+          consistency: ['contradictions possible', 'mostly consistent', 'consistent logic', 'very strict consistency'],
+          neutrality: ['clearly opinionated', 'slight bias possible', 'mostly neutral', 'strictly neutral / balanced'],
+      };
+      const rows = (lang === 'en' ? en : de)[dimKey] || (lang === 'en' ? ['low', 'basic', 'good', 'high'] : ['niedrig', 'grundlegend', 'gut', 'hoch']);
+      return rows.map((txt, idx) => `${idx} | ${txt}`);
+  }
+
+  function _qcDimTipText(dimKey, value, delta, answerLang){
+      const lang = _cgiLang(answerLang);
+      const v = Number.isFinite(Number(value)) ? Number(value) : null;
+      const d = String(delta || '').replace('−', '-');
+      const baseEN = {
+          clarity: 'Clarity: readability and structure quality.',
+          brevity: 'Brevity: conciseness versus detail depth.',
+          evidence: 'Evidence: support and traceability of claims.',
+          empathy: 'Empathy: considerate and supportive tone.',
+          consistency: 'Consistency: internal logic and contradiction control.',
+          neutrality: 'Neutrality: unbiased and balanced wording.',
+      };
+      const baseDE = {
+          clarity: 'Clarity: Verstaendlichkeit und Struktur der Antwort.',
+          brevity: 'Brevity: Kuerze im Verhaeltnis zur Detailtiefe.',
+          evidence: 'Evidence: Belegbarkeit und Nachvollziehbarkeit der Aussagen.',
+          empathy: 'Empathy: ruecksichtsvolle, unterstuetzende Tonalitaet.',
+          consistency: 'Consistency: innere Logik und Widerspruchsfreiheit.',
+          neutrality: 'Neutrality: neutrale, ausgewogene Formulierung.',
+      };
+      const base = (lang === 'en' ? baseEN : baseDE)[dimKey] || (lang === 'en' ? 'QC dimension.' : 'QC-Dimension.');
+      const vTxt = (v === null)
+          ? (lang === 'en' ? 'Current value: n/a.' : 'Aktueller Wert: n/a.')
+          : (lang === 'en' ? `Current value: ${v} of 3.` : `Aktueller Wert: ${v} von 3.`);
+      const dTxt = d
+          ? (lang === 'en' ? `Delta ${d}: offset to profile target.` : `Delta ${d}: Abweichung zum Profilziel.`)
+          : (lang === 'en' ? 'Delta n/a.' : 'Delta n/a.');
+      const hdr = (lang === 'en') ? 'Scale 0-3 (table):' : 'Skala 0-3 (Tabelle):';
+      const rows = _qcDimScaleRows(dimKey, lang).join('\n');
+      return `${base}\n${vTxt} ${dTxt}\n${hdr}\n${rows}`;
+  }
+
+  function _decorateQcMatrixTooltips(root, answerLang){
+      if(!root) return;
+      const src = String(root.innerHTML || '');
+      if(src.indexOf('QC-Matrix:') < 0) return;
+      if(src.indexOf('qc-dim-tip') >= 0) return;
+      const re = /(Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality|Klarheit|Kürze|Kuerze|Evidenz|Empathie|Konsistenz|Neutralität|Neutralitaet)\\s+([0-3])\\s*\\(\\s*Δ\\s*([+\\-−]?\\d+)\\s*\\)/g;
+      const out = src.replace(re, (full, label, value, delta) => {
+          const key = _qcDimKey(label);
+          if(!key) return full;
+          const tip = _qcDimTipText(key, value, delta, answerLang);
+          return `<span class="qc-dim-tip" data-u-title="${escHtml(tip)}">${full}</span>`;
+      });
+      if(out !== src) root.innerHTML = out;
+  }
+
+  function _normalizeCustomTooltipTargets(root){
+      if(!root || !root.querySelectorAll) return;
+      root.querySelectorAll('.uncertainty-inline-marker, .signal-dot-marker, .cgi-help, .csc-badge, .csc-warning, .control-layer-note, .copy-btn, .qc-dim-tip').forEach((el)=>{
+          try {
+              const tip = String(el.getAttribute('data-u-title') || '').trim();
+              const nativeTitle = String(el.getAttribute('title') || '').trim();
+              if(!tip && nativeTitle){
+                  el.setAttribute('data-u-title', nativeTitle);
+              }
+              if(nativeTitle){
+                  el.removeAttribute('title');
+              }
+          } catch(e) {}
+      });
   }
 
   async function submitCgi(widgetId, mode){
@@ -5219,11 +5647,14 @@ HTML_CHAT_TEMPLATE = """
   function addMsg(role, text, qc=false, csc=null, opts={}) {
       const d = document.createElement('div');
       d.className = 'msg ' + role;
-      let html = '<button class="copy-btn" onclick="copyToClipboard(this)" title="Copy">📋</button>';
+      const copyTip = escHtml(_copyTip((opts && opts.answerLang) ? opts.answerLang : ''));
+      let html = `<button class="copy-btn" onclick="copyToClipboard(this)" data-u-title="${copyTip}">📋</button>`;
       if(role === 'bot') html += renderCscBlock(csc);
       html += text;
       if(qc && role === 'bot') html += _buildCgiWidgetHtml((opts && opts.answerLang) ? opts.answerLang : '');
       d.innerHTML = html;
+      _decorateQcMatrixTooltips(d, (opts && opts.answerLang) ? opts.answerLang : '');
+      _normalizeCustomTooltipTargets(d);
       document.getElementById('chat').appendChild(d);
       document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
       if(window.MathJax) MathJax.typesetPromise();
@@ -5270,7 +5701,7 @@ HTML_CHAT_TEMPLATE = """
 
   function _uTipShow(target, ev){
       if(!target) return;
-      const txt = String(target.getAttribute('data-u-title') || target.getAttribute('title') || '').trim();
+      const txt = String(target.getAttribute('data-u-title') || '').trim();
       if(!txt) return;
       _uTipHide();
       const tip = document.createElement('div');
@@ -5286,6 +5717,7 @@ HTML_CHAT_TEMPLATE = """
       tip.style.color = '#1e3a8a';
       tip.style.fontSize = '12px';
       tip.style.lineHeight = '1.35';
+      tip.style.whiteSpace = 'pre-line';
       tip.style.boxShadow = '0 6px 16px rgba(0,0,0,0.18)';
       tip.style.pointerEvents = 'none';
       document.body.appendChild(tip);
@@ -5305,7 +5737,7 @@ HTML_CHAT_TEMPLATE = """
       } catch(e) {}
   }
 
-  const __uTipTargets = '.uncertainty-inline-marker, .signal-dot-marker, .cgi-help, .csc-badge, .csc-warning, .control-layer-note';
+  const __uTipTargets = '.uncertainty-inline-marker, .signal-dot-marker, .cgi-help, .csc-badge, .csc-warning, .control-layer-note, .copy-btn, .qc-dim-tip, [data-u-title]';
   document.addEventListener('mousedown', (e)=>{
       if(typeof e.button === 'number' && e.button !== 0) return;
       const t = (e.target && e.target.closest)
@@ -5339,6 +5771,37 @@ HTML_CHAT_TEMPLATE = """
       draft: '',
       maxEntries: 200
   };
+
+  function _cmdHistNormalizeEntries(entries, maxEntries){
+      const arr = Array.isArray(entries) ? entries : [];
+      const out = [];
+      for(const v of arr){
+          const txt = String(v || '').trim();
+          if(!txt) continue;
+          if(out.length && out[out.length - 1] === txt) continue;
+          out.push(txt);
+      }
+      const lim = Math.max(20, parseInt(maxEntries || 200, 10) || 200);
+      while(out.length > lim) out.shift();
+      return out;
+  }
+
+  async function _cmdHistLoadFromBackend(){
+      const h = window.__cmdHistory;
+      if(!h) return;
+      try{
+          if(!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_input_history) return;
+          const payload = await window.pywebview.api.get_input_history(parseInt(h.maxEntries || 200, 10) || 200);
+          if(!payload || payload.ok !== true) return;
+          if(typeof payload.max_entries === 'number' && Number.isFinite(payload.max_entries)){
+              h.maxEntries = Math.max(20, parseInt(payload.max_entries, 10) || 200);
+          }
+          h.entries = _cmdHistNormalizeEntries(payload.entries || [], h.maxEntries);
+          _cmdHistResetBrowse();
+      } catch(_e){
+          // silent fail-open
+      }
+  }
 
   function _cmdHistResetBrowse() {
       const h = window.__cmdHistory;
@@ -5391,39 +5854,78 @@ HTML_CHAT_TEMPLATE = """
       inp.value = _cmdHistBrowse(inp.value, step);
   }
 
+  let _sendInFlight = false;
+  const _sendQueue = [];
+  const _sendQueueMax = 20;
+
+  function _enqueueSend(txt) {
+      const s = String(txt || '').trim();
+      if(!s) return false;
+      if(_sendQueue.length >= _sendQueueMax){
+          // Keep bounded memory; prefer latest user intent.
+          _sendQueue.shift();
+      }
+      _sendQueue.push(s);
+      return true;
+  }
+
+  async function _drainSendQueue() {
+      if(_sendInFlight) return;
+      const inp = document.getElementById('inp');
+      const btn = document.getElementById('btn');
+      _sendInFlight = true;
+      try {
+          while(_sendQueue.length){
+              const txt = String(_sendQueue.shift() || '').trim();
+              if(!txt) continue;
+              _cmdHistPush(txt);
+              _cmdHistResetBrowse();
+              try {
+                  if(window.pywebview && window.pywebview.api && window.pywebview.api.append_input_history){
+                      await window.pywebview.api.append_input_history(txt);
+                  }
+              } catch(_e) {
+                  // fail-open: local history still works
+              }
+              addMsg('user', txt);
+              if(btn) btn.disabled = true;
+              try {
+                  const res = await window.pywebview.api.ask(txt);
+                  const qcEnabled = await window.pywebview.api.ui_qc_bar_enabled();
+                  if(typeof res === 'string') {
+                      addMsg('bot', res, false);
+                  } else {
+                      const showCgi = !!qcEnabled && !!(res && res.cgi_bar);
+                      const answerLang = (res && typeof res.answer_lang === 'string') ? res.answer_lang : '';
+                      addMsg('bot', res.html || '', showCgi, res.csc || null, {answerLang: answerLang});
+                  }
+              } catch(e) {
+                  addMsg('bot', '<span style="color:red">Error: '+e+'</span>');
+              }
+          }
+      } finally {
+          _sendInFlight = false;
+          if(btn) btn.disabled = false;
+          if(inp) inp.focus();
+      }
+  }
+
   async function send() {
       const inp = document.getElementById('inp');
-      const txt = inp.value.trim();
+      if(!inp) return;
+      const txt = (inp.value || '').trim();
       if(!txt) return;
-      _cmdHistPush(txt);
       inp.value = '';
-      _cmdHistResetBrowse();
-      addMsg('user', txt);
-      const btn = document.getElementById('btn');
-      btn.disabled = true;
-      try {
-          const res = await window.pywebview.api.ask(txt);
-          const qcEnabled = await window.pywebview.api.ui_qc_bar_enabled();
-          if(typeof res === 'string') {
-              addMsg('bot', res, false);
-          } else {
-              const showCgi = !!qcEnabled && !!(res && res.cgi_bar);
-              const answerLang = (res && typeof res.answer_lang === 'string') ? res.answer_lang : '';
-              addMsg('bot', res.html || '', showCgi, res.csc || null, {answerLang: answerLang});
-          }
-      } catch(e) {
-          addMsg('bot', '<span style="color:red">Error: '+e+'</span>');
-      }
-      btn.disabled = false;
-      inp.focus();
+      if(!_enqueueSend(txt)) return;
+      await _drainSendQueue();
   }
 
   function remoteInput(txt) {
+      if(!_enqueueSend(txt)) return;
       const inp = document.getElementById('inp');
-      if(!inp) return;
-      inp.value = txt;
+      if(inp) inp.value = '';
       _cmdHistResetBrowse();
-      send();
+      _drainSendQueue();
   }
   
   document.getElementById('inp').addEventListener('keydown', (e)=>{
@@ -5438,6 +5940,9 @@ HTML_CHAT_TEMPLATE = """
           h.index = -1;
       }
   });
+  _cmdHistLoadFromBackend();
+  window.addEventListener('pywebviewready', _cmdHistLoadFromBackend);
+  setTimeout(_cmdHistLoadFromBackend, 350);
 
 // --- Panel helpers: allow Python to replay a loaded chat log into the main UI (no model call).
 function resetChatToStatus(msg) {
@@ -6314,6 +6819,11 @@ function _mtHasSelfDebunkingBox(html){
   return hasDebunkLabel && (hasDebunkClass || hasBoxStyle);
 }
 
+function _mtHasVerificationRouteMarkers(html){
+  const txt = _mtStripHtml(html || '');
+  return /\\b(?:Verification Route|Verification Route Gate|Source|Measurement|Contrast|Web[- ]Check|Retrieval-Check|Quelle|Messung|Kontrast)\\s*:/i.test(txt);
+}
+
 function _mtHasSciTraceStructure(html){
   const txt = _mtStripHtml(html);
   if(!/SCI Trace/i.test(txt)) return false;
@@ -6628,7 +7138,13 @@ async function _mtScenarioKomplexttest(){
               caseLabel + ': kein U-Marker gefunden'
             )) fails++;
 
-            const hasTagMarker = /\[(GREEN|YELLOW|RED|GRAY|WHITE)(-[A-Z0-9]+)*\]/i.test(txt);
+            if(!_mtCheck(
+              _mtHasSelfDebunkingBox(res.html) || /(Self-Debunking|Selbst-Debunking)/i.test(txt),
+              caseLabel + ': Self-Debunking vorhanden',
+              caseLabel + ': Self-Debunking fehlt'
+            )) fails++;
+
+            const hasTagMarker = /\\[(GREEN|YELLOW|RED|GRAY|WHITE)(-[A-Z0-9]+)*\\]/i.test(txt);
             const hasEmojiMarker = txt.indexOf('🟢') >= 0 || txt.indexOf('🟡') >= 0 || txt.indexOf('🔴') >= 0 || txt.indexOf('⚪') >= 0;
             const hasColorMarker = hasTagMarker || hasEmojiMarker;
             if(color === 'on'){
@@ -6692,6 +7208,17 @@ async function _mtScenarioKomplexttest(){
     _mtStripHtml(baselineDyn.html || '') !== _mtStripHtml(afterDyn.html || ''),
     'Dynamic one-shot beeinflusst Folgeresponse',
     'Dynamic one-shot beeinflusst Folgeresponse nicht sichtbar'
+  )) fails++;
+
+  _mtLog('VERIFICATION-ROUTE VISIBILITY CHECK > explicit marker prompt');
+  const vrProbe = await _mtAsk(
+    'Gib eine kurze Antwort mit einem expliziten Verification Route Block. Verwende genau diese Marker: Source:, Measurement:, Contrast:, Web-Check:.',
+    180000
+  );
+  if(!_mtCheck(
+    _mtHasVerificationRouteMarkers(vrProbe.html),
+    'Verification-Route Marker sichtbar',
+    'Verification-Route Marker fehlen oder werden gefiltert'
   )) fails++;
 
   await _mtExportChatAudit('komplexttest_final');
@@ -7024,6 +7551,7 @@ HTML_QC_OVERRIDE = """
 # visible show still requires a runtime self-test callback, otherwise the app falls back to
 # the embedded panel before showing it.
 HTML_CHAT_TEMPLATE = _load_ui_asset_text("chat_template.html", HTML_CHAT_TEMPLATE)
+HTML_CHAT = HTML_CHAT_TEMPLATE.replace('__WRAPPER_LABEL__', html.escape(WRAPPER_NAME))
 HTML_PANEL_EMBEDDED = HTML_PANEL
 HTML_PANEL, PANEL_HTML_ASSET_META = _load_panel_asset_text_s7(HTML_PANEL)
 try:
@@ -7256,7 +7784,15 @@ class OutputComplianceValidator:
         return x if isinstance(x, str) else default
 
     def _conversation_lang(self):
-        return UI_LANG
+        try:
+            lang = str(getattr(self.cfg, "get_answer_language", lambda: "de")() or "").strip().lower()
+        except Exception:
+            lang = ""
+        if lang.startswith("de"):
+            return "de"
+        if lang.startswith("en"):
+            return "en"
+        return "de"
 
     # -------- SCI menu validation --------
     def validate_sci_menu(self, text: str):
@@ -7661,7 +8197,10 @@ class OutputComplianceValidator:
         text_l = text.lower()
         markers = gate.get("route_presence_markers", {}) or {}
         has_route = self._has_verification_route_marker(text, markers)
-        has_uncertainty = bool(re.search(r"\bU[1-6]\b", text))
+        has_uncertainty = bool(
+            re.search(r"\bU[1-8]\b", text)
+            or re.search(r"(?i)data-u-code\s*=\s*(?:\"|')?(U[1-8])(?:\"|')?", text)
+        )
         has_downgrade = self._has_claim_downgrade_marker(text_l)
 
         kw = []
@@ -7688,7 +8227,7 @@ class OutputComplianceValidator:
                 )
             elif has_downgrade and (not has_uncertainty):
                 vios.append(
-                    "Verification Route Gate: strong-claim heuristic triggered; downgraded wording without uncertainty label (U1-U6)."
+                    "Verification Route Gate: strong-claim heuristic triggered; downgraded wording without uncertainty label (U1-U8)."
                 )
             else:
                 vios.append(
@@ -7698,7 +8237,7 @@ class OutputComplianceValidator:
 
         if has_red_claim:
             if not has_uncertainty:
-                vios.append("Verification Route Gate: RED claim requires uncertainty label (U1-U6).")
+                vios.append("Verification Route Gate: RED claim requires uncertainty label (U1-U8).")
             if (not has_route) and not (has_uncertainty and has_downgrade):
                 vios.append(
                     "Verification Route Gate: RED claim requires at least one verification route marker "
@@ -7937,7 +8476,7 @@ class OutputComplianceValidator:
             parts.append("  - Measurement: not performed")
             parts.append("  - Contrast: plausible alternative noted but not evaluated")
             parts.append("  - Web-Check: not performed")
-            parts.append("- If you cannot support the strong claim, downgrade it and include an uncertainty label U1–U6.")
+            parts.append("- If you cannot support the strong claim, downgrade it and include an uncertainty label U1–U8.")
             parts.append("")
 
         all_hard_vios = [str(v) for v in (hard_violations or [])]
@@ -8390,8 +8929,9 @@ class CSCRefiner:
                 fn = re.sub(r"\s+", " ", fn)
                 out.append(f"- {token}: {fn}" if fn else f"- {token}")
 
-        out.append("\n1) Comm commands (commands.primary)")
+        out.append("\n1) Comm core (commands.primary + commands.help_and_codes)")
         _render_cmd_group("", "primary")
+        _render_cmd_group("", "help_and_codes")
 
         out.append("\n2) Profiles (commands.profile_control)")
         _render_cmd_group("", "profile_control")
@@ -8402,8 +8942,11 @@ class CSCRefiner:
         out.append("\n4) SCI control (commands.sci_control)")
         _render_cmd_group("", "sci_control")
 
+        out.append("\n5) Color tools (commands.color_control)")
+        _render_cmd_group("", "color_control")
+
         # SCI variants
-        out.append("\n5) SCI variants (A–H)")
+        out.append("\n6) SCI variants (A–H)")
         sci_root = gov.data.get("sci", {}) or {}
         vmenu = (sci_root.get("variant_menu", {}) or {})
         variants = (vmenu.get("variants", {}) or {})
@@ -8421,7 +8964,7 @@ class CSCRefiner:
             out.append("(no variants defined)")
 
         # Numeric codes
-        out.append("\n6) Numeric codes (numeric_codes)")
+        out.append("\n7) Numeric codes (numeric_codes)")
         nc = gov.data.get("numeric_codes", {}) or {}
         cats = nc.get("categories", []) or []
         sv = (nc.get("special_values", {}) or {}).get("dash", "").strip()
@@ -8439,13 +8982,13 @@ class CSCRefiner:
             out.append(f"- Dash: {sv}")
 
         # Modules
-        out.append("\n7) Quality/control modules")
+        out.append("\n8) Quality/control modules")
         out.append("- QC: Rating footer (Clarity/Brevity/Evidence/Empathy/Consistency/Neutrality). Active while QC=on (profile-dependent).") 
         out.append("- CGI: Optional user feedback (cognitive gain), if CGI=on.")
         out.append("- Control Layer: deterministic token/output contracts (no silent adjustments).")
 
         # Parsing rule (SCI pending)
-        out.append("\n8) Parsing rules (SCI pending)")
+        out.append("\n9) Parsing rules (SCI pending)")
         out.append("- If SCI selection is pending: a single letter A–H selects the variant.")
         out.append("- Otherwise, a standalone letter is treated as normal input text (not a command).")
 
@@ -8455,259 +8998,425 @@ class CSCRefiner:
         return "\n".join(out).strip()
  
     def _render_comm_help_html(self, lang=None):
-        """HTML help: renders explanatory text in the current conversation language (de/en),
-        keeps command tokens canonical (English-only), preserves styling/tables/colors,
-        and uses JSON as Source of Truth. Optional I18N keys are used only if present.
-        """
-        ui_lang = UI_LANG
-        ui_lang = UI_LANG
+        """Deterministic HTML help using the loaded governance JSON as source of truth."""
+        ui_lang = str(lang or self._lang() or "en").strip().lower()
+        ui_lang = "de" if ui_lang.startswith("de") else "en"
 
-        def tr(key: str, fallback: str = "") -> str:
-            try:
-                s = key
-                return s if s and s != key else fallback
-            except Exception:
-                return fallback
-
-        def norm_key(token: str) -> str:
-            try:
-                s = (token or "").strip().lower()
-                s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
-                return s
-            except Exception:
-                return ""
-
-        def tr_cmd_desc(token: str, fallback: str) -> str:
-            """If you have per-command translations in I18N, they can be provided as:
-               cmd_desc_<normalized_token> or cmd_<normalized_token>.
-               Example: token 'Profile Expert' -> key 'cmd_desc_profile_expert'
-            """
-            nk = norm_key(token)
-            if nk:
-                for k in (f"cmd_desc_{nk}", f"cmd_{nk}", f"help_{nk}", f"desc_{nk}"):
-                    s = tr(k, "")
-                    if s:
-                        return s
-            return fallback
+        txt = {
+            "en": {
+                "title": "Comm Help",
+                "ruleset": "Active ruleset",
+                "version": "Version",
+                "status": "Runtime status",
+                "intro": "Commands are parsed standalone-only. Keep command tokens exact.",
+                "cmd_col": "Command",
+                "desc_col": "Description / Function",
+                "sec_primary": "Primary Commands",
+                "sec_comm_tools": "Comm Tools",
+                "sec_profiles": "Profiles",
+                "sec_modes": "Modes and Overlays",
+                "sec_sci": "SCI Control",
+                "sec_color": "Color Control",
+                "sec_variants": "SCI Variants (A-H)",
+                "sec_codes": "Numeric Codes",
+                "sec_modules": "Governance Modules",
+                "sec_panel": "Panel Operations and Effect",
+                "sec_parsing": "Parsing Rules",
+                "sec_citation": "DOI and Citation",
+                "no_commands": "No commands found in the active ruleset.",
+                "variant_col": "Variant",
+                "name_col": "Name",
+                "focus_col": "Focus",
+                "map_col": "Mapped mode",
+                "step_col": "Trace steps",
+                "cat_col": "Category",
+                "opt_col": "Option",
+                "meaning_col": "Meaning",
+                "default_code": "Default code",
+                "module_col": "Module",
+                "notes_col": "Notes",
+                "mod_qc": "QC footer and target corridor enforcement for content answers.",
+                "mod_cgi": "Optional user feedback loop for cognitive gain adjustment.",
+                "mod_ctl": "Deterministic command routing, contracts and compliance checks.",
+                "panel_provider": "Provider / Model",
+                "panel_provider_note": "Select runtime backend and model. This directly defines execution context and output characteristics.",
+                "panel_answer_lang": "Answer language",
+                "panel_answer_lang_note": "Sets default language for model answers and F1 help payload localization.",
+                "panel_logs": "Logs and audits",
+                "panel_logs_note": "Load/fork chats and inspect audits for reproducibility and incident analysis.",
+                "panel_manual": "Manual tests",
+                "panel_manual_note": "Runs scenario checks for wrapper contracts (format, routing, QC footer, SCI behavior).",
+                "parse_standalone": "Standalone command mode",
+                "parse_standalone_note": "Commands are interpreted only as standalone input.",
+                "parse_sci_pending": "SCI selection pending",
+                "parse_sci_pending_note": "A single letter A-H selects the variant while pending.",
+                "parse_default": "Default SCI variant",
+                "parse_default_none": "not defined",
+                "res_col": "Resource",
+                "doi_col": "DOI / Link",
+                "wrapper_concept": "Wrapper concept DOI",
+                "ruleset_concept": "Ruleset concept DOI",
+                "qc_overrides": "QC-Overrides",
+                "public_site": "Public ruleset website",
+                "ruleset_repo": "Ruleset GitHub repository",
+                "wrapper_repo": "Wrapper GitHub repository",
+                "license": "License",
+                "maintainer": "Maintainer",
+                "license_text": "Apache-2.0 (see LICENSE)",
+            },
+            "de": {
+                "title": "Comm Hilfe",
+                "ruleset": "Aktives Regelwerk",
+                "version": "Version",
+                "status": "Runtime-Status",
+                "intro": "Kommandos werden nur standalone geparst. Tokens exakt senden.",
+                "cmd_col": "Kommando",
+                "desc_col": "Beschreibung / Funktion",
+                "sec_primary": "Primaere Kommandos",
+                "sec_comm_tools": "Comm Tools",
+                "sec_profiles": "Profile",
+                "sec_modes": "Modi und Overlays",
+                "sec_sci": "SCI-Steuerung",
+                "sec_color": "Color-Steuerung",
+                "sec_variants": "SCI-Varianten (A-H)",
+                "sec_codes": "Numerische Codes",
+                "sec_modules": "Governance-Module",
+                "sec_panel": "Panel-Bedienung und Wirkung",
+                "sec_parsing": "Parsing-Regeln",
+                "sec_citation": "DOI und Zitation",
+                "no_commands": "Im aktiven Regelwerk wurden keine Kommandos gefunden.",
+                "variant_col": "Variante",
+                "name_col": "Name",
+                "focus_col": "Fokus",
+                "map_col": "Abbildung",
+                "step_col": "Trace-Schritte",
+                "cat_col": "Kategorie",
+                "opt_col": "Option",
+                "meaning_col": "Bedeutung",
+                "default_code": "Default-Code",
+                "module_col": "Modul",
+                "notes_col": "Hinweis",
+                "mod_qc": "QC-Footer und Zielkorridor werden fuer Inhaltsantworten durchgesetzt.",
+                "mod_cgi": "Optionaler Feedback-Loop fuer kognitiven Gewinn.",
+                "mod_ctl": "Deterministisches Command-Routing, Contracts und Compliance-Checks.",
+                "panel_provider": "Provider / Modell",
+                "panel_provider_note": "Waehlt Backend und Modell. Das bestimmt direkt den Ausfuehrungskontext und Antwortcharakter.",
+                "panel_answer_lang": "Antwortsprache",
+                "panel_answer_lang_note": "Setzt die Standardsprache fuer Modellantworten und die Lokalisierung der F1-Hilfe.",
+                "panel_logs": "Logs und Audits",
+                "panel_logs_note": "Laedt/forkt Chats und prueft Audits fuer Reproduzierbarkeit und Fehleranalyse.",
+                "panel_manual": "Manual Tests",
+                "panel_manual_note": "Fuehrt Szenario-Checks fuer Wrapper-Contracts aus (Format, Routing, QC-Footer, SCI-Verhalten).",
+                "parse_standalone": "Standalone-Command-Modus",
+                "parse_standalone_note": "Kommandos werden nur als eigenstaendiger Input interpretiert.",
+                "parse_sci_pending": "SCI-Auswahl ausstehend",
+                "parse_sci_pending_note": "Ein einzelner Buchstabe A-H waehlt die Variante solange pending.",
+                "parse_default": "Default-SCI-Variante",
+                "parse_default_none": "nicht definiert",
+                "res_col": "Ressource",
+                "doi_col": "DOI / Link",
+                "wrapper_concept": "Wrapper Concept DOI",
+                "ruleset_concept": "Regelwerk Concept DOI",
+                "qc_overrides": "QC-Overrides",
+                "public_site": "Oeffentliche Regelwerk-Webseite",
+                "ruleset_repo": "Regelwerk GitHub-Repository",
+                "wrapper_repo": "Wrapper GitHub-Repository",
+                "license": "Lizenz",
+                "maintainer": "Maintainer",
+                "license_text": "Apache-2.0 (siehe LICENSE)",
+            },
+        }[ui_lang]
 
         gov_obj = getattr(self, "gov", None) or globals().get("gov")
         data = getattr(gov_obj, "data", None) if gov_obj else None
         if not isinstance(data, dict):
-            return "<div class='comm-help' style='color:red'>Error: Governance JSON not available.</div>"
+            err = "Governance JSON not available." if ui_lang == "en" else "Governance-JSON nicht verfuegbar."
+            return f"<div class='comm-help' style='color:red'>Error: {html.escape(err)}</div>"
 
         commands = data.get("commands") or {}
         if not isinstance(commands, dict):
             commands = {}
 
-        # Titles / chrome (I18N first; fallback to JSON l10n where available; else EN defaults)
-        col_cmd = tr("help_col_cmd", "Command")
-        col_desc = tr("help_col_desc", "Description / Function")
+        profile = getattr(getattr(self, "gov_state", object()), "active_profile", "Standard") or "Standard"
+        overlay = getattr(getattr(self, "gov_state", object()), "overlay", "off") or "off"
+        color = getattr(getattr(self, "gov_state", object()), "color", "off") or "off"
+        comm = "on" if bool(getattr(getattr(self, "gov_state", object()), "comm_active", False)) else "off"
+        sci_pending = bool(getattr(getattr(self, "gov_state", object()), "sci_pending", False))
+        sci_variant = str(getattr(getattr(self, "gov_state", object()), "sci_variant", "") or "").strip().upper()
+        sci = "PENDING" if sci_pending else (sci_variant or "OFF")
+        language_policy = self._language_policy_mode()
 
-        sec_primary = tr("help_sec_primary", "Primary Commands")
-        sec_profiles = tr("help_sec_profiles", "Profiles")
-        sec_modes = tr("help_sec_modes", "Modes & Overlays")
-        sec_sci = tr("help_sec_sci", "Scientific Control (SCI)")
-        sec_sci_variants = tr("help_sec_sci_variants", "SCI Variants")
-        sec_codes = tr("help_sec_codes", "Numeric Codes")
-        sec_modules = tr("help_sec_modules", "Modules / Tools")
-        sec_parsing = "Parsing rules"
+        source = data.get("source") if isinstance(data.get("source"), dict) else {}
+        system_name = str(source.get("system_name") or data.get("system_name") or "Comm-SCI-Control")
+        version = str(source.get("version") or data.get("version") or "").strip() or "n/a"
+        rules_file = os.path.basename(str(getattr(gov_obj, "current_filename", "") or ""))
 
-        # Didactic hint: prefer JSON meta.rendering.l10n.comm_help.didactic_hint, fallback to I18N
-        didactic_hint = ""
-        try:
-            did = (((((data.get("meta") or {}).get("rendering") or {}).get("l10n") or {})
-                    .get("comm_help") or {}).get("didactic_hint") or {})
-            if isinstance(did, dict):
-                didactic_hint = (did.get("en") or "")
-        except Exception:
-            didactic_hint = ""
-        if not didactic_hint:
-            didactic_hint = tr("help_didactic", "")
+        def _spec_desc(spec_obj) -> str:
+            if isinstance(spec_obj, dict):
+                return re.sub(r"\s+", " ", str(spec_obj.get("function") or "").strip())
+            if spec_obj is None:
+                return ""
+            return re.sub(r"\s+", " ", str(spec_obj).strip())
 
-        def render_command_group(title_text: str, group_dict):
-            if not isinstance(group_dict, dict) or not group_dict:
+        def _render_command_group(title: str, group_key: str) -> str:
+            group = commands.get(group_key) or {}
+            if not isinstance(group, dict) or not group:
                 return ""
             out = []
             out.append('<div class="help-cat">')
-            out.append(f"<h3>{html.escape(str(title_text))}</h3>")
+            out.append(f"<h3>{html.escape(title)}</h3>")
             out.append(
                 "<table><thead><tr>"
-                f"<th>{html.escape(str(col_cmd))}</th>"
-                f"<th>{html.escape(str(col_desc))}</th>"
+                f"<th>{html.escape(txt['cmd_col'])}</th>"
+                f"<th>{html.escape(txt['desc_col'])}</th>"
                 "</tr></thead><tbody>"
             )
-            # keep deterministic ordering
-            for token in sorted(group_dict.keys(), key=lambda x: str(x)):
-                spec = group_dict.get(token)
-                desc = ""
-                if isinstance(spec, dict):
-                    desc = spec.get("function") or ""
-                else:
-                    desc = str(spec) if spec is not None else ""
-                # Optional: localized per-command desc via I18N (only if present)
-                desc = tr_cmd_desc(str(token), desc)
+            for token in sorted(group.keys(), key=lambda x: str(x).lower()):
+                desc = _spec_desc(group.get(token))
                 out.append(
                     "<tr><td class='cmd'>%s</td><td>%s</td></tr>"
-                    % (html.escape(str(token)), html.escape(str(desc)))
+                    % (html.escape(str(token)), html.escape(desc))
                 )
             out.append("</tbody></table></div>")
-            return "\n".join(out)
+            return "".join(out)
 
         parts = []
         parts.append("<div class='comm-help'>")
-        if didactic_hint:
-            parts.append(f"<p><i>{html.escape(str(didactic_hint))}</i></p>")
+        parts.append(f"<div class='help-status'><b>{html.escape(txt['title'])}</b> · {html.escape(system_name)}</div>")
+        parts.append(
+            f"<div class='minor'>{html.escape(txt['ruleset'])}: <code class='nowrap'>{html.escape(rules_file or 'n/a')}</code> · "
+            f"{html.escape(txt['version'])}: <b>{html.escape(version)}</b></div>"
+        )
+        parts.append(
+            "<div class='minor'>%s: Comm=%s · Profile=%s · SCI=%s · Overlay=%s · Color=%s · Language policy=%s</div>"
+            % (
+                html.escape(txt["status"]),
+                html.escape(comm),
+                html.escape(str(profile)),
+                html.escape(sci),
+                html.escape(str(overlay)),
+                html.escape(str(color)),
+                html.escape(str(language_policy)),
+            )
+        )
+        parts.append(f"<p><i>{html.escape(txt['intro'])}</i></p>")
 
-        # 1–4: command groups (JSON = source of truth)
-        parts.append(render_command_group(sec_primary, commands.get("primary")))
-        parts.append(render_command_group(sec_profiles, commands.get("profile_control")))
-        parts.append(render_command_group(sec_modes, commands.get("mode_control")))
-        parts.append(render_command_group(sec_sci, commands.get("sci_control")))
+        group_specs = [
+            (txt["sec_primary"], "primary"),
+            (txt["sec_comm_tools"], "help_and_codes"),
+            (txt["sec_profiles"], "profile_control"),
+            (txt["sec_modes"], "mode_control"),
+            (txt["sec_sci"], "sci_control"),
+            (txt["sec_color"], "color_control"),
+        ]
+        rendered_any_group = False
+        for title, key in group_specs:
+            chunk = _render_command_group(title, key)
+            if chunk:
+                rendered_any_group = True
+                parts.append(chunk)
+        if not rendered_any_group:
+            parts.append(f"<div class='minor'>{html.escape(txt['no_commands'])}</div>")
 
-        # 5) SCI variants (A–H): JSON source of truth; optional I18N if present
-        sci = data.get("sci") or {}
-        variant_menu = (sci.get("variant_menu") or {}) if isinstance(sci, dict) else {}
-        variants = (variant_menu.get("variants") or {}) if isinstance(variant_menu, dict) else {}
+        sci = data.get("sci") if isinstance(data.get("sci"), dict) else {}
+        variant_menu = sci.get("variant_menu") if isinstance(sci.get("variant_menu"), dict) else {}
+        variants = variant_menu.get("variants") if isinstance(variant_menu.get("variants"), dict) else {}
         if isinstance(variants, dict) and variants:
-            col_var = tr("sci_menu_col_var", "Variant")
-            col_name = "Name"
-            col_focus = tr("sci_menu_col_focus", "Focus / Method")
-
             out = []
             out.append('<div class="help-cat">')
-            out.append(f"<h3>{html.escape(str(sec_sci_variants))}</h3>")
+            out.append(f"<h3>{html.escape(txt['sec_variants'])}</h3>")
             out.append(
-                "<table><thead><tr>"
-                f"<th>{html.escape(str(col_var))}</th>"
-                f"<th>{html.escape(str(col_name))}</th>"
-                f"<th>{html.escape(str(col_focus))}</th>"
+                "<table class='sci-table'><thead><tr>"
+                f"<th>{html.escape(txt['variant_col'])}</th>"
+                f"<th>{html.escape(txt['name_col'])}</th>"
+                f"<th>{html.escape(txt['focus_col'])}</th>"
+                f"<th>{html.escape(txt['map_col'])}</th>"
+                f"<th>{html.escape(txt['step_col'])}</th>"
                 "</tr></thead><tbody>"
             )
-
-            for letter in "ABCDEFGH":
-                v = variants.get(letter) or {}
-                if not isinstance(v, dict):
-                    v = {}
-                name_json = v.get("name") or ""
-                focus_json = v.get("focus") or ""
-
-                # Optional I18N overrides (only if your I18N defines them)
-                name_i18n = tr(f"sci_name_{letter}", "") or tr(f"sci_var_{letter}", "")
-                focus_i18n = tr(f"sci_focus_{letter}", "")
-
-                name = name_i18n or name_json
-                focus = focus_i18n or focus_json
-
+            for letter in sorted(variants.keys(), key=lambda x: str(x).upper()):
+                vdef = variants.get(letter) if isinstance(variants.get(letter), dict) else {}
+                name = str(vdef.get("name") or "").strip()
+                focus = str(vdef.get("focus") or "").strip()
+                maps_to = vdef.get("maps_to")
+                if isinstance(maps_to, dict):
+                    mapped = str(maps_to.get("value") or maps_to.get("type") or "")
+                else:
+                    mapped = str(maps_to or "")
+                trace_steps = vdef.get("trace_steps") if isinstance(vdef.get("trace_steps"), list) else []
+                step_count = str(len(trace_steps)) if trace_steps else "-"
                 out.append(
-                    "<tr><td class='cmd'><b>%s</b></td><td>%s</td><td>%s</td></tr>"
-                    % (html.escape(letter), html.escape(str(name)), html.escape(str(focus)))
+                    "<tr><td class='cmd'><b>%s</b></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                    % (
+                        html.escape(str(letter).upper()),
+                        html.escape(name),
+                        html.escape(focus),
+                        html.escape(mapped),
+                        html.escape(step_count),
+                    )
                 )
             out.append("</tbody></table></div>")
             parts.append("".join(out))
 
-        # 6) Numeric codes (kept stable; light localized headers only)
-        nc = data.get("numeric_codes") or {}
-        cats = nc.get("categories") or []
-        dash_meaning = (nc.get("special_values") or {}).get("dash") or nc.get("dash_meaning") or ""
-        default_code = nc.get("default") or ""
-        if isinstance(cats, list) and cats:
-            h_cat = "Category"
-            h_opt = "Option"
-            h_mean = "Meaning"
-
+        numeric_codes = data.get("numeric_codes") if isinstance(data.get("numeric_codes"), dict) else {}
+        categories = numeric_codes.get("categories") if isinstance(numeric_codes.get("categories"), list) else []
+        dash_meaning = str((numeric_codes.get("special_values") or {}).get("dash") or numeric_codes.get("dash_meaning") or "").strip()
+        default_code = str(numeric_codes.get("default") or "").strip()
+        if categories:
             out = []
             out.append('<div class="help-cat">')
-            out.append(f"<h3>{html.escape(str(sec_codes))}</h3>")
+            out.append(f"<h3>{html.escape(txt['sec_codes'])}</h3>")
             if default_code:
-                dc_lbl = "Default code"
-                out.append(f"<div class='minor'>{html.escape(dc_lbl)}: <b>{html.escape(str(default_code))}</b></div>")
-
-            out.append("<table class='numcodes-table'>")
-            out.append(f"<thead><tr><th>{h_cat}</th><th>{h_opt}</th><th>{h_mean}</th></tr></thead><tbody>")
-
-            for cat in cats:
+                out.append(f"<div class='minor'>{html.escape(txt['default_code'])}: <b>{html.escape(default_code)}</b></div>")
+            out.append(
+                "<table class='numcodes-table'><thead><tr>"
+                f"<th>{html.escape(txt['cat_col'])}</th>"
+                f"<th>{html.escape(txt['opt_col'])}</th>"
+                f"<th>{html.escape(txt['meaning_col'])}</th>"
+                "</tr></thead><tbody>"
+            )
+            for cat in categories:
                 if not isinstance(cat, dict):
                     continue
-                nm = cat.get("name") or ""
-                idx = cat.get("index") or ""
-                opts = cat.get("options") or {}
-                if not isinstance(opts, dict):
-                    opts = {}
-                keys = list(opts.keys())
-                keys.sort(key=lambda x: int(x) if str(x).isdigit() else str(x))
+                cat_name = str(cat.get("name") or "").strip()
+                cat_idx = str(cat.get("index") or "").strip()
+                opts = cat.get("options") if isinstance(cat.get("options"), dict) else {}
+                opt_keys = list(opts.keys())
+                opt_keys.sort(key=lambda x: int(x) if str(x).isdigit() else str(x))
                 first = True
-                for k in keys:
-                    meaning = opts.get(k, "")
+                for opt_key in opt_keys:
+                    meaning = str(opts.get(opt_key) or "")
                     if first:
                         out.append(
                             "<tr><td><b>%s</b> (Index %s)</td><td><b>%s</b></td><td>%s</td></tr>"
-                            % (html.escape(str(nm)), html.escape(str(idx)), html.escape(str(k)), html.escape(str(meaning)))
+                            % (
+                                html.escape(cat_name),
+                                html.escape(cat_idx),
+                                html.escape(str(opt_key)),
+                                html.escape(meaning),
+                            )
                         )
                         first = False
                     else:
                         out.append(
                             "<tr><td></td><td><b>%s</b></td><td>%s</td></tr>"
-                            % (html.escape(str(k)), html.escape(str(meaning)))
+                            % (html.escape(str(opt_key)), html.escape(meaning))
                         )
-
             if dash_meaning:
-                out.append("<tr><td><b>Dash</b></td><td><b>-</b></td><td>%s</td></tr>" % html.escape(str(dash_meaning)))
+                out.append(
+                    "<tr><td><b>Dash</b></td><td><b>-</b></td><td>%s</td></tr>"
+                    % html.escape(dash_meaning)
+                )
             out.append("</tbody></table></div>")
             parts.append("".join(out))
 
-        # 7) Modules (stable; keep styling)
-        gd = data.get("global_defaults") or {}
-        qc_notes = ((gd.get("qc") or {}).get("notes")) or ""
-        cgi_notes = ((gd.get("cgi") or {}).get("notes")) or ""
-        control_layer_desc = ((data.get("control_layer") or {}).get("description")) or ""
-        if qc_notes or cgi_notes or control_layer_desc:
-            h_mod = "Module"
-            h_notes = "Notes"
-            out = []
-            out.append('<div class="help-cat">')
-            out.append(f"<h3>{html.escape(str(sec_modules))}</h3>")
-            out.append(f"<table><thead><tr><th>{h_mod}</th><th>{h_notes}</th></tr></thead><tbody>")
-            if qc_notes:
-                out.append("<tr><td class='cmd'>QC</td><td>%s</td></tr>" % html.escape(str(qc_notes)))
-            if cgi_notes:
-                out.append("<tr><td class='cmd'>CGI</td><td>%s</td></tr>" % html.escape(str(cgi_notes)))
-            if control_layer_desc:
-                out.append("<tr><td class='cmd'>Control Layer</td><td>%s</td></tr>" % html.escape(str(control_layer_desc)))
-            out.append("</tbody></table></div>")
-            parts.append("".join(out))
+        out = []
+        out.append('<div class="help-cat">')
+        out.append(f"<h3>{html.escape(txt['sec_modules'])}</h3>")
+        out.append(
+            "<table><thead><tr>"
+            f"<th>{html.escape(txt['module_col'])}</th>"
+            f"<th>{html.escape(txt['notes_col'])}</th>"
+            "</tr></thead><tbody>"
+        )
+        out.append("<tr><td class='cmd'>QC</td><td>%s</td></tr>" % html.escape(txt["mod_qc"]))
+        out.append("<tr><td class='cmd'>CGI</td><td>%s</td></tr>" % html.escape(txt["mod_cgi"]))
+        out.append("<tr><td class='cmd'>Control Layer</td><td>%s</td></tr>" % html.escape(txt["mod_ctl"]))
+        out.append("</tbody></table></div>")
+        parts.append("".join(out))
 
-        # 8) Parsing rules (JSON)
-        sr = data.get("syntax_rules") or {}
-        sr_desc = sr.get("description") or ""
-        sci_sel = ((sr.get("special_parsing") or {}).get("sci_variant_selection")) or {}
-        if sr_desc or sci_sel:
-            out = []
-            out.append('<div class="help-cat">')
-            out.append(f"<h3>{html.escape(str(sec_parsing))}</h3>")
-            if sr_desc:
-                out.append(f"<div class='minor'>{html.escape(str(sr_desc))}</div>")
-            if sci_sel:
-                rule = sci_sel.get("rule") or ""
-                note = sci_sel.get("note") or ""
-                if rule:
-                    out.append(f"<div style='margin-top:8px'><b>SCI pending:</b> {html.escape(str(rule))}</div>")
-                if note:
-                    out.append(f"<div class='minor'>{html.escape(str(note))}</div>")
-            out.append("</div>")
-            parts.append("".join(out))
+        out = []
+        out.append('<div class="help-cat">')
+        out.append(f"<h3>{html.escape(txt['sec_panel'])}</h3>")
+        out.append(
+            "<table><thead><tr>"
+            f"<th>{html.escape(txt['module_col'])}</th>"
+            f"<th>{html.escape(txt['notes_col'])}</th>"
+            "</tr></thead><tbody>"
+        )
+        out.append("<tr><td class='cmd'>%s</td><td>%s</td></tr>" % (html.escape(txt["panel_provider"]), html.escape(txt["panel_provider_note"])))
+        out.append("<tr><td class='cmd'>%s</td><td>%s</td></tr>" % (html.escape(txt["panel_answer_lang"]), html.escape(txt["panel_answer_lang_note"])))
+        out.append("<tr><td class='cmd'>%s</td><td>%s</td></tr>" % (html.escape(txt["panel_logs"]), html.escape(txt["panel_logs_note"])))
+        out.append("<tr><td class='cmd'>%s</td><td>%s</td></tr>" % (html.escape(txt["panel_manual"]), html.escape(txt["panel_manual_note"])))
+        out.append("</tbody></table></div>")
+        parts.append("".join(out))
 
-        # Deterministic QC footer (keeps toolchain stable)
+        parser_contract = data.get("parser_contract") if isinstance(data.get("parser_contract"), dict) else {}
+        standalone_only = bool(parser_contract.get("commands_standalone_only"))
+        special_parsing = parser_contract.get("special_parsing") if isinstance(parser_contract.get("special_parsing"), dict) else {}
+        sci_select = special_parsing.get("sci_variant_selection") if isinstance(special_parsing.get("sci_variant_selection"), dict) else {}
+        default_variant = str(sci_select.get("default_variant_if_no_selection") or "").strip() or txt["parse_default_none"]
+        out = []
+        out.append('<div class="help-cat">')
+        out.append(f"<h3>{html.escape(txt['sec_parsing'])}</h3>")
+        out.append(
+            "<table><thead><tr>"
+            f"<th>{html.escape(txt['module_col'])}</th>"
+            f"<th>{html.escape(txt['notes_col'])}</th>"
+            "</tr></thead><tbody>"
+        )
+        out.append(
+            "<tr><td class='cmd'>%s</td><td>%s (%s)</td></tr>"
+            % (
+                html.escape(txt["parse_standalone"]),
+                html.escape(txt["parse_standalone_note"]),
+                html.escape("enabled" if standalone_only else "disabled"),
+            )
+        )
+        out.append(
+            "<tr><td class='cmd'>%s</td><td>%s</td></tr>"
+            % (html.escape(txt["parse_sci_pending"]), html.escape(txt["parse_sci_pending_note"]))
+        )
+        out.append(
+            "<tr><td class='cmd'>%s</td><td>%s</td></tr>"
+            % (html.escape(txt["parse_default"]), html.escape(default_variant))
+        )
+        out.append("</tbody></table></div>")
+        parts.append("".join(out))
+
+        citation_rows = [
+            (txt["wrapper_concept"], "https://doi.org/10.5281/zenodo.18445672", "10.5281/zenodo.18445672"),
+            (txt["ruleset_concept"], "https://doi.org/10.5281/zenodo.17928357", "10.5281/zenodo.17928357"),
+            (txt["public_site"], "https://vfi64.github.io/Comm-SCI-Control/", "vfi64.github.io/Comm-SCI-Control"),
+            (txt["ruleset_repo"], "https://github.com/vfi64/Comm-SCI-Control", "github.com/vfi64/Comm-SCI-Control"),
+            (txt["wrapper_repo"], "https://github.com/vfi64/wrapper", "github.com/vfi64/wrapper"),
+            (txt["license"], "https://github.com/vfi64/wrapper/blob/main/LICENSE", txt["license_text"]),
+            (txt["maintainer"], "", "Volker Fickert"),
+        ]
+        out = []
+        out.append('<div class="help-cat">')
+        out.append(f"<h3>{html.escape(txt['sec_citation'])}</h3>")
+        out.append(
+            "<table><thead><tr>"
+            f"<th>{html.escape(txt['res_col'])}</th>"
+            f"<th>{html.escape(txt['doi_col'])}</th>"
+            "</tr></thead><tbody>"
+        )
+        for label, url, ref in citation_rows:
+            if url:
+                out.append(
+                    "<tr><td>%s</td><td><a href='%s' target='_blank' rel='noreferrer'>%s</a></td></tr>"
+                    % (html.escape(label), html.escape(url), html.escape(ref))
+                )
+            else:
+                out.append("<tr><td>%s</td><td>%s</td></tr>" % (html.escape(label), html.escape(ref)))
+        out.append("</tbody></table></div>")
+        parts.append("".join(out))
+
         try:
-            prof = getattr(getattr(self, "gov_state", object()), "active_profile", "Standard") or "Standard"
-            parts.append(f"<div class='minor' style='margin-top:10px'>{html.escape(self._qc_footer_for_profile(prof))}</div>")
-            try:
-                ovs = gov.normalize_qc_overrides(getattr(self.gov_state, 'qc_overrides', {}) or {})
-                if ovs:
-                    disp = {'clarity':'Clarity','brevity':'Brevity','evidence':'Evidence','empathy':'Empathy','consistency':'Consistency','neutrality':'Neutrality'}
-                    parts2 = [f"{disp.get(k,k)}={v}" for k, v in ovs.items()]
-                    parts.append(f"<div class='minor'>QC-Overrides: {html.escape(' · '.join(parts2))}</div>")
-            except Exception:
-                pass
+            parts.append(f"<div class='minor' style='margin-top:10px'>{html.escape(self._qc_footer_for_profile(profile))}</div>")
+            ovs = gov.normalize_qc_overrides(getattr(self.gov_state, "qc_overrides", {}) or {})
+            if ovs:
+                disp = {
+                    "clarity": "Clarity",
+                    "brevity": "Brevity",
+                    "evidence": "Evidence",
+                    "empathy": "Empathy",
+                    "consistency": "Consistency",
+                    "neutrality": "Neutrality",
+                }
+                parts2 = [f"{disp.get(k, k)}={v}" for k, v in ovs.items()]
+                parts.append(f"<div class='minor'>{html.escape(txt['qc_overrides'])}: {html.escape(' · '.join(parts2))}</div>")
         except Exception:
             pass
 
@@ -9106,7 +9815,7 @@ class CSCRefiner:
         except Exception:
             pass
 
-        self._connect_api()
+        self._connect_api(reason="startup")
 
         # Visible system notice (does not send a message to the model).
         try:
@@ -9119,6 +9828,104 @@ class CSCRefiner:
     def _get_plain_system_instruction(self) -> str:
         """Minimal system instruction used when Comm-SCI is stopped."""
         return "You are a helpful assistant. Answer in English."
+
+    def _hide_verification_route_lines_in_chat(self) -> bool:
+        """Display policy for verification-route marker lines.
+
+        Default is visible (False) so users can audit verification provenance directly.
+        Optional config:
+          - root: hide_verification_route_lines
+          - provider scoped: providers.<id>.hide_verification_route_lines
+        """
+        try:
+            conf = (getattr(getattr(self, 'cfg_mgr', None), 'config', None) or getattr(cfg, 'config', {}) or {})
+            provider = (self._active_provider() or 'gemini').strip().lower()
+            provs = conf.get('providers') or {}
+            pconf = provs.get(provider) if isinstance(provs, dict) else {}
+            raw = None
+            if isinstance(pconf, dict):
+                raw = pconf.get('hide_verification_route_lines')
+            if raw is None:
+                raw = conf.get('hide_verification_route_lines')
+            if raw is None:
+                return False
+            if isinstance(raw, bool):
+                return raw
+            s = str(raw).strip().lower()
+            if s in ('1', 'true', 'on', 'yes', 'y'):
+                return True
+            if s in ('0', 'false', 'off', 'no', 'n'):
+                return False
+        except Exception:
+            pass
+        return False
+
+    def _native_retrieval_mode_for_provider(self, provider: str) -> str:
+        """Return native retrieval mode: off|auto|on."""
+        p = str(provider or '').strip().lower() or 'gemini'
+        raw = None
+        try:
+            conf = (getattr(getattr(self, 'cfg_mgr', None), 'config', None) or getattr(cfg, 'config', {}) or {})
+            provs = conf.get('providers') or {}
+            pconf = provs.get(p) if isinstance(provs, dict) else {}
+            if isinstance(pconf, dict):
+                raw = pconf.get('native_retrieval')
+            if raw is None:
+                raw = conf.get('native_retrieval')
+        except Exception:
+            raw = None
+        if raw is None:
+            raw = os.environ.get('COMM_SCI_NATIVE_RETRIEVAL', 'auto')
+        s = str(raw or '').strip().lower()
+        if s in ('1', 'true', 'on', 'yes', 'enabled'):
+            return 'on'
+        if s in ('0', 'false', 'off', 'no', 'disabled'):
+            return 'off'
+        if s in ('auto',):
+            return 'auto'
+        return 'auto'
+
+    def _provider_supports_native_retrieval(self, provider: str) -> bool:
+        """Capability check for native retrieval/web-search tool wiring."""
+        try:
+            psvc = getattr(self, 'provider_service', None)
+            if psvc is not None and hasattr(psvc, 'supports_native_retrieval'):
+                return bool(psvc.supports_native_retrieval(provider))
+        except Exception:
+            pass
+        pid = str(provider or '').strip().lower()
+        if pid in ('openai', 'openai_compat'):
+            pid = 'openrouter'
+        if pid == 'hf':
+            pid = 'huggingface'
+        if pid != 'gemini':
+            return False
+        return bool(types is not None and hasattr(types, 'Tool') and (hasattr(types, 'GoogleSearch') or hasattr(types, 'GoogleSearchRetrieval')))
+
+    def _build_native_tools_for_provider(self, provider: str):
+        """Build provider-native tool list (best-effort, fail-soft)."""
+        pid = str(provider or '').strip().lower() or 'gemini'
+        mode = self._native_retrieval_mode_for_provider(pid)
+        if mode == 'off':
+            return []
+        if not self._provider_supports_native_retrieval(pid):
+            return []
+        # Currently the wrapper has a concrete native-tool path for Gemini.
+        if pid != 'gemini':
+            return []
+        if types is None:
+            return []
+        try:
+            if hasattr(types, 'Tool') and hasattr(types, 'GoogleSearch'):
+                return [types.Tool(google_search=types.GoogleSearch())]
+        except Exception:
+            pass
+        try:
+            if hasattr(types, 'Tool') and hasattr(types, 'GoogleSearchRetrieval'):
+                return [types.Tool(google_search_retrieval=types.GoogleSearchRetrieval())]
+        except Exception:
+            pass
+        return []
 
     def _recreate_chat_session(self, with_governance: bool, reason: str = "") -> bool:
         """Hard-reset the underlying model chat session.
@@ -9144,16 +9951,44 @@ class CSCRefiner:
         except Exception:
             pass
 
-        self.chat_session = self.client.chats.create(
-            model=current_model,
-            config=types.GenerateContentConfig(
-                system_instruction=sys_instr,
-                temperature=0.0,
-                top_p=0.1,
-                candidate_count=1,
-                max_output_tokens=65536
-            )
+        config_kwargs = dict(
+            system_instruction=sys_instr,
+            temperature=0.0,
+            top_p=0.1,
+            candidate_count=1,
+            max_output_tokens=65536,
         )
+        provider = (self._active_provider() or 'gemini').strip().lower()
+        native_tools = []
+        try:
+            native_tools = self._build_native_tools_for_provider(provider)
+        except Exception:
+            native_tools = []
+        if native_tools:
+            config_kwargs["tools"] = native_tools
+
+        try:
+            self.chat_session = self.client.chats.create(
+                model=current_model,
+                config=types.GenerateContentConfig(**config_kwargs)
+            )
+            self._native_retrieval_active = bool(native_tools)
+        except Exception as e:
+            # Fail-soft fallback: if native tools are unsupported by the selected model/runtime,
+            # retry without tools so the wrapper remains usable for all providers/models.
+            if native_tools:
+                try:
+                    gov.log(f"Native retrieval tool setup failed ({type(e).__name__}). Retrying without native tools.")
+                except Exception:
+                    pass
+                config_kwargs.pop("tools", None)
+                self.chat_session = self.client.chats.create(
+                    model=current_model,
+                    config=types.GenerateContentConfig(**config_kwargs)
+                )
+                self._native_retrieval_active = False
+            else:
+                raise
 
         self.session_with_governance = bool(with_governance)
         # reset pinned-governance injection flags on session resets
@@ -9172,7 +10007,7 @@ class CSCRefiner:
 
         return True
     
-    def _connect_api(self):
+    def _connect_api(self, reason: str = "connect"):
         """Connect provider backend.
 
         - Gemini: requires GOOGLE_API_KEY (via Comm-SCI-API-Keys.json or ENV)
@@ -9205,6 +10040,42 @@ class CSCRefiner:
                 setattr(self, "_last_connect_sig", sig)
             except Exception:
                 pass
+
+            # Encrypted-key gate: require passphrase before provider connect/reconnect.
+            try:
+                gate = self._passphrase_requirement_for_provider(provider)
+            except Exception:
+                gate = {'required': False}
+            if bool(gate.get('required')):
+                gate_reason = str(gate.get('reason') or 'missing_passphrase')
+                try:
+                    self._queue_passphrase_request(provider, reason=reason or 'connect')
+                except Exception:
+                    pass
+                self.ready_status = {
+                    "status": False,
+                    "msg": f"Passphrase required for encrypted key ({provider}).",
+                }
+                try:
+                    self.log_event('passphrase_required', {'provider': provider, 'reason': gate_reason, 'scope': reason or 'connect'})
+                except Exception:
+                    pass
+                try:
+                    self._ui_add_system_message(
+                        f"Encrypted API key detected for {provider}. Please enter passphrase to continue."
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._ui_refresh_panel()
+                except Exception:
+                    pass
+                return
+            else:
+                try:
+                    self._clear_passphrase_request(provider)
+                except Exception:
+                    pass
 
 
             # --- Stateless provider (OpenRouter) ---
@@ -9282,7 +10153,10 @@ class CSCRefiner:
             # --- Gemini provider (stateful chat_session) ---
             api_key = get_api_key()
             current_model = cfg_get_model()
-            lang = UI_LANG
+            try:
+                lang = self._answer_lang()
+            except Exception:
+                lang = str(getattr(cfg, 'get_answer_language', lambda: 'de')() or 'de').strip().lower() or "de"
 
             if api_key:
                 try:
@@ -9338,6 +10212,104 @@ class CSCRefiner:
             return bool(getattr(self.gov_state, 'comm_active', False))
         except Exception:
             return False
+
+    def _normalize_input_history_entries(self, entries, *, max_entries: int | None = None) -> list[str]:
+        """Normalize persisted command-line history (trim, drop empties, dedupe adjacent)."""
+        try:
+            lim = int(max_entries if max_entries is not None else getattr(self, "input_history_max_entries", 200))
+        except Exception:
+            lim = 200
+        lim = max(20, lim)
+        out: list[str] = []
+        if not isinstance(entries, list):
+            return out
+        for raw in entries:
+            txt = str(raw or "").strip()
+            if not txt:
+                continue
+            if out and out[-1] == txt:
+                continue
+            out.append(txt)
+        if len(out) > lim:
+            out = out[-lim:]
+        return out
+
+    def _load_input_history_entries(self) -> list[str]:
+        """Best-effort load of input history from Logs/History/InputLineHistory.json."""
+        payload = None
+        try:
+            st = getattr(self, "storage_service", None)
+            if st is not None and hasattr(st, "read_json"):
+                payload = st.read_json(INPUT_HISTORY_PATH)
+            else:
+                with open(INPUT_HISTORY_PATH, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+        except Exception:
+            payload = None
+
+        entries = []
+        if isinstance(payload, dict):
+            entries = payload.get("entries") or []
+        elif isinstance(payload, list):
+            entries = payload
+        return self._normalize_input_history_entries(entries)
+
+    def _save_input_history_entries(self, *, reason: str = "manual") -> bool:
+        """Persist current in-memory input history to Logs/History/InputLineHistory.json."""
+        entries = self._normalize_input_history_entries(getattr(self, "input_cmd_history", []) or [])
+        try:
+            self.input_cmd_history = list(entries)
+        except Exception:
+            pass
+        payload = {
+            "version": 1,
+            "updated_at": datetime.now().isoformat(),
+            "reason": str(reason or "manual"),
+            "max_entries": int(getattr(self, "input_history_max_entries", 200) or 200),
+            "entries": entries,
+        }
+        ok = False
+        try:
+            st = getattr(self, "storage_service", None)
+            if st is not None and hasattr(st, "write_json"):
+                ok = bool(st.write_json(INPUT_HISTORY_PATH, payload, indent=2, ensure_ascii=False))
+            else:
+                os.makedirs(HISTORY_LOG_DIR, exist_ok=True)
+                with open(INPUT_HISTORY_PATH, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+                ok = True
+        except Exception:
+            ok = False
+        return ok
+
+    def get_input_history(self, max_entries: int = 200):
+        """JS bridge: return normalized command-line history for the input box."""
+        try:
+            lim = int(max_entries or 200)
+        except Exception:
+            lim = 200
+        lim = max(20, min(lim, 1000))
+        entries = self._normalize_input_history_entries(getattr(self, "input_cmd_history", []) or [])
+        if len(entries) > lim:
+            entries = entries[-lim:]
+        return {
+            "ok": True,
+            "entries": entries,
+            "max_entries": int(getattr(self, "input_history_max_entries", 200) or 200),
+        }
+
+    def append_input_history(self, raw):
+        """JS bridge: append one user input line to in-memory command history."""
+        txt = str(raw or "").strip()
+        if not txt:
+            return {"ok": True, "added": False, "size": len(getattr(self, "input_cmd_history", []) or [])}
+        cur = list(getattr(self, "input_cmd_history", []) or [])
+        if cur and str(cur[-1] or "") == txt:
+            return {"ok": True, "added": False, "size": len(cur)}
+        cur.append(txt)
+        cur = self._normalize_input_history_entries(cur)
+        self.input_cmd_history = cur
+        return {"ok": True, "added": True, "size": len(cur)}
 
     def _cgi_ui_texts(self, *, lang: str = "") -> dict:
         use_en = str(lang or self._answer_lang() or "").strip().lower().startswith("en")
@@ -9564,7 +10536,7 @@ class CSCRefiner:
             # Harte Sperre: Config-Datei ist KEIN Ruleset.
             if base.lower() == "comm-sci-config.json" or base.lower().endswith("-config.json") or base.lower().endswith("config.json"):
                 self._ui_add_system_message(
-                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.0.3.json)."
+                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.2.0.json)."
                 )
                 start_dir = os.path.dirname(new_file)
                 continue  # retry once
@@ -9583,7 +10555,7 @@ class CSCRefiner:
 
             # 1) API reconnecten (damit System Instructions neu gesetzt werden)
             self._ui_add_system_message(f"Loading new ruleset: {os.path.basename(gov.current_filename)}...")
-            self._connect_api()
+            self._connect_api(reason="config_reload")
             self._auto_comm_start('rules-reload')
 
             # 2) UI im Chatfenster updaten (Dateiname oben)
@@ -9626,12 +10598,24 @@ class CSCRefiner:
 
             lines = text_in.splitlines()
 
-            # Find SCI Trace marker line (plain text, tolerate minimal HTML tags)
+            def _is_sci_trace_heading_line(plain_line: str) -> bool:
+                p = re.sub(r"\s+", " ", str(plain_line or "")).strip()
+                p = p.strip("*").strip()
+                return bool(
+                    re.match(
+                        r"^(?:#+\s*)?(?:\d+[\.\)]\s*)?SCI\s+Trace\b",
+                        p,
+                        flags=re.IGNORECASE,
+                    )
+                )
+
+            # Find the earliest SCI Trace marker line (also accepts forms like
+            # "4. SCI Trace (Variante A: Standard)").
             sci_idx = None
             for i, ln in enumerate(lines):
                 ln_plain = re.sub(r"<[^>]+>", "", ln).strip()
-                ln_plain = ln_plain.strip().strip("*").strip();
-                if re.match(r"^(?:#+\s*)?SCI\s+Trace\s*:?$", ln_plain, flags=re.IGNORECASE):
+                ln_plain = ln_plain.strip().strip("*").strip()
+                if _is_sci_trace_heading_line(ln_plain):
                     sci_idx = i
                     break
             if sci_idx is None:
@@ -9693,6 +10677,24 @@ class CSCRefiner:
             out_main = []
             cur_step = None
             buf = []
+            last_step = required_steps[-1] if required_steps else ""
+            after_last_step_break = False
+
+            def _looks_like_final_answer_start(plain_line: str, raw_line: str = "") -> bool:
+                s = str(plain_line or "").strip()
+                if not s:
+                    return False
+                if re.match(r"^(?:[*+-]|•|\d+\.)\s+", s):
+                    return False
+                if re.match(r"(?i)^(?:Self[- ]?Debunking|Selbst[- ]?Debunking|QC(?:-Matrix)?|Final\s+Answer)\b", s):
+                    return False
+                # Evidence/uncertainty markers in raw HTML are a strong indicator that
+                # we have entered the narrative final-answer body.
+                raw = str(raw_line or "")
+                if ("signal-dot-marker" in raw) or ("uncertainty-inline-marker" in raw):
+                    return True
+                words = re.findall(r"[A-Za-zÄÖÜäöüß0-9]+", s)
+                return (len(words) >= 8) or (len(s) >= 80)
 
             def flush():
                 nonlocal cur_step, buf
@@ -9705,22 +10707,41 @@ class CSCRefiner:
                     cleaned.pop(0)
                 while cleaned and not cleaned[-1].strip():
                     cleaned.pop()
-                blocks[cur_step] = cleaned
+                # Keep the first non-empty capture for a step when duplicated SCI Trace
+                # sections leak into the same answer.
+                if (cur_step not in blocks) or (not blocks.get(cur_step)):
+                    blocks[cur_step] = cleaned
                 cur_step = None
                 buf = []
 
             recognized_steps = 0
             for ln in main:
                 ln2 = _strip_basic_tags(re.sub(r"<[^>]+>", "", ln))
+                if _is_sci_trace_heading_line(ln2):
+                    # Drop duplicate SCI Trace headings from the body once we rebuild.
+                    continue
                 step_name, rest = match_required_sci_step_header(ln2, required_steps)
                 if step_name:
                     flush()
                     cur_step = step_name
                     recognized_steps += 1
+                    after_last_step_break = False
                     if rest:
                         buf.append(rest)
                     continue
                 if cur_step is not None:
+                    if cur_step == last_step:
+                        if not ln2.strip():
+                            after_last_step_break = True
+                            buf.append(ln2)
+                            continue
+                        if after_last_step_break and _looks_like_final_answer_start(ln2, ln):
+                            # Split here: remaining narrative belongs to final answer,
+                            # not to the last SCI step.
+                            flush()
+                            after_last_step_break = False
+                            out_main.append(ln)
+                            continue
                     buf.append(ln2)
                 else:
                     out_main.append(ln)
@@ -10359,10 +11380,11 @@ class CSCRefiner:
             if strict_banner_html:
                 alert_html = strict_banner_html + alert_html
 
-            # Display-only cleanup: hide VRG fallback marker lines in chat output.
-            # Validation already ran on raw_for_render above.
+            # Display policy for verification-route markers:
+            # default = visible (auditable); optional legacy hide via config switch.
             try:
-                raw_for_render = strip_verification_route_display_lines(raw_for_render or "")
+                if self._hide_verification_route_lines_in_chat():
+                    raw_for_render = strip_verification_route_display_lines(raw_for_render or "")
             except Exception:
                 pass
 
@@ -10713,12 +11735,12 @@ class CSCRefiner:
                 lang = None
             if not lang:
                 try:
-                    lang = getattr(cfg, 'get_answer_language', lambda: 'en')()
+                    lang = getattr(cfg, 'get_answer_language', lambda: 'de')()
                 except Exception:
-                    lang = 'en'
-            lang = (lang or 'en').strip().lower()
+                    lang = 'de'
+            lang = (lang or 'de').strip().lower()
             if lang not in ('en', 'de'):
-                lang = 'en'
+                lang = 'de'
 
             lang_name = 'English' if lang == 'en' else 'German'
 
@@ -10889,7 +11911,7 @@ class CSCRefiner:
 
             # Governance trigger heuristics (deterministic, conservative)
             txt_l = (user_raw or '').lower()
-            uncertainty_U4 = bool(re.search(r"\bU[4-6]\b", user_raw or ""))
+            uncertainty_U4 = bool(re.search(r"\bU[4-8]\b", user_raw or ""))
             web_check = bool(re.search(r"\bweb\s*[- ]\s*check\b", txt_l))
             strong_claim = any(x in txt_l for x in ["always", "never", "definitely", "guarantee", "prove", "immer", "niemals", "definitiv"])
 
@@ -11168,7 +12190,7 @@ class CSCRefiner:
                         self.gov_state.sci_variant = ''
             except Exception:
                 pass
-        elif cmd in ("Comm Anchor off", "Anchor auto off"):
+        elif cmd == "Comm Anchor off":
             # Disable periodic Anchor Snapshot automation for this session
             try:
                 self.gov_state.anchor_auto = False
@@ -11177,7 +12199,7 @@ class CSCRefiner:
             except Exception:
                 pass
 
-        elif cmd in ("Comm Anchor on", "Anchor auto on"):
+        elif cmd == "Comm Anchor on":
             # Enable periodic Anchor Snapshot automation for this session
             try:
                 self.gov_state.anchor_auto = True
@@ -11699,12 +12721,34 @@ class CSCRefiner:
         except Exception:
             evidence = ''
 
+        retrieval_line = ""
+        try:
+            provider = (self._active_provider() or 'gemini').strip().lower()
+            mode = self._native_retrieval_mode_for_provider(provider)
+            supports = bool(self._provider_supports_native_retrieval(provider))
+            active = bool(getattr(self, '_native_retrieval_active', False))
+            if mode == 'off':
+                retrieval_line = "[RETRIEVAL TOOL] disabled by wrapper configuration."
+            elif supports and active:
+                retrieval_line = "[RETRIEVAL TOOL] native_web_search=available."
+            elif supports and (not active):
+                retrieval_line = "[RETRIEVAL TOOL] capability available; session fallback currently without native tool."
+            else:
+                retrieval_line = (
+                    "[RETRIEVAL TOOL] unavailable in current provider path. "
+                    "Do NOT claim live retrieval; use uncertainty U5 when live verification is requested."
+                )
+        except Exception:
+            retrieval_line = (
+                "[RETRIEVAL TOOL] status unknown; do NOT claim live retrieval unless explicit tool output is present."
+            )
+
         dont_echo = (
             "DO NOT OUTPUT INTERNAL SCAFFOLDING: Do not write lines like 'Profile: ...' or 'SCI: ...'. "
             "Follow the [CURRENT STATE] above silently."
         )
 
-        parts = [state_line, f"[OUTPUT LANGUAGE] {lang}", dont_echo]
+        parts = [state_line, f"[OUTPUT LANGUAGE] {lang}", retrieval_line, dont_echo]
         if evidence:
             parts.append(evidence)
         parts.append(user_text or '')
@@ -12041,6 +13085,24 @@ class CSCRefiner:
                     except Exception:
                         pass
                     _blocked_html = self._qc_override_modal_block_html()
+                    try:
+                        self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
+                        self.history.append({"role": "bot", "content": _blocked_html, "ts": datetime.now().isoformat(), "csc": None})
+                    except Exception:
+                        pass
+                    return {"html": _blocked_html, "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
+            except Exception:
+                pass
+
+            # Exit-confirm modal gate for Main/Panel-triggered asks:
+            # while the exclusive exit dialog is open, all new actions are blocked.
+            try:
+                if self._is_exit_confirm_modal_active():
+                    try:
+                        self.log_event('exit_confirm_block', {'source': 'ask', 'preview': _safe_preview_text(raw_txt, 80)})
+                    except Exception:
+                        pass
+                    _blocked_html = self._exit_confirm_block_html()
                     try:
                         self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
                         self.history.append({"role": "bot", "content": _blocked_html, "ts": datetime.now().isoformat(), "csc": None})
@@ -12897,6 +13959,12 @@ class CSCRefiner:
             return {'ok': False, 'error': 'no_main_win'}
         try:
             cmd_s = str(cmd or '')
+            if self._is_exit_confirm_modal_active():
+                try:
+                    self.log_event('exit_confirm_block', {'source': 'remote_cmd', 'cmd': cmd_s})
+                except Exception:
+                    pass
+                return {'ok': False, 'error': 'exit_confirm_open_blocked'}
             if self._is_qc_override_modal_active():
                 if cmd_s.strip() == "QC Override":
                     self._bring_qc_override_to_front()
@@ -12938,6 +14006,10 @@ class CSCRefiner:
 
         try:
             self.save_stats()
+        except Exception:
+            pass
+        try:
+            self._save_input_history_entries(reason="app_close")
         except Exception:
             pass
 
@@ -13071,6 +14143,65 @@ class CSCRefiner:
             )
         return _control_layer_alert_html(msg, title="QC Override aktiv", severity="warn", lang=self._answer_lang())
 
+    def _is_exit_confirm_modal_active(self) -> bool:
+        try:
+            return bool(getattr(self, "_exit_confirm_open", False))
+        except Exception:
+            return False
+
+    def _exit_confirm_block_html(self) -> str:
+        lang = self._answer_lang()
+        if lang == "en":
+            msg = (
+                "Exit confirmation is open. Choose Cancel or Exit in the modal "
+                "before sending new actions."
+            )
+            title = "Exit confirmation active"
+        else:
+            msg = (
+                "Die Exit-Bestaetigung ist geoeffnet. Bitte zuerst im Dialog Cancel "
+                "oder Exit waehlen, bevor neue Aktionen gesendet werden."
+            )
+            title = "Exit-Bestaetigung aktiv"
+        return _control_layer_alert_html(msg, title=title, severity="warn", lang=lang)
+
+    def set_exit_confirm_open(self, is_open):
+        """Set exclusive Exit-confirm modal state (global main/panel action gate)."""
+        try:
+            flag = bool(is_open)
+        except Exception:
+            flag = False
+        self._exit_confirm_open = flag
+        try:
+            self.log_event("exit_confirm_state", {"open": bool(flag)})
+        except Exception:
+            pass
+        return {"ok": True, "open": bool(flag)}
+
+    def get_help_content(self):
+        """Return localized stage-1 help payload in answer language."""
+        lang = self._answer_lang()
+        payload = None
+        try:
+            if _help_i18n_mod is not None and hasattr(_help_i18n_mod, "load_help_payload"):
+                payload = _help_i18n_mod.load_help_payload(lang=lang)
+        except Exception:
+            payload = None
+        if not isinstance(payload, dict):
+            payload = {
+                "button_label": "❓ Help" if lang == "en" else "❓ Hilfe",
+                "title": "Comm-SCI Help" if lang == "en" else "Comm-SCI Hilfe",
+                "subtitle": "Quickstart, commands, SCI and troubleshooting"
+                if lang == "en"
+                else "Quickstart, Kommandos, SCI und Troubleshooting",
+                "close_label": "Close" if lang == "en" else "Schliessen",
+                "sections": [],
+                "footer": "Tip: Press F1 to open help."
+                if lang == "en"
+                else "Tipp: Mit F1 Hilfe oeffnen.",
+            }
+        return {"ok": True, "lang": lang, "payload": payload}
+
     def _answer_lang(self) -> str:
         """Return answer language (de/en), independent of UI language."""
         try:
@@ -13172,6 +14303,17 @@ class CSCRefiner:
 
         def _err(message: str):
             return {'ok': False, 'action': action_s, 'result': None, 'error': str(message or 'error')}
+
+        # Exit-confirm modal gate: exclusive program-wide modal state.
+        if self._is_exit_confirm_modal_active():
+            try:
+                self.log_event(
+                    'exit_confirm_block',
+                    {'source': 'panel_action', 'action': action_s},
+                )
+            except Exception:
+                pass
+            return _err("exit_confirm_open_blocked")
 
         # QC-Override modal gate: while dialog is open, block Main/Panel actions except QC actions.
         if self._is_qc_override_modal_active():
@@ -13636,10 +14778,25 @@ class CSCRefiner:
           (comm/profiles/sci/overlays/tools/logs) from gov.get_ui_data().
         - Provide a cheap local listing of chat logs for the loader UI.
         """
+        def _attach_passphrase_status(payload):
+            out = payload if isinstance(payload, dict) else {}
+            try:
+                pst = self.get_passphrase_status()
+            except Exception:
+                pst = {}
+            if isinstance(pst, dict):
+                try:
+                    out['passphrase_required'] = bool(pst.get('required', False))
+                    out['passphrase_provider'] = str(pst.get('provider') or '')
+                    out['passphrase_reason'] = str(pst.get('reason') or '')
+                except Exception:
+                    pass
+            return out
+
         if _panel_ui_snapshot_seam_mod is not None:
             try:
                 gov_obj = getattr(self, 'gov', None) or globals().get('gov')
-                return _panel_ui_snapshot_seam_mod.panel_ui_build_snapshot(
+                snap = _panel_ui_snapshot_seam_mod.panel_ui_build_snapshot(
                     provider_router=getattr(self, 'provider_router', None),
                     cfg_obj=globals().get('cfg'),
                     get_available_models_fn=getattr(self, 'get_available_models', None),
@@ -13650,18 +14807,20 @@ class CSCRefiner:
                     list_chat_logs_fn=getattr(self, 'list_chat_logs', None),
                     chat_log_limit=200,
                 )
+                return _attach_passphrase_status(snap)
             except Exception:
                 pass
 
         # Fail-open fallback if the seam module is unavailable or failed.
         if _panel_ui_snapshot_seam_mod is not None:
             try:
-                return _panel_ui_snapshot_seam_mod.panel_ui_failopen_snapshot(
+                snap = _panel_ui_snapshot_seam_mod.panel_ui_failopen_snapshot(
                     gov_state=getattr(self, 'gov_state', None),
                 )
+                return _attach_passphrase_status(snap)
             except Exception:
                 pass
-        return {
+        return _attach_passphrase_status({
             'providers': ['gemini', 'openrouter', 'huggingface'],
             'current_provider': 'gemini',
             'current_model': 'gemini-2.0-flash',
@@ -13681,7 +14840,7 @@ class CSCRefiner:
             'qc_override_visible': False,
             'provider': 'gemini',
             'model': 'gemini-2.0-flash',
-        }
+        })
 
     def _warm_model_caches_from_disk(self):
         """Load cached provider model lists from disk into memory. No network."""
@@ -13831,6 +14990,214 @@ class CSCRefiner:
             return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
 
 
+    def _normalize_provider_id(self, provider: str) -> str:
+        try:
+            p = str(provider or '').strip().lower()
+        except Exception:
+            p = ''
+        if p in ('hf',):
+            p = 'huggingface'
+        if p == 'google':
+            p = 'gemini'
+        if p not in ('gemini', 'openrouter', 'huggingface'):
+            p = 'gemini'
+        return p
+
+    def _encrypted_key_material_for_provider(self, provider: str):
+        """Return (enc_b64, salt_b64) for provider if encrypted key material exists."""
+        p = self._normalize_provider_id(provider)
+        aliases = [p]
+        if p == 'gemini':
+            aliases.append('google')
+        if p == 'huggingface':
+            aliases.append('hf')
+
+        def _extract(entry):
+            try:
+                if not isinstance(entry, dict):
+                    return '', ''
+                enc = str(entry.get('api_key_enc') or '').strip()
+                salt = str(entry.get('api_key_salt') or '').strip()
+                if enc and salt:
+                    return enc, salt
+            except Exception:
+                pass
+            return '', ''
+
+        # 1) Config providers.* (runtime overrides)
+        try:
+            provs_cfg = ((getattr(cfg, 'config', {}) or {}).get('providers') or {})
+            if isinstance(provs_cfg, dict):
+                for a in aliases:
+                    enc, salt = _extract(provs_cfg.get(a))
+                    if enc and salt:
+                        return enc, salt
+        except Exception:
+            pass
+
+        # 2) Keys file providers.*
+        data = {}
+        try:
+            data, _used_path, _err = _load_keys_json()
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            data = {}
+        try:
+            provs_keys = data.get('providers') or {}
+            if isinstance(provs_keys, dict):
+                for a in aliases:
+                    enc, salt = _extract(provs_keys.get(a))
+                    if enc and salt:
+                        return enc, salt
+        except Exception:
+            pass
+
+        # 3) Legacy top-level keys (Gemini)
+        if p == 'gemini':
+            try:
+                enc = str(data.get('GOOGLE_API_KEY_ENC') or '').strip()
+                salt = str(data.get('GOOGLE_API_KEY_SALT') or '').strip()
+                if enc and salt:
+                    return enc, salt
+            except Exception:
+                pass
+
+        return '', ''
+
+    def _passphrase_requirement_for_provider(self, provider: str, *, passphrase_override: str = "") -> dict:
+        """Determine whether provider access is blocked by missing/invalid passphrase."""
+        p = self._normalize_provider_id(provider)
+        enc, salt = self._encrypted_key_material_for_provider(p)
+        if not enc or not salt:
+            return {'required': False, 'provider': p, 'encrypted': False, 'reason': ''}
+
+        try:
+            passphrase = str(passphrase_override or os.environ.get('COMM_SCI_KEY_PASSPHRASE') or '').strip()
+        except Exception:
+            passphrase = ''
+        if not passphrase:
+            return {'required': True, 'provider': p, 'encrypted': True, 'reason': 'missing_passphrase'}
+
+        plain = _try_decrypt_api_key(enc, passphrase=passphrase, salt_b64=salt)
+        if plain:
+            return {'required': False, 'provider': p, 'encrypted': True, 'reason': ''}
+        return {'required': True, 'provider': p, 'encrypted': True, 'reason': 'invalid_passphrase'}
+
+    def _queue_passphrase_request(self, provider: str, reason: str = "connect"):
+        try:
+            self._passphrase_pending_provider = self._normalize_provider_id(provider)
+            self._passphrase_pending_reason = str(reason or 'connect').strip().lower() or 'connect'
+            self._passphrase_pending_since = datetime.now().isoformat()
+        except Exception:
+            pass
+
+    def _clear_passphrase_request(self, provider: str = ""):
+        try:
+            if provider:
+                p = self._normalize_provider_id(provider)
+                cur = self._normalize_provider_id(getattr(self, '_passphrase_pending_provider', '') or '')
+                if p and cur and p != cur:
+                    return
+            self._passphrase_pending_provider = ""
+            self._passphrase_pending_reason = ""
+            self._passphrase_pending_since = ""
+        except Exception:
+            pass
+
+    def get_passphrase_status(self):
+        """Public panel-state helper for passphrase-required flows."""
+        try:
+            pending_provider = self._normalize_provider_id(getattr(self, '_passphrase_pending_provider', '') or '')
+        except Exception:
+            pending_provider = ''
+        provider = pending_provider or self._normalize_provider_id(self._active_provider())
+        check = self._passphrase_requirement_for_provider(provider)
+        if bool(check.get('required')):
+            reason = str(getattr(self, '_passphrase_pending_reason', '') or check.get('reason') or 'missing_passphrase')
+            if not pending_provider:
+                self._queue_passphrase_request(provider, reason=reason)
+            return {
+                'required': True,
+                'provider': provider,
+                'reason': reason,
+                'encrypted': True,
+                'pending_since': str(getattr(self, '_passphrase_pending_since', '') or ''),
+            }
+        if pending_provider:
+            self._clear_passphrase_request()
+        return {
+            'required': False,
+            'provider': provider,
+            'reason': '',
+            'encrypted': bool(check.get('encrypted', False)),
+            'pending_since': '',
+        }
+
+    def set_key_passphrase(self, passphrase: str, provider: str = "", *, reason: str = "", reconnect: bool = True):
+        """Accept passphrase for encrypted provider keys and optionally reconnect."""
+        try:
+            pw = str(passphrase or '').strip()
+        except Exception:
+            pw = ''
+        if not pw:
+            return {'ok': False, 'error': 'passphrase_missing'}
+
+        p = self._normalize_provider_id(
+            provider
+            or getattr(self, '_passphrase_pending_provider', '')
+            or self._active_provider()
+        )
+
+        # Validate immediately against encrypted key material if present.
+        check = self._passphrase_requirement_for_provider(p, passphrase_override=pw)
+        if bool(check.get('required')):
+            return {
+                'ok': False,
+                'error': str(check.get('reason') or 'invalid_passphrase'),
+                'provider': p,
+            }
+
+        try:
+            os.environ['COMM_SCI_KEY_PASSPHRASE'] = pw
+        except Exception:
+            pass
+
+        self._clear_passphrase_request(p)
+
+        switched = False
+        try:
+            active_now = self._normalize_provider_id(self._active_provider())
+        except Exception:
+            active_now = 'gemini'
+        if p and p != active_now:
+            sw = self.set_provider(p)
+            if isinstance(sw, dict) and not bool(sw.get('ok', True)):
+                return sw
+            switched = True
+
+        if reconnect:
+            try:
+                if p == 'gemini':
+                    self._trigger_reconnect("Passphrase akzeptiert (Gemini).")
+                else:
+                    self._connect_api(reason='passphrase')
+            except Exception:
+                pass
+        try:
+            self._ui_add_system_message(f"Passphrase accepted for encrypted key ({p}).")
+        except Exception:
+            pass
+        try:
+            self._ui_refresh_panel()
+        except Exception:
+            pass
+        try:
+            self.log_event('passphrase_set', {'provider': p, 'reason': str(reason or '').strip()})
+        except Exception:
+            pass
+        return {'ok': True, 'provider': p, 'switched': bool(switched)}
+
 
     def set_provider(self, provider: str):
         """Set active provider (gemini/openrouter) from the panel.
@@ -13852,11 +15219,22 @@ class CSCRefiner:
                     _old_m = str(cfg_get_model() or '').strip()
             except Exception:
                 _old_m = str(cfg_get_model() or '').strip()
-            provider = (provider or 'gemini').strip().lower()
-            if provider in ('hf',):
-                provider = 'huggingface'
-            if provider not in ('gemini', 'openrouter', 'huggingface'):
-                provider = 'gemini'
+            provider = self._normalize_provider_id(provider)
+
+            # Gate provider switch if encrypted key exists but passphrase is missing/invalid.
+            gate = self._passphrase_requirement_for_provider(provider)
+            if bool(gate.get('required')):
+                reason = str(gate.get('reason') or 'missing_passphrase')
+                self._queue_passphrase_request(provider, reason='provider_switch')
+                try:
+                    self.log_event('passphrase_required', {'provider': provider, 'reason': reason, 'scope': 'provider_switch'})
+                except Exception:
+                    pass
+                self._ui_add_system_message(
+                    f"Encrypted API key detected for {provider}. Passphrase required before provider switch."
+                )
+                self._ui_refresh_panel()
+                return {'ok': False, 'error': 'passphrase_required', 'provider': provider, 'reason': reason}
             if hasattr(cfg, 'set_active_provider'):
                 cfg.set_active_provider(provider)
             else:
@@ -13929,8 +15307,9 @@ class CSCRefiner:
             else:
                 # For stateless providers, just refresh panel
                 self._ui_refresh_panel()
+            return {'ok': True, 'provider': provider}
         except Exception:
-            pass
+            return {'ok': False, 'error': 'set_provider_failed'}
 
     def refresh_models(self):
         """Refresh provider model list cache (Gemini/OpenRouter/Hugging Face best-effort).
@@ -14140,9 +15519,9 @@ class CSCRefiner:
         The preference is enforced via a small wrapper directive added to the next user message.
         """
         try:
-            lang = (lang or 'en').strip().lower()
+            lang = (lang or 'de').strip().lower()
             if lang not in ('en', 'de'):
-                lang = 'en'
+                lang = 'de'
             try:
                 self.gov_state.answer_language = lang
             except Exception:
@@ -14183,7 +15562,7 @@ class CSCRefiner:
         threading.Thread(target=self._reconnect_bg).start()
 
     def _reconnect_bg(self):
-        self._connect_api()
+        self._connect_api(reason="reconnect")
 
     def _remember_window_geom(self, win, kind: str):
         """Best-effort: remember window geometry (x/y/width/height) into Comm-SCI-Config.json.
@@ -15745,17 +17124,49 @@ class CSCRefiner:
 
 
 
-def set_api_key_for_provider(self, provider: str, api_key: str, *, persist: bool = True, write_path: str = ""):
-    """B6: Persist an API key for a provider (NO secrets in audit exports).
-    Stores to the standard keys file schema: {"providers": {"gemini": {"api_key_plain": "..."} } }.
-    """
+def _normalize_provider_key_id(provider: str) -> str:
     try:
-        p = (provider or '').strip().lower()
-        if not p:
-            return {'ok': False, 'error': 'provider_missing'}
+        p = str(provider or '').strip().lower()
+    except Exception:
+        p = ''
+    if p in {'google'}:
+        return 'gemini'
+    if p in {'hf'}:
+        return 'huggingface'
+    return p
+
+
+def _provider_key_env_names(provider: str) -> list[str]:
+    p = _normalize_provider_key_id(provider)
+    if p == 'gemini':
+        return ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+    if p == 'openrouter':
+        return ['OPENROUTER_API_KEY']
+    if p == 'huggingface':
+        return ['HF_TOKEN', 'HUGGINGFACE_TOKEN']
+    return []
+
+
+def set_api_key_for_provider(
+    self,
+    provider: str,
+    api_key: str,
+    *,
+    persist: bool = True,
+    write_path: str = "",
+    encrypt: bool = False,
+    passphrase: str = "",
+):
+    """Persist an API key for a provider with optional Fernet encryption."""
+    try:
+        p = _normalize_provider_key_id(provider)
+        if p not in {'gemini', 'openrouter', 'huggingface'}:
+            return {'ok': False, 'error': f'unsupported_provider:{p or "missing"}'}
         if api_key is None:
             api_key = ''
-        api_key = str(api_key)
+        api_key = str(api_key).strip()
+        encrypt = bool(encrypt)
+        passphrase = str(passphrase or '').strip()
 
         # Determine path
         target = write_path or os.path.join(CONFIG_DIR, 'Comm-SCI-API-Keys.json')
@@ -15792,9 +17203,37 @@ def set_api_key_for_provider(self, provider: str, api_key: str, *, persist: bool
             entry = {}
             providers[p] = entry
 
-        # Store as plain by default (MVP), but keep encryption-ready fields intact if present.
-        entry['api_key_plain'] = api_key
-        # Do NOT write secrets anywhere else (no audit, no logs).
+        if encrypt:
+            if not api_key:
+                return {'ok': False, 'error': 'api_key_missing'}
+            if not passphrase:
+                return {'ok': False, 'error': 'passphrase_missing'}
+            enc_b64, salt_b64 = _try_encrypt_api_key(api_key, passphrase=passphrase)
+            if not enc_b64 or not salt_b64:
+                return {'ok': False, 'error': 'encrypt_failed_or_cryptography_missing'}
+            entry['api_key_plain'] = ''
+            entry['api_key_enc'] = enc_b64
+            entry['api_key_salt'] = salt_b64
+            entry['enc_scheme'] = 'fernet'
+            try:
+                os.environ['COMM_SCI_KEY_PASSPHRASE'] = passphrase
+            except Exception:
+                pass
+        else:
+            entry['api_key_plain'] = api_key
+            entry.pop('api_key_enc', None)
+            entry.pop('api_key_salt', None)
+            entry.pop('enc_scheme', None)
+
+        # Keep current process usable without restart.
+        for env_name in _provider_key_env_names(p):
+            try:
+                if api_key:
+                    os.environ[env_name] = api_key
+                else:
+                    os.environ.pop(env_name, None)
+            except Exception:
+                pass
 
         if persist:
             if _storage is not None and hasattr(_storage, 'write_json'):
@@ -15805,6 +17244,99 @@ def set_api_key_for_provider(self, provider: str, api_key: str, *, persist: bool
             else:
                 with open(target, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
+
+        # Recreate provider session best-effort so key changes are effective immediately.
+        try:
+            rf = getattr(self, '_recreate_chat_session', None)
+            if callable(rf):
+                try:
+                    with_gov = bool(getattr(self, 'session_with_governance', True))
+                except Exception:
+                    with_gov = True
+                try:
+                    rf(with_governance=with_gov, reason='api_key_update')
+                except TypeError:
+                    rf(with_gov)
+        except Exception:
+            pass
+
+        return {'ok': True, 'path': target, 'provider': p, 'encrypted': bool(encrypt)}
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+
+
+def delete_api_key_for_provider(self, provider: str, *, persist: bool = True, write_path: str = ""):
+    """Delete key material for one provider from key file and process env."""
+    try:
+        p = _normalize_provider_key_id(provider)
+        if p not in {'gemini', 'openrouter', 'huggingface'}:
+            return {'ok': False, 'error': f'unsupported_provider:{p or "missing"}'}
+
+        target = write_path or os.path.join(CONFIG_DIR, 'Comm-SCI-API-Keys.json')
+        _storage = None
+        try:
+            _storage = getattr(self, 'storage_service', None)
+        except Exception:
+            _storage = None
+        if _storage is None and _StorageService is not None:
+            try:
+                _storage = _StorageService()
+            except Exception:
+                _storage = None
+
+        data = {}
+        if os.path.exists(target):
+            try:
+                if _storage is not None and hasattr(_storage, 'read_json'):
+                    data = _storage.read_json(target) or {}
+                else:
+                    with open(target, 'r', encoding='utf-8') as f:
+                        data = json.load(f) or {}
+            except Exception:
+                data = {}
+
+        providers = data.get('providers')
+        if not isinstance(providers, dict):
+            providers = {}
+            data['providers'] = providers
+
+        entry = providers.get(p)
+        if isinstance(entry, dict):
+            for k in ('api_key_plain', 'api_key', 'api_key_enc', 'api_key_salt', 'enc_scheme'):
+                entry.pop(k, None)
+            if not entry:
+                providers.pop(p, None)
+
+        for env_name in _provider_key_env_names(p):
+            try:
+                os.environ.pop(env_name, None)
+            except Exception:
+                pass
+
+        if persist:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            if _storage is not None and hasattr(_storage, 'write_json'):
+                ok = bool(_storage.write_json(target, data, indent=2, ensure_ascii=False))
+                if not ok:
+                    with open(target, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+            else:
+                with open(target, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+
+        try:
+            rf = getattr(self, '_recreate_chat_session', None)
+            if callable(rf):
+                try:
+                    with_gov = bool(getattr(self, 'session_with_governance', True))
+                except Exception:
+                    with_gov = True
+                try:
+                    rf(with_governance=with_gov, reason='api_key_delete')
+                except TypeError:
+                    rf(with_gov)
+        except Exception:
+            pass
 
         return {'ok': True, 'path': target, 'provider': p}
     except Exception as e:
@@ -16879,9 +18411,9 @@ class ProviderRouter:
 
         Key lookup order:
           1) ENV var from providers.openrouter.api_key_env (default OPENROUTER_API_KEY)
-          2) Config/Comm-SCI-Config.json: providers.openrouter.api_key_plain
+          2) Config/Comm-SCI-Config.json: providers.openrouter.api_key_plain / api_key_enc
           3) Key file (KEYS_PATH):
-             - provider-structured: providers.openrouter.api_key_plain
+             - provider-structured: providers.openrouter.api_key_plain / api_key_enc
              - legacy: OPENROUTER_API_KEY field
         """
         try:
@@ -16902,6 +18434,15 @@ class ProviderRouter:
             if not key:
                 key = (pconf.get('api_key_plain') or '').strip()
 
+            # 2b) config encrypted
+            if not key:
+                enc = (pconf.get('api_key_enc') or '').strip()
+                salt = (pconf.get('api_key_salt') or '').strip()
+                scheme = (pconf.get('enc_scheme') or '').strip().lower()
+                if enc and salt and (scheme in {'fernet', ''}):
+                    passphrase = (os.environ.get('COMM_SCI_KEY_PASSPHRASE') or '').strip()
+                    key = (_try_decrypt_api_key(enc, passphrase=passphrase, salt_b64=salt) or '').strip()
+
             # 3) key file fallback (provider-structured or legacy)
             if not key and os.path.exists(KEYS_PATH):
                 try:
@@ -16912,6 +18453,13 @@ class ProviderRouter:
                             o = provs2.get(provider) or {}
                             if isinstance(o, dict):
                                 key = (o.get('api_key_plain') or o.get('api_key') or '').strip()
+                                if not key:
+                                    enc = (o.get('api_key_enc') or '').strip()
+                                    salt = (o.get('api_key_salt') or '').strip()
+                                    scheme = (o.get('enc_scheme') or '').strip().lower()
+                                    if enc and salt and (scheme in {'fernet', ''}):
+                                        passphrase = (os.environ.get('COMM_SCI_KEY_PASSPHRASE') or '').strip()
+                                        key = (_try_decrypt_api_key(enc, passphrase=passphrase, salt_b64=salt) or '').strip()
                         if not key:
                             key = (data.get('OPENROUTER_API_KEY') or '').strip()
                 except Exception:
@@ -16929,8 +18477,8 @@ class ProviderRouter:
 
         Key lookup order:
           1) ENV var from providers.huggingface.api_key_env (default HF_TOKEN)
-          2) Config plaintext providers.huggingface.api_key_plain
-          3) Key file (KEYS_PATH): providers.huggingface.api_key_plain (or legacy HF_TOKEN fields)
+          2) Config providers.huggingface.api_key_plain / api_key_enc
+          3) Key file (KEYS_PATH): providers.huggingface.api_key_plain / api_key_enc (or legacy HF_TOKEN fields)
         """
         try:
             provider = 'huggingface'
@@ -16950,6 +18498,15 @@ class ProviderRouter:
             if not key:
                 key = (pconf.get('api_key_plain') or '').strip()
 
+            # 2b) config encrypted
+            if not key:
+                enc = (pconf.get('api_key_enc') or '').strip()
+                salt = (pconf.get('api_key_salt') or '').strip()
+                scheme = (pconf.get('enc_scheme') or '').strip().lower()
+                if enc and salt and (scheme in {'fernet', ''}):
+                    passphrase = (os.environ.get('COMM_SCI_KEY_PASSPHRASE') or '').strip()
+                    key = (_try_decrypt_api_key(enc, passphrase=passphrase, salt_b64=salt) or '').strip()
+
             # 3) key file fallback
             if not key and os.path.exists(KEYS_PATH):
                 try:
@@ -16960,6 +18517,13 @@ class ProviderRouter:
                             h = provs2.get('huggingface') or provs2.get('hf') or {}
                             if isinstance(h, dict):
                                 key = (h.get('api_key_plain') or h.get('api_key') or '').strip()
+                                if not key:
+                                    enc = (h.get('api_key_enc') or '').strip()
+                                    salt = (h.get('api_key_salt') or '').strip()
+                                    scheme = (h.get('enc_scheme') or '').strip().lower()
+                                    if enc and salt and (scheme in {'fernet', ''}):
+                                        passphrase = (os.environ.get('COMM_SCI_KEY_PASSPHRASE') or '').strip()
+                                        key = (_try_decrypt_api_key(enc, passphrase=passphrase, salt_b64=salt) or '').strip()
                         if not key:
                             key = (data.get('HF_TOKEN') or data.get('HUGGINGFACE_TOKEN') or '').strip()
                 except Exception:
@@ -16969,9 +18533,31 @@ class ProviderRouter:
         except Exception:
             return None
 
+    def _models_cache_path(self, filename: str) -> str:
+        """Return cache path in Logs/Cache with best-effort migration from legacy Config path."""
+        name = str(filename or '').strip() or 'models_cache.json'
+        try:
+            target = os.path.join(CACHE_LOG_DIR, name)
+        except Exception:
+            target = name
+        try:
+            legacy = os.path.join(CONFIG_DIR, name)
+        except Exception:
+            legacy = ''
+
+        # Legacy migration: keep existing cache content when path moved from Config -> Logs/Cache.
+        try:
+            if target and legacy and (not os.path.exists(target)) and os.path.exists(legacy):
+                raw = _storage_read_text(legacy, encoding='utf-8')
+                if raw:
+                    _storage_write_text(target, raw, encoding='utf-8')
+        except Exception:
+            pass
+        return target
+
     def _gemini_cache_path(self) -> str:
         try:
-            return os.path.join(CONFIG_DIR, 'gemini_models_cache.json')
+            return self._models_cache_path('gemini_models_cache.json')
         except Exception:
             return 'gemini_models_cache.json'
 
@@ -17122,7 +18708,7 @@ class ProviderRouter:
 
     def _openrouter_cache_path(self) -> str:
         try:
-            return os.path.join(CONFIG_DIR, 'openrouter_models_cache.json')
+            return self._models_cache_path('openrouter_models_cache.json')
         except Exception:
             return 'openrouter_models_cache.json'
 
@@ -17253,7 +18839,7 @@ class ProviderRouter:
 
     def _huggingface_cache_path(self) -> str:
         try:
-            return os.path.join(CONFIG_DIR, 'huggingface_models_cache.json')
+            return self._models_cache_path('huggingface_models_cache.json')
         except Exception:
             return 'huggingface_models_cache.json'
 
@@ -17342,7 +18928,7 @@ class ProviderRouter:
 
     def _openrouter_cache_path(self) -> str:
         try:
-            return os.path.join(CONFIG_DIR, 'openrouter_models_cache.json')
+            return self._models_cache_path('openrouter_models_cache.json')
         except Exception:
             return 'openrouter_models_cache.json'
 
@@ -17447,7 +19033,7 @@ class ProviderRouter:
     # ----------------------------
     def _huggingface_catalog_cache_path(self) -> str:
         try:
-            return os.path.join(CONFIG_DIR, "huggingface_catalog_cache.json")
+            return self._models_cache_path("huggingface_catalog_cache.json")
         except Exception:
             return os.path.join(".", "huggingface_catalog_cache.json")
 
@@ -17667,6 +19253,19 @@ class ProviderService:
         if p == "gemini":
             return "gemini"
         return "openrouter"
+
+    def supports_native_retrieval(self, provider: str) -> bool:
+        """Return whether this provider path can wire native retrieval tools in wrapper runtime."""
+        pid = self.canonical_provider_id(provider)
+        if pid == "gemini":
+            return True
+        try:
+            r = self.router
+            if r is not None and hasattr(r, "supports_native_retrieval"):
+                return bool(r.supports_native_retrieval(pid))
+        except Exception:
+            pass
+        return False
 
     def get_openai_client(self, provider: str):
         pid = self.canonical_provider_id(provider)
@@ -17988,6 +19587,7 @@ class Api(CSCRefiner):
         self.panel_win = None
         self.panel_hidden = False
         self._qc_override_open = False
+        self._exit_confirm_open = False
         self._qc_override_prompt_reset_pending = False
 
         # Panel API bridge (small surface to avoid pywebview method enumeration issues)
@@ -18042,6 +19642,9 @@ class Api(CSCRefiner):
         # Closing guard (prevents double-exit)
         self.is_closing = False
         self._connect_inflight = False  # connect dedupe guard
+        self._passphrase_pending_provider = ""
+        self._passphrase_pending_reason = ""
+        self._passphrase_pending_since = ""
 
         # Persisted geometry (best-effort)
         self.panel_geom = {}
@@ -18087,6 +19690,12 @@ class Api(CSCRefiner):
         self.history = []
         self._last_content_user_prompt = ""
         self._last_response_is_content_answer = False
+        self.input_history_max_entries = 200
+        self.input_cmd_history = []
+        try:
+            self.input_cmd_history = self._load_input_history_entries()
+        except Exception:
+            self.input_cmd_history = []
 
         # Runtime governance state (fail-safe default)
         try:
@@ -18377,6 +19986,8 @@ else:
         "ask",
         "remote_cmd",
         "submit_cgi_feedback",
+        "get_input_history",
+        "append_input_history",
         "ui_qc_bar_enabled",
         "is_ready",
         "ping",
@@ -18386,6 +19997,8 @@ else:
         "export",
         "settings",
         "close_app",
+        "set_exit_confirm_open",
+        "get_help_content",
     ):
         setattr(MainBridge, _mb_name, _main_bridge_forwarder(_mb_name))
 
@@ -18529,7 +20142,7 @@ except Exception:
 # FIXUP: bind top-level helpers into Api
 # (Some patch steps can accidentally place helper defs at module scope.)
 # ----------------------------
-for _name in ("_render_error_html", "_safe_html", "_handle_command_deterministic", "_as_dict", "_as_list", "_safe_get", "_render_error_fallback", "set_api_key_for_provider", "load_log_from_path"):
+for _name in ("_render_error_html", "_safe_html", "_handle_command_deterministic", "_as_dict", "_as_list", "_safe_get", "_render_error_fallback", "set_api_key_for_provider", "delete_api_key_for_provider", "load_log_from_path"):
     if _name in globals() and not hasattr(Api, _name):
         setattr(Api, _name, globals()[_name])
 

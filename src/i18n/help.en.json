@@ -1,0 +1,91 @@
+{
+  "button_label": "? Help",
+  "title": "Comm-SCI Help",
+  "subtitle": "Deterministic wrapper guidance: startup, command routing, SCI, quality control, citation",
+  "close_label": "Close",
+  "sections": [
+    {
+      "id": "quickstart",
+      "title": "Quickstart (Production)",
+      "items": [
+        "Load a ruleset via the folder icon and verify Comm State before first content task.",
+        "Connect provider/model in panel, then run Comm Start as standalone command.",
+        "Select profile explicitly (for example Profile Expert) and only then ask your task.",
+        "Use Comm Anchor and Comm Audit periodically in long sessions."
+      ]
+    },
+    {
+      "id": "commands",
+      "title": "Command Discipline",
+      "items": [
+        "Commands are standalone-only: send only the command token line, no mixed content.",
+        "Comm State / Comm Config / Comm Help / Comm Audit are local deterministic renderers.",
+        "Comm Stop disables Comm governance flow for following content answers.",
+        "Profile switches are explicit and auditable via command history."
+      ]
+    },
+    {
+      "id": "sci",
+      "title": "SCI Workflow",
+      "items": [
+        "After SCI on, select a variant A-H in the next prompt while selection is pending.",
+        "SCI Trace steps depend on selected variant and are validated by output contracts.",
+        "Use SCI recurse only when SCI is active and you need one-turn deeper analysis.",
+        "Use SCI off to return to non-trace content mode."
+      ]
+    },
+    {
+      "id": "quality",
+      "title": "Quality and Language Policy",
+      "items": [
+        "QC-Matrix and Self-Debunking are enforced by contracts for content answers.",
+        "QC override values change effective QC targets and are visible in Comm State.",
+        "Language policy production keeps user-facing output strict and concise.",
+        "Language policy benchmark is for controlled evaluation and regression comparison."
+      ]
+    },
+    {
+      "id": "wrapper_components",
+      "title": "Wrapper Components and Effect",
+      "items": [
+        "Provider/Model selection controls runtime behavior and rendering characteristics.",
+        "Comm commands change explicit state (profile, SCI mode, overlays, color, policy).",
+        "Audit and logs provide traceability for troubleshooting and regression analysis.",
+        "Manual test scenarios validate deterministic contracts before release."
+      ]
+    },
+    {
+      "id": "api_keys",
+      "title": "API keys: plaintext vs encrypted",
+      "items": [
+        "Panel path: Provider & LLM -> API-Key; enter, update, or delete keys per provider.",
+        "api_key_plain means local plaintext storage without passphrase prompts.",
+        "api_key_enc means local encrypted storage with passphrase prompts.",
+        "Passphrase is requested on startup or provider switch only when the target provider uses encrypted key storage."
+      ]
+    },
+    {
+      "id": "troubleshooting",
+      "title": "Troubleshooting",
+      "items": [
+        "If a command appears ignored, check standalone formatting and Comm State first.",
+        "If panel buttons are clicked rapidly, wait for command completion before next action.",
+        "If provider calls fail, validate API key, provider selection and model availability.",
+        "If structure drifts, run Comm Anchor and Comm Audit before continuing.",
+        "Input-line history is auto-saved in Logs/History on shutdown and auto-loaded at startup."
+      ]
+    },
+    {
+      "id": "citation",
+      "title": "Citation and DOI",
+      "items": [
+        "Wrapper concept DOI: 10.5281/zenodo.18445672",
+        "Ruleset concept DOI: 10.5281/zenodo.17928357",
+        "Ruleset website: https://vfi64.github.io/Comm-SCI-Control/",
+        "License: Apache-2.0 (see LICENSE)",
+        "Maintainer: Volker Fickert"
+      ]
+    }
+  ],
+  "footer": "Tip: Press F1 to open this modal at any time. Comm Help in chat shows the command set from the active ruleset."
+}

@@ -1,5 +1,7 @@
 Config/Comm-SCI-API-Keys.json
+# Legacy location (before cache move to Logs/Cache)
 Config/*models_cache.json
+Logs/Cache/*.json
 *.env
 .env
 .env.*
@@ -8,6 +10,15 @@ Logs/**
 !Logs/**/
 !Logs/**/.gitkeep
 !Logs/**/.gitikeep
+
+# Explicit retention policy for these runtime directories:
+# keep directory structure via .gitikeep only, ignore all generated files.
+Logs/History/**
+!Logs/History/
+!Logs/History/.gitikeep
+Logs/Cache/**
+!Logs/Cache/
+!Logs/Cache/.gitikeep
 
 __pycache__/
 *.pyc

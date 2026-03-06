@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Comm-SCI-Control Wrapper | Beginner Installation (EN)</title>
+    <meta
+      name="description"
+      content="Beginner installation guide for Comm-SCI-Control wrapper: download, prerequisites, setup, first start, API keys, confidentiality, and cost notes."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/landing.css" />
+  </head>
+  <body>
+    <div class="bg-glow bg-glow-a" aria-hidden="true"></div>
+    <div class="bg-glow bg-glow-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="index.html#install">
+        <span class="brand-mark">CSC</span>
+        <span class="brand-text">Beginner Installation</span>
+      </a>
+      <nav class="nav-links" aria-label="Beginner install navigation">
+        <a href="#download">Download</a>
+        <a href="#setup">Setup</a>
+        <a href="#apikeys">API keys</a>
+        <a href="#security">Security</a>
+      </nav>
+      <div class="topbar-actions">
+        <a class="btn btn-line" href="install-pro.html">Professional track</a>
+        <a class="btn btn-line" href="index.html">Landing page</a>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero reveal">
+        <p class="eyebrow">Didactic onboarding</p>
+        <h1>
+          Installation for non-technical users.
+          <span>Simple path from download to first successful run.</span>
+        </h1>
+        <p class="hero-copy">
+          This page is optimized for first-time users. If you need reproducible
+          engineering workflows and diagnostics, use the professional track.
+        </p>
+      </section>
+
+      <section id="download" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Step 1</p>
+          <h2>Get the repository (link, download, unpack)</h2>
+        </div>
+        <div class="matrix">
+          <article class="matrix-card reveal">
+            <h3>Option A: ZIP download</h3>
+            <p>Use <em>Code -> Download ZIP</em> on GitHub, unpack locally, open terminal in the unpacked folder.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Option B: Git clone</h3>
+            <p><code>git clone https://github.com/vfi64/wrapper.git</code><br/>Then enter the directory.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="setup" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Step 2-4</p>
+          <h2>Prerequisites, install, start</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr><th>Topic</th><th>Instruction</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Prerequisites</td><td>Python 3.10+, terminal access, internet for package install and provider APIs.</td></tr>
+            <tr><td>Install dependencies</td><td><code>bash scripts/setup_venv.sh</code></td></tr>
+            <tr><td>Activate virtual env</td><td><code>source .venc/bin/activate</code></td></tr>
+            <tr><td>Start wrapper</td><td><code>python Comm-SCI-Control-App.py</code></td></tr>
+            <tr><td>Optional base test</td><td><code>python -m pytest -q tests</code></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="apikeys" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Step 5</p>
+          <h2>Create and configure API keys</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Create key</th>
+              <th>Pricing</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Gemini</td>
+              <td><a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a></td>
+              <td><a href="https://ai.google.dev/pricing">ai.google.dev/pricing</a></td>
+            </tr>
+            <tr>
+              <td>OpenRouter</td>
+              <td><a href="https://openrouter.ai/keys">openrouter.ai/keys</a></td>
+              <td><a href="https://openrouter.ai/models">openrouter.ai/models</a></td>
+            </tr>
+            <tr>
+              <td>Hugging Face</td>
+              <td><a href="https://huggingface.co/settings/tokens">huggingface.co/settings/tokens</a></td>
+              <td><a href="https://huggingface.co/pricing">huggingface.co/pricing</a></td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hero-copy" style="margin-top:0.9rem;">
+          Keys can be provided via environment variables or local
+          <code>Config/Comm-SCI-API-Keys.json</code>.
+          For team/production-like setups, prefer environment variables.
+        </p>
+        <table class="doi-table" style="margin-top:0.9rem;">
+          <thead>
+            <tr>
+              <th>Storage mode</th>
+              <th>Wrapper behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>api_key_plain</code></td>
+              <td>Stored locally as plaintext. No passphrase dialog on startup or provider switch.</td>
+            </tr>
+            <tr>
+              <td><code>api_key_enc</code></td>
+              <td>Stored locally encrypted. Passphrase dialog appears whenever that provider is activated.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hero-copy" style="margin-top:0.9rem;">
+          Manage keys in-app via panel section <code>Provider &amp; LLM</code>, then click <code>API-Key</code>, select provider, and save.
+        </p>
+      </section>
+
+      <section id="security" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Important</p>
+          <h2>Key confidentiality and cost awareness</h2>
+        </div>
+        <div class="card-grid">
+          <article class="info-card reveal">
+            <h3>Protect keys</h3>
+            <p>Never place API keys in screenshots, chats, issue trackers, or public repositories.</p>
+          </article>
+          <article class="info-card reveal">
+            <h3>Cost notice</h3>
+            <p>Model usage can generate costs. Verify provider pricing and limits before productive use.</p>
+          </article>
+          <article class="info-card reveal">
+            <h3>If a key leaks</h3>
+            <p>Revoke immediately, rotate credentials, and update local/runtime configuration.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Beginner installation (EN). Continue with:
+        <a href="install-pro.html">professional installation</a> |
+        <a href="glossary.html">glossary</a> |
+        <a href="HANDBOOK.md">handbook</a>
+      </p>
+    </footer>
+
+    <script src="assets/landing.js"></script>
+  </body>
+</html>

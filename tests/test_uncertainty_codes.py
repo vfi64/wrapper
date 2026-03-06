@@ -11,6 +11,12 @@ def test_find_uncertainty_codes_keeps_order_and_uniqueness():
     assert out == ["U4", "U1"]
 
 
+def test_find_uncertainty_codes_supports_u8():
+    txt = "Retrieval issue: U8 and later U1."
+    out = sut.find_uncertainty_codes(txt)
+    assert out == ["U8", "U1"]
+
+
 def test_append_uncertainty_legend_html_is_disabled_and_strips_existing_legend():
     src = "<p>Uncertainty: U2 - assumptions unclear.</p>"
     with_legend = src + "<details class='uncertainty-legend'><summary>X</summary></details>"
@@ -31,6 +37,12 @@ def test_infer_uncertainty_codes_detects_structural_limitations():
     txt = "<p>Das ist eine komplexe Herausforderung. Es gibt keine einfache oder perfekte Loesung.</p>"
     out = sut.infer_uncertainty_codes(txt)
     assert "U5" in out
+
+
+def test_infer_uncertainty_codes_detects_retrieval_metadata_gap():
+    txt = "<p>WEB claim without QualityClass and retrieval tool unavailable in this run.</p>"
+    out = sut.infer_uncertainty_codes(txt)
+    assert "U8" in out
 
 
 def test_ensure_uncertainty_annotations_adds_inline_marker_without_legend():
@@ -74,7 +86,7 @@ def test_inline_markers_skip_control_layer_note_and_keep_content_markers():
         "<div class='control-layer-note csc-warning'>"
         "<b>CONTROL LAYER NOTE</b>"
         "<ul class='control-layer-violations'>"
-        "<li class='control-layer-violation'>Verification Route Gate: RED claim requires uncertainty label (U1-U6).</li>"
+        "<li class='control-layer-violation'>Verification Route Gate: RED claim requires uncertainty label (U1-U8).</li>"
         "</ul>"
         "</div>"
         "<p>Unsicherheit: U1 - Datenluecke im Inhaltsteil.</p>"

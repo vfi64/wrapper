@@ -92,9 +92,17 @@ JSON_PATH = ROOT / 'JSON' / 'Comm-SCI-v20.0.3.json'
 if not JSON_PATH.exists():
     JSON_PATH = ROOT / 'JSON' / 'Comm-SCI-v20.0.2.json'
 if not JSON_PATH.exists():
+    JSON_PATH = ROOT / 'JSON' / 'Comm-SCI-v20.1.0.json'
+if not JSON_PATH.exists():
+    JSON_PATH = ROOT / 'JSON' / 'Comm-SCI-v20.2.0.json'
+if not JSON_PATH.exists():
     JSON_PATH = ROOT / 'Comm-SCI-v20.0.3.json'
 if not JSON_PATH.exists():
     JSON_PATH = ROOT / 'Comm-SCI-v20.0.2.json'
+if not JSON_PATH.exists():
+    JSON_PATH = ROOT / 'Comm-SCI-v20.1.0.json'
+if not JSON_PATH.exists():
+    JSON_PATH = ROOT / 'Comm-SCI-v20.2.0.json'
 
 
 def load_fix_module():
@@ -275,6 +283,89 @@ def _prime_module_gov(mod):
 # ------------------------
 # Routing / Numeric guard
 # ------------------------
+
+def test_governance_manager_loads_operational_v20_2_min_ruleset_with_schema_adapter():
+    mod = load_fix_module()
+    gm = mod.GovernanceManager()
+    p = ROOT / "JSON" / "Comm-SCI-v20.2.0.min.json"
+    assert p.exists(), "Comm-SCI-v20.2.0.min.json not found"
+
+    ok = gm.load_file(str(p))
+    assert ok is True
+    assert gm.data.get("_schema_adapted_from") == "operational_v20"
+    cmds = gm.data.get("commands") or {}
+    assert isinstance(cmds.get("primary"), dict)
+    assert isinstance(cmds.get("help_and_codes"), dict)
+    assert isinstance(cmds.get("color_control"), dict)
+    assert "Comm Start" in (cmds.get("primary") or {})
+    assert "Color on" in (cmds.get("color_control") or {})
+
+    toks = ((gm.data.get("parser_contract") or {}).get("command_tokens") or [])
+    assert "Anchor auto on" not in toks
+    assert "Anchor auto off" not in toks
+
+    sci = gm.data.get("sci") or {}
+    vmenu = (sci.get("variant_menu") or {}) if isinstance(sci, dict) else {}
+    variants = (vmenu.get("variants") or {}) if isinstance(vmenu, dict) else {}
+    assert isinstance(variants, dict) and len(variants) >= 8
+    assert "A" in variants and "H" in variants
+    assert isinstance(vmenu.get("menu_output"), dict)
+
+    svs = (((gm.data.get("syntax_rules") or {}).get("special_parsing") or {}).get("sci_variant_selection") or {})
+    assert svs.get("pattern") == "^[A-Ha-h]$"
+    assert int(svs.get("timeout_turns", 0) or 0) >= 1
+
+    gd = gm.data.get("global_defaults") or {}
+    sd_mod = gd.get("self_debunking") or {}
+    assert bool(sd_mod.get("enabled")) is True
+    assert ((sd_mod.get("block") or {}).get("title") or "") == "Self-Debunking"
+
+
+def test_operational_v20_adapter_preserves_variant_b_steps_for_runtime_resolution():
+    mod = load_fix_module()
+    gm = mod.GovernanceManager()
+    p = ROOT / "JSON" / "Comm-SCI-v20.2.0.min.json"
+    assert gm.load_file(str(p)) is True
+
+    api = mod.Api()
+    api.gov = types.SimpleNamespace(data=gm.data)
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "B"
+
+    _vdef, steps, maps_to = api._sci_variant_def("B")
+    assert maps_to == "SCIplus"
+    assert isinstance(steps, list) and len(steps) >= 10
+    assert steps[0] == "Plan"
+    assert "Dialectic_6_Synthesis2" in steps
+    assert steps[-1] == "Learn"
+
+    menu = api._render_sci_menu_html(lang="en")
+    assert "Error: No SCI variants found in canonical JSON." not in menu
+
+
+def test_operational_v20_self_debunking_is_injected_before_qc_footer_when_missing():
+    mod = load_fix_module()
+    gm = mod.GovernanceManager()
+    p = ROOT / "JSON" / "Comm-SCI-v20.2.0.min.json"
+    assert gm.load_file(str(p)) is True
+
+    raw = (
+        "Core answer sentence.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 3 (Δ0) · Evidence 3 (Δ0) · "
+        "Empathy 3 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+    )
+    out = mod.enforce_self_debunking_contract(raw, gm, "Expert", is_command=False, lang="en")
+    assert "Self-Debunking" in out
+    assert out.find("Self-Debunking") < out.find("QC-Matrix:")
+
+
+def test_system_instruction_uses_conversation_language_not_hard_english():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    sys_instr = mod.gov.get_system_instruction()
+    assert "You must reply in English" not in sys_instr
+    assert "current conversation language" in sys_instr
+    assert "Keep canonical command tokens in English." in sys_instr
 
 def test_mixed_command_is_not_executed():
     mod = load_fix_module()
@@ -1620,17 +1711,35 @@ def test_external_panel_asset_manual_test_regexes_are_not_overescaped():
     assert "const hasNumbered = /\\\\b1\\\\.\\\\s*" not in txt
 
 
-def test_chat_header_displays_wrapper_prompt_label():
-    """UI invariant: the chat header must show the current Wrapper-NNN label (no legacy tag)."""
+def test_chat_header_uses_compact_controls_without_redundant_wrapper_label():
+    """UI invariant: top bar should not duplicate window title with an extra wrapper label."""
     mod = load_fix_module()
     html = getattr(mod, 'HTML_CHAT', '')
     assert isinstance(html, str) and html
-    wrapper_name = getattr(mod, 'WRAPPER_NAME', '') or Path(getattr(mod, '__file__', '')).stem
-    assert wrapper_name and wrapper_name in html
-    # Must not use the old arrow-style header and must not wrap the wrapper label in square brackets.
-    assert 'Wrapper-&gt;' not in html
-    assert f'>{wrapper_name}<' in html
-    assert '[Wrapper-' not in html
+    assert '__WRAPPER_LABEL__' not in html
+    assert 'load_rule_file()' in html
+    assert 'id="rulefile"' in html
+    assert 'onclick="openExitConfirm()"' in html
+    assert 'onclick="window.pywebview.api.close_app()"' not in html
+
+
+def test_chat_exit_button_uses_confirm_dialog_with_english_actions():
+    mod = load_fix_module()
+    html = getattr(mod, 'HTML_CHAT', '')
+    assert isinstance(html, str) and html
+    assert 'id="exitConfirmOverlay"' in html
+    assert 'Exit Application' in html
+    assert '>Cancel<' in html
+    assert '>Exit<' in html
+    assert 'function openExitConfirm()' in html
+    assert 'function closeExitConfirm()' in html
+    assert 'async function confirmExit()' in html
+    assert 'set_exit_confirm_open(true)' in html
+    assert 'set_exit_confirm_open(false)' in html
+    assert 'id="helpModalOverlay"' in html
+    assert 'id="helpBtn"' in html
+    assert 'async function openHelpModal()' in html
+    assert "if(String(e.key || '').toUpperCase() === 'F1')" in html
 
 
 def test_chat_input_history_supports_arrow_up_down_navigation():
@@ -1644,6 +1753,17 @@ def test_chat_input_history_supports_arrow_up_down_navigation():
     assert "_cmdHistApply(1)" in html
 
 
+def test_chat_send_path_queues_requests_serially():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_CHAT", "")
+    assert isinstance(html, str) and html
+    assert "let _sendInFlight = false;" in html
+    assert "const _sendQueue = [];" in html
+    assert "async function _drainSendQueue()" in html
+    assert "while(_sendQueue.length)" in html
+    assert "_enqueueSend(txt)" in html
+
+
 def test_chat_uncertainty_tooltip_supports_mouse_hold():
     mod = load_fix_module()
     html = getattr(mod, "HTML_CHAT", "")
@@ -1655,6 +1775,9 @@ def test_chat_uncertainty_tooltip_supports_mouse_hold():
     assert ".csc-badge" in html
     assert ".csc-warning" in html
     assert ".control-layer-note" in html
+    assert ".copy-btn" in html
+    assert ".qc-dim-tip" in html
+    assert "[data-u-title]" in html
     assert "csc-help-icon" in html
     assert "document.addEventListener('mousedown'" in html
     assert "document.addEventListener('mouseup', _uTipHide)" in html
@@ -1755,7 +1878,7 @@ def test_append_uncertainty_explanation_skips_control_layer_note_and_marks_conte
         "<div class='control-layer-note csc-warning'>"
         "<b>CONTROL LAYER NOTE</b>"
         "<ul class='control-layer-violations'>"
-        "<li class='control-layer-violation'>Verification Route Gate: RED claim requires uncertainty label (U1-U6).</li>"
+        "<li class='control-layer-violation'>Verification Route Gate: RED claim requires uncertainty label (U1-U8).</li>"
         "</ul>"
         "</div>"
         "<p>Unsicherheit: U1 - Datenluecke im Inhaltsteil.</p>"
@@ -1990,6 +2113,14 @@ def test_startup_default_provider_and_model_are_gemini():
     assert getattr(cfg, 'get_active_provider', lambda: None)() == 'gemini'
     assert getattr(cfg, 'get_provider_model', lambda _p=None: '')('gemini') == 'gemini-2.0-flash'
 
+
+def test_default_ruleset_prefers_v20_2_0_when_available():
+    mod = load_fix_module()
+    default_json = Path(str(getattr(mod, 'DEFAULT_JSON', '') or ''))
+    target = ROOT / 'JSON' / 'Comm-SCI-v20.2.0.json'
+    if target.exists():
+        assert default_json.name == 'Comm-SCI-v20.2.0.json'
+
 def test_can_switch_back_to_gemini_after_other_provider():
     """Regression: switching back to gemini must not be blocked by a broken no-op guard."""
     mod = load_fix_module()
@@ -2023,10 +2154,15 @@ def test_panel_html_qc_override_button_is_not_hf_only():
     assert isinstance(html, str) and html
     i_btn = html.find('id="qcOverrideBtn"')
     assert i_btn != -1, "QC Override button must be present in panel HTML"
-    i_hf = html.find('id="hfCatalogRow"')
-    assert i_hf != -1
-    # Button should be outside HF-only row (so it appears for Gemini/OpenRouter as well)
-    assert i_btn < i_hf, "QC Override button must not be nested inside HF-only controls"
+    i_hf_start = html.find('id="hfCatalogRow"')
+    assert i_hf_start != -1
+    i_hf_end = html.find('</div>', i_hf_start)
+    if i_hf_end == -1:
+        i_hf_end = i_hf_start + 800
+    hf_block = html[i_hf_start:i_hf_end]
+    # QC must be rendered from the runtime/governance section, not from HF-only controls.
+    assert 'qcOverrideBtn' not in hf_block
+    assert "section('Runtime & Governance'" in html
 
 
 def test_panel_html_hf_topn_allows_up_to_10000():
@@ -2045,6 +2181,82 @@ def test_panel_html_qc_override_onclick_is_valid():
     assert i != -1
     snippet = html[i:i+200]
     assert "onclick=\"run('QC Override')\"" in snippet, snippet
+
+
+def test_panel_html_respects_qc_override_visibility_flag():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_PANEL", "")
+    assert isinstance(html, str) and html
+    assert "function _mergeRuntimeItems(overlays, tools, opts)" in html
+    assert "const showQc = !!(opts && opts.qcOverrideVisible);" in html
+    assert "typeof data.qc_override_visible === 'boolean'" in html
+    assert "_mergeRuntimeItems(data.overlays, data.tools, {qcOverrideVisible: qcVisible})" in html
+
+
+def test_panel_html_section_defaults_and_provider_header():
+    mod = load_fix_module()
+    html = getattr(mod, 'HTML_PANEL', '')
+    assert isinstance(html, str) and html
+    assert '<h4>Provider &amp; LLM</h4>' in html
+    assert 'data-store-key="provider" data-default-open="1"' in html
+    assert 'data-store-key="panel" data-default-open="1"' in html
+    assert 'data-store-key="logs" data-default-open="0"' in html
+    assert 'data-store-key="manual_test" data-default-open="0"' in html
+    assert 'data-tip-key="section_panel"' in html
+    assert 'data-tip-key="section_provider"' in html
+    assert 'data-tip-key="section_logs"' in html
+    assert 'data-tip-key="section_manual_test"' in html
+    assert 'section-title-wrap' in html
+    assert 'section-info' in html
+    assert "section('Comm Core', data.comm, 'comm_core');" in html
+    assert "section('Profiles', data.profiles, 'profiles');" in html
+    assert "section('SCI Workflow', data.sci, 'sci_workflow');" in html
+    assert "section('Runtime & Governance', _mergeRuntimeItems(data.overlays, data.tools, {qcOverrideVisible: qcVisible}), 'runtime_governance');" in html
+    assert 'data-tip-key="${_escHtml(sectionTipKey)}"' in html
+    assert '_sectionTipKey(key)' in html
+    assert '#modelSearch { width: 100%;' in html
+    assert '.provider-row { margin-bottom: 8px;' in html
+    assert 'const _sectionStateMem = Object.create(null);' in html
+    assert "Object.prototype.hasOwnProperty.call(_sectionStateMem, key)" in html
+    assert "_bindPanelTooltipEvents();" in html
+
+
+def test_panel_tooltips_use_custom_overlay_and_strip_native_title():
+    mod = load_fix_module()
+    html = getattr(mod, 'HTML_PANEL', '')
+    assert isinstance(html, str) and html
+    assert "function _panelTipShow(target, ev){" in html
+    assert "tip.style.background = '#eff6ff';" in html
+    assert "tip.style.color = '#1e3a8a';" in html
+    assert "_panelTipTarget(e.target)" in html
+    assert "el.removeAttribute('title');" in html
+    assert "setAttribute('title', tip)" not in html
+
+
+def test_chat_template_tooltip_overlay_disables_native_title_tooltips():
+    chat_asset = ROOT / "src" / "ui_assets" / "chat_template.html"
+    txt = chat_asset.read_text(encoding="utf-8")
+    assert '<span class="cgi-help" data-u-title="${escHtml(t.help)}">i</span>' in txt
+    assert 'data-u-title="${escHtml(t.help)}" title=' not in txt
+    assert 'onclick="copyToClipboard(this)" data-u-title=' in txt
+    assert 'onclick="copyToClipboard(this)" title="Copy"' not in txt
+    assert "_decorateQcMatrixTooltips(d, (opts && opts.answerLang) ? opts.answerLang : '');" in txt
+    assert "_qcDimScaleRows(dimKey, lang)" in txt
+    assert "Scale 0-3 (table):" in txt
+    assert "Skala 0-3 (Tabelle):" in txt
+    assert "tip.style.whiteSpace = 'pre-line';" in txt
+    assert "const txt = String(target.getAttribute('data-u-title') || '').trim();" in txt
+    assert "_normalizeCustomTooltipTargets(d);" in txt
+    assert "el.removeAttribute('title');" in txt
+
+
+def test_chat_asset_load_rebuilds_html_chat_after_template_reload():
+    src = (ROOT / "src" / "Comm-SCI-Control-App.py").read_text(encoding="utf-8")
+    marker = 'HTML_CHAT_TEMPLATE = _load_ui_asset_text("chat_template.html", HTML_CHAT_TEMPLATE)'
+    i = src.find(marker)
+    assert i != -1
+    snippet = src[i:i + 260]
+    assert "HTML_CHAT = HTML_CHAT_TEMPLATE.replace('__WRAPPER_LABEL__', html.escape(WRAPPER_NAME))" in snippet
 
 def test_panel_bridge_forwards_ping_get_ui_and_panel_action():
     mod = load_fix_module()
@@ -2293,6 +2505,8 @@ def test_provider_service_canonical_provider_id_maps_aliases():
     assert psvc.canonical_provider_id('openrouter') == 'openrouter'
     assert psvc.canonical_provider_id('gemini') == 'gemini'
     assert psvc.canonical_provider_id('unknown-provider') == 'openrouter'
+    assert psvc.supports_native_retrieval('gemini') is True
+    assert psvc.supports_native_retrieval('openrouter') is False
 
 
 def test_provider_service_reads_config_fallback_models_deduped():
@@ -2624,6 +2838,40 @@ def test_comm_help_renders_without_llm_call_and_emits_events():
     assert "input" in kinds
     assert "route" in kinds
     assert "command" in kinds
+
+
+def test_render_sci_trace_runtime_dedupes_double_trace_blocks_and_keeps_tail_order():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+
+    src = (
+        "Einleitung vor dem Trace.\n\n"
+        "4. SCI Trace (Variante A: Standard)\n"
+        "1. Plan: Erste Plan-Version.\n"
+        "2. Solution: Erste Solution-Version.\n"
+        "3. Check: Erste Check-Version.\n\n"
+        "SCI Trace:\n"
+        "1. Plan: Zweite Plan-Version.\n"
+        "2. Solution: Zweite Solution-Version.\n"
+        "3. Check: Zweite Check-Version.\n\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: Beispiel.\n"
+        "2. Schwäche: Beispiel 2.\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)\n"
+    )
+
+    out = api._render_sci_trace_as_html_runtime(src)
+    assert "class='sci-trace'" in out
+    assert out.count("class='sci-trace'") == 1
+    assert re.search(r"(?im)^\\s*SCI\\s+Trace\\s*:", out) is None
+    assert "4. SCI Trace (Variante A: Standard)" not in out
+    assert "Self-Debunking:" in out
+    assert "QC-Matrix:" in out
+    assert out.find("Self-Debunking:") < out.find("QC-Matrix:")
 
 
 def test_comm_state_renders_without_llm_call():
@@ -2988,6 +3236,14 @@ def test_comm_anchor_off_on_toggles_anchor_snapshot_automation_and_panel_label()
     comm3 = ui3.get('comm') or []
     # When on, the toggle label must offer turning it off
     assert any((isinstance(x, dict) and x.get('cmd') == 'Comm Anchor off') or (x == 'Comm Anchor off') for x in comm3)
+
+
+def test_anchor_auto_alias_is_no_longer_a_valid_command_token():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    route = mod.route_input("Anchor auto off", api.gov_state, api)
+    assert route.get("kind") == "chat"
 
 
 # ----------------------------
@@ -3719,6 +3975,97 @@ def test_stage1_color_on_applies_spans_in_command_and_inactive_paths_ci_safe():
     assert ("#137333" in html_out) or ("#2e7d32" in html_out)
 
 
+def test_apply_csc_strict_keeps_verification_route_lines_visible_by_default():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    raw = (
+        "Antwortteil.\n"
+        "Verification Route:\n"
+        "Source: Primary Source=Example\n"
+        "Measurement: Task=X\n"
+        "Self-Debunking:\n"
+        "1. Weakness: x\n"
+        "2. Weakness: y\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 3 (Δ0) · Evidence 3 (Δ0) · Empathy 3 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+    )
+    html_out, _ = api._apply_csc_strict(raw_response=raw, user_raw="x", is_command=False)
+    txt = re.sub(r"<[^>]+>", " ", str(html_out or ""))
+    assert "Verification Route" in txt
+    assert "Source:" in txt
+    assert "Measurement:" in txt
+
+
+def test_apply_csc_strict_can_hide_verification_route_lines_via_config_toggle():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    cfg_obj = getattr(mod, "cfg", None)
+    old = None
+    try:
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            old = cfg_obj.config.get("hide_verification_route_lines")
+            cfg_obj.config["hide_verification_route_lines"] = True
+
+        raw = (
+            "Antwortteil.\n"
+            "Verification Route:\n"
+            "Source: Primary Source=Example\n"
+            "Web-Check: Query Time=now\n"
+            "Self-Debunking:\n"
+            "1. Weakness: x\n"
+            "2. Weakness: y\n"
+            "QC-Matrix: Clarity 3 (Δ0) · Brevity 3 (Δ0) · Evidence 3 (Δ0) · Empathy 3 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+        )
+        html_out, _ = api._apply_csc_strict(raw_response=raw, user_raw="x", is_command=False)
+        txt = re.sub(r"<[^>]+>", " ", str(html_out or ""))
+        assert "Verification Route" not in txt
+        assert "Source:" not in txt
+        assert "Web-Check:" not in txt
+    finally:
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            if old is None:
+                cfg_obj.config.pop("hide_verification_route_lines", None)
+            else:
+                cfg_obj.config["hide_verification_route_lines"] = old
+
+
+def test_native_retrieval_tool_capability_and_prompt_hint_are_exposed():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    cfg_obj = getattr(mod, "cfg", None)
+    old = None
+    try:
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            provs = cfg_obj.config.setdefault("providers", {})
+            g = provs.setdefault("gemini", {})
+            old = g.get("native_retrieval")
+            g["native_retrieval"] = "on"
+
+        supports = bool(api._provider_supports_native_retrieval("gemini"))
+        tools = api._build_native_tools_for_provider("gemini")
+        if supports:
+            assert isinstance(tools, list)
+            assert len(tools) >= 1
+        else:
+            assert tools == []
+
+        wrapped = api._wrap_user_text_for_model("Was ist Zeit?")
+        assert "[RETRIEVAL TOOL]" in wrapped
+    finally:
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            provs = cfg_obj.config.setdefault("providers", {})
+            g = provs.setdefault("gemini", {})
+            if old is None:
+                g.pop("native_retrieval", None)
+            else:
+                g["native_retrieval"] = old
+
+
 def test_stage2_session_events_ring_buffer_caps_ram_growth(tmp_path):
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -4412,6 +4759,29 @@ def test_strip_sci_trace_line_when_inactive_removes_leaked_inline_trace():
     assert "Antworttext." in out
 
 
+def test_strip_sci_trace_line_when_inactive_removes_section_with_variant_heading():
+    mod = load_fix_module()
+    raw = (
+        "Antworttext.\n\n"
+        "4. SCI Trace (Variante A: Standard)\n"
+        "1. Plan: Erste Fassung.\n"
+        "2. Solution: Erste Fassung.\n"
+        "3. Check: Erste Fassung.\n\n"
+        "SCI Trace:\n"
+        "1. Plan: Zweite Fassung.\n"
+        "2. Solution: Zweite Fassung.\n"
+        "3. Check: Zweite Fassung.\n\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.strip_sci_trace_line_when_inactive(raw, sci_active=False, sci_variant="", sci_pending=False)
+    assert "SCI Trace" not in out
+    assert "Self-Debunking:" in out
+    assert "QC-Matrix:" in out
+    assert "Antworttext." in out
+
+
 def test_strip_sci_trace_line_when_inactive_keeps_trace_when_variant_active():
     mod = load_fix_module()
     raw = "SCI Trace: Plan\n1. Plan: ...\n"
@@ -4513,6 +4883,43 @@ def test_render_sci_trace_runtime_accepts_bullet_step_headers():
     assert "Plan:</div>" in out
     assert "Solution:</div>" in out
     assert "Critic:</div>" in out
+
+
+def test_render_sci_trace_runtime_moves_final_answer_out_of_last_step_block():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+
+    def _variant_def(_v):
+        return ({}, ["Plan", "Solution", "Check"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "SCI Trace:\n"
+        "- Plan\n"
+        "- Solution\n"
+        "- Check\n\n"
+        "Plan: Vorgehen festlegen.\n"
+        "Solution: Struktur aufbauen.\n"
+        "Check: Abschlusskriterium formulieren.\n"
+        "\n"
+        "<span class='signal-dot-marker'>🟢</span>Zeit beschreibt die Ordnung von Ereignissen in Vergangenheit, Gegenwart und Zukunft.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "Zeit beschreibt die Ordnung von Ereignissen" in out
+
+    m = re.search(r"Check:</div>(.*?)</li>", out, flags=re.DOTALL)
+    assert m is not None
+    assert "Zeit beschreibt die Ordnung von Ereignissen" not in m.group(1)
+
+    trace_end = out.find("</ol>\n</div>")
+    final_pos = out.find("Zeit beschreibt die Ordnung von Ereignissen")
+    assert trace_end >= 0
+    assert final_pos > trace_end
 
 
 def test_render_sci_trace_runtime_handles_complex_step_labels_variant_g():
@@ -5294,6 +5701,64 @@ def test_remote_cmd_is_blocked_while_qc_override_modal_is_open():
     assert "bring_to_front" in calls or "show" in calls
 
 
+def test_panel_action_is_blocked_while_exit_confirm_modal_is_open():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    api._exit_confirm_open = True
+
+    out = api.panel_action('list_chat_logs', {'limit': 5})
+    assert isinstance(out, dict)
+    assert out.get('ok') is False
+    assert out.get('error') == 'exit_confirm_open_blocked'
+
+
+def test_remote_cmd_is_blocked_while_exit_confirm_modal_is_open():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.main_win = object()
+    api._exit_confirm_open = True
+
+    out = api.remote_cmd("Comm State")
+    assert isinstance(out, dict)
+    assert out.get("ok") is False
+    assert out.get("error") == "exit_confirm_open_blocked"
+
+
+def test_ask_is_blocked_while_exit_confirm_modal_is_open():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api._exit_confirm_open = True
+    api.chat_session = DummySession(['should-not-run'])  # type: ignore[attr-defined]
+
+    out = api.ask("Was ist Zeit?")
+    assert isinstance(out, dict)
+    html = str(out.get("html") or "")
+    assert "Exit" in html or "Bestaetigung" in html
+    assert api.chat_session.calls == []  # type: ignore[attr-defined]
+
+
+def test_help_content_follows_answer_language():
+    mod = load_fix_module()
+    api = mod.Api()
+
+    api.gov_state.answer_language = "en"
+    en = api.get_help_content()
+    assert isinstance(en, dict) and en.get("ok") is True
+    assert en.get("lang") == "en"
+    assert isinstance(en.get("payload"), dict)
+    assert "Help" in str((en.get("payload") or {}).get("title") or "")
+
+    api.gov_state.answer_language = "de"
+    de = api.get_help_content()
+    assert isinstance(de, dict) and de.get("ok") is True
+    assert de.get("lang") == "de"
+    assert isinstance(de.get("payload"), dict)
+    assert "Hilfe" in str((de.get("payload") or {}).get("title") or "")
+
+
 def test_comm_start_via_input_line_refreshes_panel_ui_state():
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -5321,6 +5786,21 @@ def test_language_script_contract_flags_cyrillic_outside_quote_or_source():
     vios = validator.validate_language_script_contract(txt, expected_lang='de')
 
     assert any('Language contract' in v for v in vios)
+
+
+def test_output_validator_conversation_lang_follows_answer_language_config():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    cfg = getattr(mod, "cfg", None)
+    assert cfg is not None
+
+    cfg.set_answer_language("en")
+    validator = mod.OutputComplianceValidator(mod.gov, cfg)
+    assert validator._conversation_lang() == "en"
+
+    cfg.set_answer_language("de")
+    validator2 = mod.OutputComplianceValidator(mod.gov, cfg)
+    assert validator2._conversation_lang() == "de"
 
 
 def test_language_script_contract_allows_cyrillic_in_quote_and_source_line():
@@ -5434,6 +5914,15 @@ def test_verification_route_gate_red_claim_requires_u_and_route():
 
     assert any('RED claim requires uncertainty label' in v for v in vios)
     assert any('RED claim requires at least one verification route marker' in v for v in vios)
+
+
+def test_verification_route_gate_accepts_u8_marker():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    validator = mod.OutputComplianceValidator(mod.gov, getattr(mod, 'cfg', None))
+    txt = "🔴 RED claim mit downgraded wording und U8, aber ohne Source."
+    vios = validator.validate_verification_route_gate(txt, is_command=False)
+    assert not any("RED claim requires uncertainty label" in v for v in vios)
 
 
 def test_build_repair_prompt_adds_transliteration_guidance_on_language_contract_violation():

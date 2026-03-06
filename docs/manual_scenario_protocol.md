@@ -13,7 +13,7 @@ Deterministisches Grundgeruest fuer den manuellen Szenario-Harness mit:
 
 ## Ausfuehrung
 ```bash
-cd /path/to/Comm-SCI-Control-private
+cd /path/to/wrapper
 ./.venc/bin/python scripts/run_scenario_harness.py
 ```
 

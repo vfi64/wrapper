@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Comm-SCI-Control Wrapper | Glossar (DE)</title>
+    <meta
+      name="description"
+      content="Didaktisches Glossar fuer zentrale Wrapper-Fachbegriffe, SCI-Varianten A-H und QC-Matrix-Bedeutungen."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/landing.css" />
+  </head>
+  <body>
+    <div class="bg-glow bg-glow-a" aria-hidden="true"></div>
+    <div class="bg-glow bg-glow-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="index.de.html#top">
+        <span class="brand-mark">CSC</span>
+        <span class="brand-text">Glossar (DE)</span>
+      </a>
+      <nav class="nav-links" aria-label="Glossar Navigation">
+        <a href="#kernbegriffe">Kernbegriffe</a>
+        <a href="#sci-varianten">SCI A-H</a>
+        <a href="#qc-matrix">QC-Matrix</a>
+      </nav>
+      <div class="topbar-actions">
+        <div class="lang-switch" aria-label="Sprachauswahl">
+          <a class="lang-link" href="glossary.html">EN</a>
+          <span aria-hidden="true">|</span>
+          <a class="lang-link is-active" href="glossar.de.html">DE</a>
+        </div>
+        <a class="btn btn-line" href="index.de.html">Zurueck zur Startseite</a>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero reveal">
+        <p class="eyebrow">Didaktische Begriffserklaerung</p>
+        <h1>
+          Wrapper-Fachbegriffe einfach erklaert.
+          <span>Fuer Schule, Studium, Wissenschaft und kritische Praxisnutzung.</span>
+        </h1>
+        <p class="hero-copy">
+          Ziel dieses Glossars ist, zentrale Comm-SCI-Control-Begriffe ohne Vorwissen
+          verstaendlich zu machen. Begriffe sind jeweils mit Bedeutung und praktischem
+          Nutzen fuer den Alltag im Wrapper beschrieben.
+        </p>
+      </section>
+
+      <section id="kernbegriffe" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Teil 1</p>
+          <h2>Kernbegriffe des Wrappers</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Begriff</th>
+              <th>Bedeutung</th>
+              <th>Warum wichtig</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr id="sci"><td>SCI</td><td>Strukturierter Antwortmodus mit sichtbarem Trace.</td><td>Erhoeht Nachvollziehbarkeit der Argumentation.</td></tr>
+            <tr id="sci-orchestrierung"><td>SCI-Orchestrierung</td><td>Steuerlogik fuer SCI-Aktivierung, Variantenwahl und Trace-Regeln.</td><td>Sichert konsistente SCI-Ausgaben.</td></tr>
+            <tr id="pending-auswahl"><td>Pending-Auswahl</td><td>Zwischenzustand nach `SCI on`, bis A-H ausgewaehlt wurde.</td><td>Verhindert unbeabsichtigte Variantenwechsel.</td></tr>
+            <tr id="trace-step-pflichten"><td>Trace-Step-Pflichten</td><td>Vorgegebene SCI-Schritte, die in der Antwort enthalten sein muessen.</td><td>Erlaubt Contract-Pruefung und Reproduzierbarkeit.</td></tr>
+            <tr id="recurse-verhalten"><td>Recurse-Verhalten</td><td>Temporare vertiefte SCI-Unterspur via `SCI recurse`.</td><td>Hilft bei Teilproblemen ohne Verlust des Hauptkontexts.</td></tr>
+            <tr id="sci-varianten-term"><td>SCI-Varianten</td><td>A-H Methodenprofile fuer unterschiedliche Denkmodi.</td><td>Passt die Denkstruktur an Aufgabentypen an.</td></tr>
+            <tr id="self-debunking"><td>Self-Debunking</td><td>Pflichtblock zur aktiven Selbstkritik der Antwort.</td><td>Reduziert Uebervertrauen und Scheinsicherheit.</td></tr>
+            <tr id="qc-matrix-term"><td>QC-Matrix</td><td>Qualitaetsdimensionen mit Soll-/Ist-Bewertung.</td><td>Macht Antwortqualitaet messbar statt rein subjektiv.</td></tr>
+            <tr id="qc-footer"><td>QC-Footer</td><td>Ausgabezeile mit QC-Werten und ggf. Deltas.</td><td>Erlaubt schnelle Qualitaetskontrolle pro Antwort.</td></tr>
+            <tr id="verification-gates"><td>Verification Gates</td><td>Regeln fuer starke/risikoreiche Aussagen mit Pruefpfaden.</td><td>Schuetzt vor unzureichend belegten Behauptungen.</td></tr>
+            <tr id="runtime-contract"><td>Runtime-Contract</td><td>Technischer Vertrag fuer erlaubte Antwortstruktur.</td><td>Stellt deterministisches Verhalten sicher.</td></tr>
+            <tr id="drift"><td>Drift</td><td>Abweichung vom erwarteten Governance-Verhalten ueber Zeit.</td><td>Fruehwarnsignal fuer Qualitaetsverlust.</td></tr>
+            <tr id="modulstatus"><td>Modulstatus</td><td>Sichtbarer Betriebszustand zentraler Wrapper-Module.</td><td>Hilft bei Diagnose und Fehlerlokalisierung.</td></tr>
+            <tr id="contract-tests"><td>Contract-Tests</td><td>Tests auf formale Verhaltenszusagen.</td><td>Sichern Schnittstellen und Regeln gegen Regressionen.</td></tr>
+            <tr id="regressionstests"><td>Regressionstests</td><td>Tests gegen Rueckfaelle in ehemals gefixtes Verhalten.</td><td>Schuetzt Stabilitaet bei Weiterentwicklung.</td></tr>
+            <tr id="overlay"><td>Overlay</td><td>Zusatzmodus ueber Profil (z. B. Strict/Explore).</td><td>Steuert Stil- und Strengegrad ohne Profilwechsel.</td></tr>
+            <tr id="strict"><td>Strict</td><td>Modus mit strikter Evidenz- und Konsistenzfuehrung.</td><td>Geeignet fuer praezise, risikoaerme Antworten.</td></tr>
+            <tr id="explore"><td>Explore</td><td>Modus mit mehr Hypothesen und kreativer Offenheit.</td><td>Nutzt man fuer Ideation, nicht fuer harte Claims.</td></tr>
+            <tr id="farbkennzeichnungen"><td>Farbkennzeichnungen</td><td>[GREEN]/[YELLOW]/[RED] fuer Evidenzsicherheit.</td><td>Leser sehen Risiko und Sicherheit sofort.</td></tr>
+            <tr id="language-policy"><td>Language Policy</td><td>Sprachregeln fuer Produktions- oder Benchmarkmodus.</td><td>Trennt Nutzerbetrieb und Vergleichsexperimente.</td></tr>
+            <tr id="cgi"><td>CGI</td><td>Cognitive Gain Indicator als Nutzerfeedback-Signal.</td><td>Misst wahrgenommenen Erkenntnis-/Effizienzgewinn.</td></tr>
+            <tr id="qc-overrides"><td>QC-Overrides</td><td>Temporare manuelle Abweichung von QC-Zielwerten.</td><td>Erlaubt gesteuerte Anpassung fuer spezielle Faelle.</td></tr>
+            <tr id="compliance-voraussetzungen"><td>Compliance-Voraussetzungen</td><td>Bedingungen, die vor Ausgabe erfuellt sein muessen.</td><td>Verhindert Antworten ausserhalb der Governance.</td></tr>
+            <tr id="csc"><td>CSC</td><td>Comm-SCI-Control als Governance-System.</td><td>Rahmen fuer regelbasierte Mensch-LLM-Interaktion.</td></tr>
+            <tr id="control-layer-block"><td>Control-Layer-Block</td><td>Explizite Blockausgabe bei harten Contract-Verletzungen.</td><td>Stoppt unsichere oder nicht-konforme Ausgaben.</td></tr>
+            <tr id="zeitstempel"><td>Zeitstempel</td><td>Ausgabezeit in der Antwortmetadatenzeile.</td><td>Wichtig fuer Nachvollzug und Audit-Timeline.</td></tr>
+            <tr id="anchor"><td>Anchor</td><td>Status-Snapshot zur Kontextstabilisierung (`Comm Anchor`).</td><td>Reduziert Kontextverlust in langen Sitzungen.</td></tr>
+            <tr id="audit"><td>Audit</td><td>Pruefung vergangener Antworten auf Contract-Konformitaet.</td><td>Erlaubt systematische Qualitaetskontrolle.</td></tr>
+            <tr id="logs"><td>Logs</td><td>Persistierte Betriebs- und Verlaufsdaten.</td><td>Grundlage fuer Diagnose, Nachweis, Reproduktion.</td></tr>
+            <tr id="manual-test"><td>Manual Test</td><td>Gefuehrte manuelle Testlaeufe im Panel.</td><td>Prueft reale Bedienpfade jenseits Unit-Tests.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="sci-varianten" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Teil 2</p>
+          <h2>SCI-Varianten A-H mit typischen Aufgaben</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Variante</th>
+              <th>Fokus</th>
+              <th>Geeignet fuer</th>
+              <th>Beispielaufgabe</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>A Standard</td><td>Plan -> Solution -> Check</td><td>Normale Analysefragen mit klarem Ziel.</td><td>"Erklaere Vor- und Nachteile von Methode X."</td></tr>
+            <tr><td>B Deep-Dive</td><td>Erweiterte Dialektik (SCIplus)</td><td>Komplexe Streitfragen mit Gegenthese.</td><td>"Bewerte Nutzen und Risiken von AGI-Regulierung."</td></tr>
+            <tr><td>C Branch Evaluation</td><td>Verzweigte Loesungspfade</td><td>Mehrere moegliche Strategien vergleichen.</td><td>"Welche von drei Lernstrategien ist fuer mich am besten?"</td></tr>
+            <tr><td>D Axiomatic Reduction</td><td>First-Principles-Ableitung</td><td>Probleme, die auf Grundannahmen zurueckgefuehrt werden sollen.</td><td>"Wie leite ich diese Entscheidung aus Basisprinzipien ab?"</td></tr>
+            <tr><td>E Confidence Tracker</td><td>Konfidenz-Update mit Gegenargumenten</td><td>Unsichere Hypothesen systematisch pruefen.</td><td>"Wie sicher ist die These nach Einbezug von Gegenbelegen?"</td></tr>
+            <tr><td>F Impact Projection</td><td>Zweitordnungsfolgen</td><td>Folgenabschaetzung ueber mehrere Wirkungsebenen.</td><td>"Welche Nebenfolgen hat diese Reform in 2 Jahren?"</td></tr>
+            <tr><td>G Failure Mode Analysis</td><td>Pre-mortem/Inversion</td><td>Risikoplanung, Fehlerpraevention.</td><td>"Woran koennte das Projekt scheitern und wie verhindern wir das?"</td></tr>
+            <tr><td>H Multi-Agent Simulation</td><td>Mehrrollen-Synthese</td><td>Konfliktfelder mit mehreren Perspektiven.</td><td>"Wie sehen Arzt, Jurist und Manager dieselbe Entscheidung?"</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="qc-matrix" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Teil 3</p>
+          <h2>QC-Matrix: Bedeutung der Werte 0-3</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th>0</th>
+              <th>1</th>
+              <th>2</th>
+              <th>3</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Clarity</td><td>sehr unklar</td><td>teilweise unklar</td><td>klar</td><td>sehr klar/strukturiert</td></tr>
+            <tr><td>Brevity</td><td>deutlich zu lang</td><td>zu lang</td><td>angemessen kompakt</td><td>sehr kompakt (trotzdem brauchbar)</td></tr>
+            <tr><td>Evidence</td><td>rein spekulativ</td><td>schwach belegt</td><td>solide belegt</td><td>stark belegt / gut abgesichert</td></tr>
+            <tr><td>Empathy</td><td>keine Nutzerperspektive</td><td>geringe Ruecksicht</td><td>angemessene Ruecksicht</td><td>hoch anschlussfaehig ohne Flattery</td></tr>
+            <tr><td>Consistency</td><td>widerspruechlich</td><td>instabil</td><td>weitgehend konsistent</td><td>hoch konsistent und begruendet</td></tr>
+            <tr><td>Neutrality</td><td>einseitig/bias-lastig</td><td>teils einseitig</td><td>ueberwiegend ausgewogen</td><td>aktiv bias-reduzierend</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Weiterfuehrung</p>
+          <h2>Naechste Schritte</h2>
+        </div>
+        <div class="doc-grid">
+          <a class="link-card reveal" href="install-beginner.de.html">
+            <h3>Installationspfad Einsteiger</h3>
+            <p>Vom Download bis zum Start inklusive API-Key-Hinweisen.</p>
+          </a>
+          <a class="link-card reveal" href="install-pro.de.html">
+            <h3>Installationspfad Profis</h3>
+            <p>Reproduzierbares Setup mit Test- und Diagnosepfaden.</p>
+          </a>
+          <a class="link-card reveal" href="HANDBOOK.de.md">
+            <h3>Handbuch (DE)</h3>
+            <p>Operativer Gesamtueberblick mit Governance-Fokus.</p>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Comm-SCI-Control Wrapper Glossar (DE). Zur Hauptseite:
+        <a href="index.de.html">index.de.html</a>
+      </p>
+    </footer>
+
+    <script src="assets/landing.js"></script>
+  </body>
+</html>

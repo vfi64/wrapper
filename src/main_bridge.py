@@ -40,5 +40,17 @@ class MainBridge:
     def close_app(self):
         return self._api.close_app()
 
+    def set_exit_confirm_open(self, is_open):
+        return self._api.set_exit_confirm_open(is_open)
+
+    def get_help_content(self):
+        return self._api.get_help_content()
+
     def submit_cgi_feedback(self, clarity, insight, efficiency, mode="repeat"):
         return self._api.submit_cgi_feedback(clarity, insight, efficiency, mode)
+
+    def get_input_history(self, max_entries=200):
+        return self._api.get_input_history(max_entries)
+
+    def append_input_history(self, raw):
+        return self._api.append_input_history(raw)

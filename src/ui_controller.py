@@ -78,7 +78,12 @@ class UIController:
                 if not callable(fn):
                     return _err("set_provider unavailable")
                 provider = payload.get("provider", "")
-                return _ok(fn(str(provider or "")))
+                res = fn(str(provider or ""))
+                if isinstance(res, dict):
+                    if bool(res.get("ok", True)):
+                        return _ok(res, **res)
+                    return _err(str(res.get("error", "set_provider_failed")))
+                return _ok(res)
 
             if action_s == "set_model":
                 fn = getattr(app, "set_model", None)
@@ -93,6 +98,79 @@ class UIController:
                     return _err("set_answer_language unavailable")
                 lang = payload.get("lang", "")
                 return _ok(fn(str(lang or "")))
+
+            if action_s == "set_api_key":
+                fn = getattr(app, "set_api_key_for_provider", None)
+                if not callable(fn):
+                    return _err("set_api_key_for_provider unavailable")
+                provider = payload.get("provider", "")
+                api_key = payload.get("api_key", "")
+                persist = bool(payload.get("persist", True))
+                encrypt = bool(payload.get("encrypt", False))
+                passphrase = payload.get("passphrase", "")
+                write_path = payload.get("write_path", "")
+                res = fn(
+                    str(provider or ""),
+                    str(api_key or ""),
+                    persist=persist,
+                    write_path=str(write_path or ""),
+                    encrypt=encrypt,
+                    passphrase=str(passphrase or ""),
+                )
+                if isinstance(res, dict):
+                    if bool(res.get("ok", True)):
+                        return _ok(res, **res)
+                    return _err(str(res.get("error", "set_api_key_failed")))
+                return _ok({"ok": True})
+
+            if action_s == "set_key_passphrase":
+                fn = getattr(app, "set_key_passphrase", None)
+                if not callable(fn):
+                    return _err("set_key_passphrase unavailable")
+                passphrase = payload.get("passphrase", "")
+                provider = payload.get("provider", "")
+                reason = payload.get("reason", "")
+                reconnect = bool(payload.get("reconnect", True))
+                res = fn(
+                    str(passphrase or ""),
+                    str(provider or ""),
+                    reason=str(reason or ""),
+                    reconnect=reconnect,
+                )
+                if isinstance(res, dict):
+                    if bool(res.get("ok", True)):
+                        return _ok(res, **res)
+                    return _err(str(res.get("error", "set_key_passphrase_failed")))
+                return _ok({"ok": True})
+
+            if action_s == "delete_api_key":
+                fn = getattr(app, "delete_api_key_for_provider", None)
+                provider = payload.get("provider", "")
+                persist = bool(payload.get("persist", True))
+                write_path = payload.get("write_path", "")
+                if callable(fn):
+                    res = fn(
+                        str(provider or ""),
+                        persist=persist,
+                        write_path=str(write_path or ""),
+                    )
+                else:
+                    fn_set = getattr(app, "set_api_key_for_provider", None)
+                    if not callable(fn_set):
+                        return _err("delete_api_key_for_provider unavailable")
+                    res = fn_set(
+                        str(provider or ""),
+                        "",
+                        persist=persist,
+                        write_path=str(write_path or ""),
+                        encrypt=False,
+                        passphrase="",
+                    )
+                if isinstance(res, dict):
+                    if bool(res.get("ok", True)):
+                        return _ok(res, **res)
+                    return _err(str(res.get("error", "delete_api_key_failed")))
+                return _ok({"ok": True})
 
             if action_s == "set_language_policy_mode":
                 fn = getattr(app, "set_language_policy_mode", None)

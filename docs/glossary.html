@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Comm-SCI-Control Wrapper | Glossary (EN)</title>
+    <meta
+      name="description"
+      content="Didactic glossary for wrapper terminology, SCI variants A-H, and QC matrix value meanings."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/landing.css" />
+  </head>
+  <body>
+    <div class="bg-glow bg-glow-a" aria-hidden="true"></div>
+    <div class="bg-glow bg-glow-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="index.html#top">
+        <span class="brand-mark">CSC</span>
+        <span class="brand-text">Glossary (EN)</span>
+      </a>
+      <nav class="nav-links" aria-label="Glossary navigation">
+        <a href="#core-terms">Core terms</a>
+        <a href="#sci-variants">SCI A-H</a>
+        <a href="#qc-matrix">QC matrix</a>
+      </nav>
+      <div class="topbar-actions">
+        <div class="lang-switch" aria-label="Language switch">
+          <a class="lang-link is-active" href="glossary.html">EN</a>
+          <span aria-hidden="true">|</span>
+          <a class="lang-link" href="glossar.de.html">DE</a>
+        </div>
+        <a class="btn btn-line" href="index.html">Back to landing page</a>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero reveal">
+        <p class="eyebrow">Didactic terminology guide</p>
+        <h1>
+          Wrapper concepts explained in plain language.
+          <span>Designed for learners, professionals, and critical users.</span>
+        </h1>
+        <p class="hero-copy">
+          This glossary explains core Comm-SCI-Control runtime terms without requiring
+          prior implementation knowledge. Each term includes practical relevance for
+          daily wrapper operation.
+        </p>
+      </section>
+
+      <section id="core-terms" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Part 1</p>
+          <h2>Core wrapper terms</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Term</th>
+              <th>Meaning</th>
+              <th>Why it matters</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr id="sci"><td>SCI</td><td>Structured answer mode with visible trace steps.</td><td>Improves transparency of reasoning output.</td></tr>
+            <tr id="sci-orchestration"><td>SCI orchestration</td><td>Control logic for SCI activation, variant selection, and trace enforcement.</td><td>Keeps SCI behavior deterministic.</td></tr>
+            <tr id="pending-selection"><td>Pending selection</td><td>Interim state after `SCI on` until A-H is selected.</td><td>Prevents accidental variant switching.</td></tr>
+            <tr id="trace-step-requirements"><td>Trace-step requirements</td><td>Mandatory SCI steps that must appear in answers.</td><td>Enables contract validation and reproducibility.</td></tr>
+            <tr id="recurse-behavior"><td>Recurse behavior</td><td>Temporary deepening path via `SCI recurse`.</td><td>Allows focused deep dives without losing main context.</td></tr>
+            <tr id="sci-variants-term"><td>SCI variants</td><td>A-H method profiles for different reasoning styles.</td><td>Matches reasoning structure to task type.</td></tr>
+            <tr id="self-debunking"><td>Self-Debunking</td><td>Required block that challenges answer weaknesses.</td><td>Reduces overconfidence and blind spots.</td></tr>
+            <tr id="qc-matrix-term"><td>QC matrix</td><td>Quality dimensions with target/actual scoring.</td><td>Makes response quality explicit and comparable.</td></tr>
+            <tr id="qc-footer"><td>QC footer</td><td>Output line that shows QC values (and deltas when applicable).</td><td>Provides fast per-answer quality inspection.</td></tr>
+            <tr id="verification-gates"><td>Verification gates</td><td>Rules for strong/risky claims requiring explicit verification route.</td><td>Protects against unsupported certainty.</td></tr>
+            <tr id="runtime-contract"><td>Runtime contract</td><td>Technical contract for allowed output structure.</td><td>Enforces deterministic behavior.</td></tr>
+            <tr id="drift"><td>Drift</td><td>Deviation from expected governance behavior over time.</td><td>Early warning for quality degradation.</td></tr>
+            <tr id="module-status"><td>Module status</td><td>Visible health/status of key wrapper modules.</td><td>Supports diagnostics and maintenance.</td></tr>
+            <tr id="contract-tests"><td>Contract tests</td><td>Tests for formal behavioral guarantees.</td><td>Protects critical interfaces and command logic.</td></tr>
+            <tr id="regression-tests"><td>Regression tests</td><td>Tests for previously fixed failure patterns.</td><td>Prevents reintroduction of old bugs.</td></tr>
+            <tr id="overlay"><td>Overlay</td><td>Additional mode layer above profile (for example Strict/Explore).</td><td>Adjusts behavior without full profile switch.</td></tr>
+            <tr id="strict"><td>Strict</td><td>Mode with stronger evidence and consistency discipline.</td><td>Useful for high-stakes precision output.</td></tr>
+            <tr id="explore"><td>Explore</td><td>Mode with higher tolerance for ideation and hypotheses.</td><td>Useful for brainstorming, not for hard claims.</td></tr>
+            <tr id="color-tags"><td>Color tags</td><td>[GREEN]/[YELLOW]/[RED] evidence confidence markers.</td><td>Signals confidence level at reading time.</td></tr>
+            <tr id="language-policy"><td>Language policy</td><td>Language behavior mode (`production`/`benchmark`).</td><td>Separates user operation from comparison experiments.</td></tr>
+            <tr id="cgi"><td>CGI</td><td>Cognitive Gain Indicator user-feedback signal.</td><td>Tracks perceived clarity/insight/efficiency gain.</td></tr>
+            <tr id="qc-overrides"><td>QC overrides</td><td>Temporary manual deviations from profile QC targets.</td><td>Allows controlled adaptation for special cases.</td></tr>
+            <tr id="compliance-prerequisites"><td>Compliance prerequisites</td><td>Conditions checked before output is accepted.</td><td>Prevents non-compliant responses.</td></tr>
+            <tr id="csc"><td>CSC</td><td>Comm-SCI-Control governance framework.</td><td>Defines rule-based human-LLM interaction discipline.</td></tr>
+            <tr id="control-layer-block"><td>Control-layer block</td><td>Explicit block output on hard contract violations.</td><td>Stops unsafe/non-conformant responses.</td></tr>
+            <tr id="timestamp"><td>Timestamp</td><td>Output time metadata in rendered response.</td><td>Important for audit timeline and traceability.</td></tr>
+            <tr id="anchor"><td>Anchor</td><td>State snapshot refresh command (`Comm Anchor`).</td><td>Stabilizes long-session context.</td></tr>
+            <tr id="audit"><td>Audit</td><td>Compliance scan of prior responses.</td><td>Enables systematic quality assurance.</td></tr>
+            <tr id="logs"><td>Logs</td><td>Persisted runtime and conversation artifacts.</td><td>Foundation for diagnosis and reproducibility.</td></tr>
+            <tr id="manual-test"><td>Manual test</td><td>Guided panel-based manual verification routines.</td><td>Covers real operator flows beyond unit tests.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="sci-variants" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Part 2</p>
+          <h2>SCI variants A-H with task examples</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Variant</th>
+              <th>Focus</th>
+              <th>Best suited for</th>
+              <th>Example prompt type</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>A Standard</td><td>Plan -> Solution -> Check</td><td>General analytical questions with clear objective.</td><td>"Compare method X and method Y."</td></tr>
+            <tr><td>B Deep-Dive</td><td>Extended dialectical trace (SCIplus)</td><td>Complex contentious topics with competing views.</td><td>"Evaluate AGI governance tradeoffs."</td></tr>
+            <tr><td>C Branch Evaluation</td><td>Branch generation and selection</td><td>Multi-option strategy decisions.</td><td>"Which of three project paths should we pick?"</td></tr>
+            <tr><td>D Axiomatic Reduction</td><td>First-principles derivation</td><td>Problems that benefit from base-assumption reduction.</td><td>"Derive this decision from fundamental constraints."</td></tr>
+            <tr><td>E Confidence Tracker</td><td>Confidence update with counterarguments</td><td>Uncertain hypotheses under active challenge.</td><td>"How should confidence change after new objections?"</td></tr>
+            <tr><td>F Impact Projection</td><td>Second-order effects and feedback loops</td><td>Policy/system changes with downstream consequences.</td><td>"What second-order effects follow this intervention?"</td></tr>
+            <tr><td>G Failure Mode Analysis</td><td>Pre-mortem and mitigation planning</td><td>Risk planning and failure prevention.</td><td>"How could this project fail, and how do we prevent it?"</td></tr>
+            <tr><td>H Multi-Agent Simulation</td><td>Role-based perspective synthesis</td><td>Decisions requiring multiple expert viewpoints.</td><td>"How do legal, medical, and operations roles disagree here?"</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="qc-matrix" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Part 3</p>
+          <h2>QC matrix: value meanings (0-3)</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th>0</th>
+              <th>1</th>
+              <th>2</th>
+              <th>3</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Clarity</td><td>very unclear</td><td>partly unclear</td><td>clear</td><td>very clear and well structured</td></tr>
+            <tr><td>Brevity</td><td>far too long</td><td>too long</td><td>appropriately compact</td><td>very compact while still useful</td></tr>
+            <tr><td>Evidence</td><td>pure speculation</td><td>weakly supported</td><td>solid support</td><td>strongly supported</td></tr>
+            <tr><td>Empathy</td><td>ignores user perspective</td><td>low consideration</td><td>adequate consideration</td><td>highly considerate without flattery</td></tr>
+            <tr><td>Consistency</td><td>contradictory</td><td>unstable</td><td>mostly consistent</td><td>highly consistent and justified</td></tr>
+            <tr><td>Neutrality</td><td>biased/one-sided</td><td>partly one-sided</td><td>mostly balanced</td><td>actively bias-reducing</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Next steps</p>
+          <h2>Continue with installation and operations</h2>
+        </div>
+        <div class="doc-grid">
+          <a class="link-card reveal" href="install-beginner.html">
+            <h3>Beginner installation</h3>
+            <p>From download to first run, including key safety and cost notes.</p>
+          </a>
+          <a class="link-card reveal" href="install-pro.html">
+            <h3>Professional installation</h3>
+            <p>Reproducible setup with tests and diagnostics.</p>
+          </a>
+          <a class="link-card reveal" href="HANDBOOK.md">
+            <h3>Handbook (EN)</h3>
+            <p>Operational governance playbook and runtime model.</p>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Comm-SCI-Control Wrapper Glossary (EN). Back to:
+        <a href="index.html">index.html</a>
+      </p>
+    </footer>
+
+    <script src="assets/landing.js"></script>
+  </body>
+</html>

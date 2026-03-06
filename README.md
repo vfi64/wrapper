@@ -3,28 +3,57 @@
 Deterministic Python runtime for Comm-SCI governance workflows.
 
 Current app version: **1.0.0**  
-Recommended ruleset line: **`JSON/Comm-SCI-v20.2.x`** (current file: **`JSON/Comm-SCI-v20.2.0.json`**)
+Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.2.0.json`**
 
-## DOI (stable references)
+## What This Repository Is
 
-- Runtime app (concept DOI / all versions, stable link): [10.5281/zenodo.18445672](https://doi.org/10.5281/zenodo.18445672)
-- Ruleset (concept DOI / all versions, stable link): [10.5281/zenodo.17928357](https://doi.org/10.5281/zenodo.17928357)
-- Recommendation for stable README/handbook/website links: reference concept DOIs.
-- Release-specific (version) DOIs should be used only in release notes or when you need exact, pinned reproducibility for one single release.
-- DOI links in this README resolve to Zenodo records (archive + metadata), not to GitHub repository pages.
-- GitHub repository URL for code navigation: `https://github.com/vfi64/Comm-SCI-Control`
+This repository contains the public wrapper/runtime line that executes Comm-SCI governance deterministically.
+It is the implementation counterpart to the public ruleset repository.
 
-## Command status (ruleset v20.2.0)
+- Public ruleset reference: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
+- Wrapper/runtime repository: [vfi64/wrapper](https://github.com/vfi64/wrapper)
+- Wrapper project website (public): [vfi64.github.io/wrapper](https://vfi64.github.io/wrapper/)
 
-- Canonical anchor commands: `Comm Anchor`, `Comm Anchor on`, `Comm Anchor off`.
-- `Anchor auto on/off` is removed in v20.2.0 runtime handling. Use `Comm Anchor on/off` only.
-- `anchor_auto` may still appear as an internal status flag, but `Anchor auto on/off` is not a user command token.
-- `Control on/off` are **not** canonical command tokens in v20.2.0.
-- `Color on` and `Color off` are canonical command tokens in v20.2.0.
+## Documentation Hub
 
-## Installation Paths (by user type)
+- Website (EN): [`docs/index.html`](docs/index.html)
+- Website (DE): [`docs/index.de.html`](docs/index.de.html)
+- Glossary (EN): [`docs/glossary.html`](docs/glossary.html)
+- Glossary (DE): [`docs/glossar.de.html`](docs/glossar.de.html)
+- Beginner install (EN): [`docs/install-beginner.html`](docs/install-beginner.html)
+- Beginner install (DE): [`docs/install-beginner.de.html`](docs/install-beginner.de.html)
+- Professional install (EN): [`docs/install-pro.html`](docs/install-pro.html)
+- Professional install (DE): [`docs/install-pro.de.html`](docs/install-pro.de.html)
+- Handbook (EN): [`docs/HANDBOOK.md`](docs/HANDBOOK.md)
+- Handbook (DE): [`docs/HANDBOOK.de.md`](docs/HANDBOOK.de.md)
+- Install + sync runbook (EN): [`docs/INSTALL_SYNC.md`](docs/INSTALL_SYNC.md)
+- Install + sync runbook (DE): [`docs/INSTALL_SYNC.de.md`](docs/INSTALL_SYNC.de.md)
+- Architecture rationale: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- Modularization roadmap: [`MODULARIZATION.md`](MODULARIZATION.md)
+- Proposal backlog: [`docs/proposals/README.md`](docs/proposals/README.md)
 
-### A) Beginner path (students, non-programmers, domain users)
+## DOI (current Zenodo records)
+
+- Wrapper (concept DOI / all versions): [10.5281/zenodo.18445672](https://doi.org/10.5281/zenodo.18445672)
+- Wrapper (version DOI / tagged wrapper release): [10.5281/zenodo.18759479](https://doi.org/10.5281/zenodo.18759479)
+- Ruleset (concept DOI / all versions): [10.5281/zenodo.17928357](https://doi.org/10.5281/zenodo.17928357)
+- Ruleset (version DOI / currently maintained Zenodo release): [10.5281/zenodo.18154098](https://doi.org/10.5281/zenodo.18154098)
+
+## Command Compatibility (v20.2.x)
+
+- `Comm Anchor on` / `Comm Anchor off` are the canonical toggles.
+- `Anchor auto on` / `Anchor auto off` are deprecated and should not be used.
+- `Control on` / `Control off` are **not** valid command tokens in the v20.2.x command model.
+- `Color on` / `Color off` are valid command tokens (`commands.color_control`).
+- `Comm Help` is rendered from the loaded JSON and shows the currently valid command set.
+
+## DOI Linking Strategy
+
+- For a stable long-term link, use the **concept DOI** (wrapper + ruleset).
+- Use a **version DOI** only when you need to cite one exact archived release.
+- Repository landing page (human-readable): [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
+
+## Quick Start (recommended, reproducible)
 
 ```bash
 cd /path/to/repo
@@ -33,23 +62,42 @@ source .venc/bin/activate
 python Comm-SCI-Control-App.py
 ```
 
-### B) Advanced path (developers, CI-oriented users)
+The setup script creates (or refreshes) `.venc` and installs the local development
+environment from `pyproject.toml` via `pip install -e ".[local-dev]"`.
+
+## Professional Install + Local Sync Routine
+
+For robust local operation and controlled handover to the local clone of `vfi64/wrapper`:
+
+1. Environment bootstrap (auto-detects compatible Python from `pyproject.toml`):
 
 ```bash
-cd /path/to/repo
-PYTHON_BIN=python3.14 VENV_DIR=.venc bash scripts/setup_venv.sh
-source .venc/bin/activate
-python -m pytest -q tests
-python Comm-SCI-Control-App.py
+bash scripts/setup_venv.sh
 ```
 
-The setup script creates (or refreshes) `.venc` and installs dependencies from
-`pyproject.toml` with `pip install -e ".[local-dev]"`.
-Detailed installation guides:
+Optional checks:
 
-- English handbook: [`docs/HANDBOOK.md`](docs/HANDBOOK.md)
-- German handbook: [`docs/HANDBOOK.de.md`](docs/HANDBOOK.de.md)
-- Web docs (if GitHub Pages via `docs/` is enabled): [`docs/index.html`](docs/index.html) / [`docs/index.de.html`](docs/index.de.html)
+```bash
+bash scripts/setup_venv.sh --dry-run
+bash scripts/setup_venv.sh --python python3.12 --venv .venc --extras local-dev
+```
+
+2. Dry-run sync from source repo to local `vfi64/wrapper` clone:
+
+```bash
+bash scripts/sync_to_wrapper_local.sh --target /path/to/wrapper
+```
+
+3. Real sync (still local only, no remote push):
+
+```bash
+bash scripts/sync_to_wrapper_local.sh --target /path/to/wrapper --apply --validate
+```
+
+Safety defaults:
+- verifies target remote points to `vfi64/wrapper`
+- refuses dirty target repos unless `--allow-dirty-target` is set
+- copies only tracked files and skips local secrets/log artifacts
 
 ## Start (manual)
 
@@ -67,7 +115,7 @@ python Comm-SCI-Control-App.py
 ```bash
 cd /path/to/repo
 source .venc/bin/activate
-python -m pytest -q tests
+python -m pytest -q
 ```
 
 Targeted fast regression checks (S8 / panel bootstrap):
@@ -120,11 +168,12 @@ Note: local artifacts such as `.git/`, `.venc/`, `.pytest_cache/`, or `.DS_Store
 | `pyproject.toml` | Packaging/install config and base pytest settings. |
 | `requirements.txt` | Compatibility/reference dependency list for runtime. |
 | `MODULARIZATION.md` | S0-S8 roadmap and acceptance criteria. |
-| `ARCHITECTURE.md` | Architecture rationale (governance vs runtime responsibilities). |
+| `ARCHITECTURE.md` | Architecture rationale (governance vs wrapper responsibilities). |
 | `JSON/` | Rulesets / governance JSON files. |
-| `Config/` | Local configuration, provider keys, caches (partly gitignored). |
-| `Logs/` | Chat/audit/manual-test exports and runtime traces (contents gitignored). |
+| `Config/` | Local configuration and provider keys (partly gitignored). |
+| `Logs/` | Chat/audit/manual-test exports, model caches (`Logs/Cache/`), and runtime traces (contents gitignored). |
 | `docs/` | Additional documentation (checklists, release notes, etc.). |
+| `docs/proposals/` | Proposal notes for planned extensions (draft/proposed/accepted/deferred/rejected). |
 
 ## Detailed layout (excerpt for `src/` / `tests/`)
 
@@ -167,7 +216,10 @@ tests/
 - `Config/Comm-SCI-API-Keys.json` is local-only and ignored by Git.
 - A template file `Config/Comm-SCI-API-Keys.example.json` (without real API keys) is included in the repository.
 - `Logs/**` content is ignored by Git (folder structure kept).
-- Provider key onboarding, cost warnings, and secure handling guidance are documented in [`docs/HANDBOOK.md`](docs/HANDBOOK.md).
+- API keys can be managed per provider in the panel (`Provider & LLM` -> `API-Key`) and stored either as plaintext (`api_key_plain`) or encrypted (`api_key_enc`).
+- For encrypted keys, the runtime asks for a passphrase on startup and on provider switch when the target provider uses `api_key_enc`.
+- For plaintext keys, no passphrase dialog is shown and the key is read directly from the local config file.
+- Main input-line history is auto-saved to `Logs/History/InputLineHistory.json` on shutdown and loaded again on startup.
 
 ## Dependencies
 

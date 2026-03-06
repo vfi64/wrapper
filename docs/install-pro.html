@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Comm-SCI-Control Wrapper | Professional Installation (EN)</title>
+    <meta
+      name="description"
+      content="Professional installation guide for reproducible wrapper operation with tests, diagnostics, and API-key security controls."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/landing.css" />
+  </head>
+  <body>
+    <div class="bg-glow bg-glow-a" aria-hidden="true"></div>
+    <div class="bg-glow bg-glow-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="index.html#install">
+        <span class="brand-mark">CSC</span>
+        <span class="brand-text">Professional Installation</span>
+      </a>
+      <nav class="nav-links" aria-label="Professional install navigation">
+        <a href="#baseline">Baseline</a>
+        <a href="#tests">Tests</a>
+        <a href="#operations">Operations</a>
+        <a href="#keys">Keys/Security</a>
+      </nav>
+      <div class="topbar-actions">
+        <a class="btn btn-line" href="install-beginner.html">Beginner track</a>
+        <a class="btn btn-line" href="index.html">Landing page</a>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero reveal">
+        <p class="eyebrow">Reproducible operations mode</p>
+        <h1>
+          Installation for engineers and maintainers.
+          <span>Deterministic checks, diagnostics, and governance verification paths.</span>
+        </h1>
+        <p class="hero-copy">
+          This guide targets technical users who require stable reproducibility,
+          contract-aware testing, and explicit operational controls.
+        </p>
+      </section>
+
+      <section id="baseline" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Setup</p>
+          <h2>Baseline installation flow</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr><th>Step</th><th>Command / note</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Clone repository</td><td><code>git clone https://github.com/vfi64/wrapper.git</code></td></tr>
+            <tr><td>Enter directory</td><td><code>cd wrapper</code></td></tr>
+            <tr><td>Create/update venv</td><td><code>bash scripts/setup_venv.sh</code></td></tr>
+            <tr><td>Activate venv</td><td><code>source .venc/bin/activate</code></td></tr>
+            <tr><td>Start runtime</td><td><code>python Comm-SCI-Control-App.py</code></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="tests" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Quality assurance</p>
+          <h2>Contract and regression test paths</h2>
+        </div>
+        <div class="matrix">
+          <article class="matrix-card reveal">
+            <h3>Full test pass</h3>
+            <p><code>python -m pytest -q tests</code></p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>S8 bootstrap focus</h3>
+            <p><code>python -m pytest -q tests/test_app_bootstrap.py</code></p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Contract-focused selection</h3>
+            <p><code>python -m pytest -q tests/test_app.py -k "contract or panel"</code></p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Failure diagnostics</h3>
+            <p>Use Comm State, Comm Anchor, Comm Audit, and logs together for root-cause isolation.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="operations" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Operational routine</p>
+          <h2>Recommended session sequence</h2>
+        </div>
+        <ol class="timeline">
+          <li class="timeline-item reveal"><span class="phase">1) Baseline check</span><p>Load ruleset and verify with `Comm State`.</p></li>
+          <li class="timeline-item reveal"><span class="phase">2) Governance start</span><p>`Comm Start`, profile selection, optional SCI variant setup.</p></li>
+          <li class="timeline-item reveal"><span class="phase">3) Runtime operation</span><p>Handle requests; run `Comm Anchor` and `Comm Audit` periodically in long sessions.</p></li>
+          <li class="timeline-item reveal"><span class="phase">4) Evidence trail</span><p>Archive relevant logs/audits with timestamps for reproducibility.</p></li>
+        </ol>
+      </section>
+
+      <section id="keys" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Security and cost control</p>
+          <h2>Professional API-key handling</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Topic</th>
+              <th>Recommendation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Key storage</td><td>Prefer environment variables. Local key file only for isolated single-user setups.</td></tr>
+            <tr><td>Key modes</td><td><code>api_key_plain</code> (no passphrase) vs. <code>api_key_enc</code> (passphrase prompt on startup/provider switch).</td></tr>
+            <tr><td>Panel workflow</td><td>Use <code>API-Key</code> in panel section <code>Provider &amp; LLM</code>; maintain keys per provider.</td></tr>
+            <tr><td>Provider onboarding</td><td>Gemini: <a href="https://aistudio.google.com/apikey">key</a>, OpenRouter: <a href="https://openrouter.ai/keys">key</a>, Hugging Face: <a href="https://huggingface.co/settings/tokens">token</a></td></tr>
+            <tr><td>Pricing awareness</td><td>Check costs before usage: <a href="https://ai.google.dev/pricing">Gemini</a>, <a href="https://openrouter.ai/models">OpenRouter</a>, <a href="https://huggingface.co/pricing">HF</a>.</td></tr>
+            <tr><td>Leak response</td><td>Immediately revoke, rotate, and reconfigure affected credentials and access scope.</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Professional installation (EN). Quick counterpart:
+        <a href="install-beginner.html">beginner guide</a> |
+        <a href="glossary.html">glossary</a> |
+        <a href="HANDBOOK.md">handbook</a>
+      </p>
+    </footer>
+
+    <script src="assets/landing.js"></script>
+  </body>
+</html>

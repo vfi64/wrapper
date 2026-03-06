@@ -6,109 +6,205 @@
   body { font-family: sans-serif; padding: 10px; background: #f8f9fa; user-select: none; }
   h4 { margin: 12px 0 6px 0; color: #1a73e8; border-bottom: 2px solid #dae0e5; font-size: 11px; text-transform: uppercase; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-  button { padding: 8px 5px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 11px; text-align:center; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  button { padding: 6px 5px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 10px; line-height: 1.2; text-align:center; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   button:hover { background: #e8f0fe; border-color: #1a73e8; color: #1a73e8; }
   .setting-select { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #999; margin-bottom: 5px; font-weight: bold; font-size: 12px;}
   .card { background: white; padding: 8px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #ddd; }
-  .log-box { font-family: monospace; font-size: 9px; color: #333; margin-bottom: 8px; max-height: 70px; overflow-y: auto; background: #eee; padding: 6px; border-radius: 6px; border: 1px solid #ddd; }
+  .log-box { font-family: monospace; font-size: 9px; color: #333; margin-bottom: 0; max-height: 80px; overflow-y: auto; background: #eee; padding: 6px; border-radius: 6px; border: 1px solid #ddd; }
   .test-log-box { font-family: monospace; font-size: 10px; color: #222; margin-top: 6px; max-height: 160px; overflow-y: auto; background: #f4f6f8; padding: 6px; border-radius: 6px; border: 1px solid #ddd; white-space: pre-wrap; }
   .status-box { font-family: monospace; font-size: 10px; color: #111; margin-bottom: 8px; background: #fff; padding: 6px; border-radius: 6px; border: 1px solid #ddd; }
   .hint { font-size: 9px; color: #666; margin-bottom: 8px; text-align: center; }
   .row { display:flex; gap:6px; }
   .row > * { flex: 1; }
-  .smallbtn { padding: 7px 6px; font-size: 10px; }
+  .smallbtn { padding: 5px 6px; font-size: 10px; }
+  .provider-row { margin-bottom: 8px; display: block; }
+  .provider-row > #provider { width: 100%; margin-bottom: 6px; }
+  .provider-actions { align-items: stretch; }
+  .provider-actions > #refreshModelsBtn { flex: 1; min-width: 110px; }
+  .provider-actions > #apiKeyBtn { flex: 1; min-width: 85px; }
+  #modelSearch { width: 100%; margin: 0 0 6px 0; display: block; box-sizing: border-box; }
+  .section-toggle { width: 100%; background: #f7faff; border: 1px solid #d6deeb; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; color: #174ea6; margin-bottom: 8px; padding: 6px 8px; }
+  .section-toggle:hover { background: #e8f0fe; color: #174ea6; border-color: #9db8e8; }
+  .section-title-wrap { display: inline-flex; align-items: center; gap: 6px; }
+  .section-info { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:#e2e8f0; color:#334155; font-weight:700; font-size:11px; cursor:help; line-height:1; user-select:none; }
+  .section-info:hover, .section-info:focus { background:#eff6ff; color:#1e3a8a; outline:none; }
+  .section-body { display: block; }
+  .section-chevron { font-size: 11px; color: #4a628d; }
   .err { color: #b00020; }
   .ok { color: #0b6b0b; }
   .warn { color: #a05a00; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.40); display: none; align-items: center; justify-content: center; z-index: 40000; padding: 12px; box-sizing: border-box; }
+  .modal-card { width: min(420px, calc(100vw - 24px)); background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px; box-shadow: 0 12px 28px rgba(15,23,42,.25); }
+  .modal-title { font-size: 12px; font-weight: 700; margin-bottom: 8px; color: #174ea6; }
+  .modal-label { font-size: 10px; color: #334155; margin-bottom: 4px; display: block; font-weight: 700; }
+  .modal-actions > button { min-height: 30px; }
+  .modal-note { font-size: 9px; color: #4b5563; text-align: left; margin: 4px 0 6px 0; }
+  #apiKeyDialogHint { text-align: left; margin-top: 6px; min-height: 14px; }
 </style>
 </head>
 <body>
 
 <div class="card">
-  <div class="row">
-    <select id="provider" class="setting-select" onchange="changeProvider()">
-      <option value="gemini">Provider: Gemini</option>
-      <option value="openrouter">Provider: OpenRouter</option>
-      <option value="huggingface">Provider: Hugging Face</option>
-    </select>
-    <button id="refreshModelsBtn" class="smallbtn" onclick="refreshModels()" title="Fetch provider models and refresh cache (Gemini/OpenRouter/HF)">Refresh Models</button>
-    <button class="smallbtn" id="qcOverrideBtn" onclick="run('QC Override')" title="QC Override">⚙ QC</button>
+  <button class="section-toggle" type="button" data-body-id="panelSectionBody" data-store-key="panel" data-default-open="1" onclick="toggleSectionByBtn(this)" aria-expanded="true">
+    <span class="section-title-wrap">Panel <span class="section-info" data-tip-key="section_panel" data-section-info="1" tabindex="0" role="button" aria-label="Panel info">i</span></span>
+    <span class="section-chevron">▾</span>
+  </button>
+  <div id="panelSectionBody" class="section-body">
+    <div id="status" class="status-box">Panel boot…</div>
+    <div id="logs" class="log-box"></div>
+  </div>
 </div>
 
-  <div id="hfCatalogRow" class="row" style="display:none;">
-    <select id="hfProviderFilter" class="setting-select" onchange="onHFProviderFilterChange()">
-      <option value="all">HF Provider: all</option>
+<div class="card">
+  <button class="section-toggle" type="button" data-body-id="providerSectionBody" data-store-key="provider" data-default-open="1" onclick="toggleSectionByBtn(this)" aria-expanded="true">
+    <span class="section-title-wrap">Provider &amp; LLM <span class="section-info" data-tip-key="section_provider" data-section-info="1" tabindex="0" role="button" aria-label="Provider and LLM info">i</span></span>
+    <span class="section-chevron">▾</span>
+  </button>
+  <div id="providerSectionBody" class="section-body">
+    <h4>Provider &amp; LLM</h4>
+    <div class="provider-row">
+      <select id="provider" class="setting-select" data-tip-key="provider_select" onchange="changeProvider()">
+        <option value="gemini">Provider: Gemini</option>
+        <option value="openrouter">Provider: OpenRouter</option>
+        <option value="huggingface">Provider: Hugging Face</option>
+      </select>
+      <div class="row provider-actions">
+        <button id="refreshModelsBtn" class="smallbtn" data-tip-key="refresh_models" onclick="refreshModels()">Refresh Models</button>
+        <button id="apiKeyBtn" class="smallbtn" data-tip-key="api_key_button" onclick="openApiKeyDialog()">API-Key</button>
+      </div>
+    </div>
+
+    <div id="hfCatalogRow" class="row" style="display:none;">
+      <select id="hfProviderFilter" class="setting-select" data-tip-key="hf_provider_filter" onchange="onHFProviderFilterChange()">
+        <option value="all">HF Provider: all</option>
+      </select>
+      <input id="hfTopN" class="setting-select" data-tip-key="hf_topn" type="number" min="1" max="10000" value="200" />
+      <button id="hfCatalogBtn" class="smallbtn" data-tip-key="hf_catalog" onclick="fetchHFCatalog()">HF Catalog (Top N)</button>
+    </div>
+
+    <select id="model" class="setting-select" data-tip-key="model_select" onchange="changeModel()">
+      <option value="">Model: (offline)</option>
     </select>
-    <input id="hfTopN" class="setting-select" type="number" min="1" max="10000" value="200" />
-    <button id="hfCatalogBtn" class="smallbtn" onclick="fetchHFCatalog()" title="Fetch Hugging Face Hub catalog (Top N) and cache it">HF Catalog (Top N)</button>
+
+    <input id="modelSearch" class="setting-select" data-tip-key="model_search" type="text" placeholder="Model search…" oninput="onModelSearch()" />
+    <div id="modelHint" class="hint" style="display:none; margin-top:4px;"></div>
+
+    <div class="row" id="freeOnlyRow" style="display:none; margin-top:6px;">
+      <label style="font-size:13px; user-select:none;">
+        <input type="checkbox" id="freeOnly" data-tip-key="free_only" onchange="toggleFreeOnly()" /> Nur kostenlose Modelle anzeigen (:free)
+      </label>
+    </div>
+
+    <select id="anslang" class="setting-select" data-tip-key="answer_language" onchange="changeAnswerLanguage()">
+      <option value="en">Answer language (LLM): English</option>
+      <option value="de">Answer language (LLM): Deutsch</option>
+    </select>
+
+    <div class="hint">Panel runs fail-open: it stays usable even if the bridge is not ready yet.</div>
   </div>
-
-  <select id="model" class="setting-select" onchange="changeModel()">
-    <option value="">Model: (offline)</option>
-  </select>
-
-  <input id="modelSearch" class="setting-select" type="text" placeholder="Model search…" oninput="onModelSearch()" />
-  <div id="modelHint" class="hint" style="display:none; margin-top:4px;"></div>
-
-  <div class="row" id="freeOnlyRow" style="display:none; margin-top:6px;">
-    <label style="font-size:13px; user-select:none;">
-      <input type="checkbox" id="freeOnly" onchange="toggleFreeOnly()" /> Nur kostenlose Modelle anzeigen (:free)
-    </label>
-  </div>
-
-  <select id="anslang" class="setting-select" onchange="changeAnswerLanguage()">
-    <option value="en">Answer language (LLM): English</option>
-    <option value="de">Answer language (LLM): Deutsch</option>
-  </select>
-
-  <div class="hint">Panel runs fail-open: it stays usable even if the bridge is not ready yet.</div>
 </div>
 
 <div class="card" id="logLoader" style="margin-top:8px;">
-  <h4>Logs</h4>
-  <select id="chatlog" class="setting-select"></select>
-  <div class="row" style="margin-top:6px;">
-    <button class="smallbtn" onclick="refreshLogList()">Refresh list</button>
-    <button class="smallbtn" onclick="loadSelectedLog(true)">Load &amp; fork</button>
+  <button class="section-toggle" type="button" data-body-id="logsSectionBody" data-store-key="logs" data-default-open="0" onclick="toggleSectionByBtn(this)" aria-expanded="false">
+    <span class="section-title-wrap">Logs <span class="section-info" data-tip-key="section_logs" data-section-info="1" tabindex="0" role="button" aria-label="Logs info">i</span></span>
+    <span class="section-chevron">▸</span>
+  </button>
+  <div id="logsSectionBody" class="section-body" style="display:none;">
+    <select id="chatlog" class="setting-select" data-tip-key="chatlog_select"></select>
+    <div class="row" style="margin-top:6px;">
+      <button class="smallbtn" id="refreshLogListBtn" data-tip-key="refresh_log_list" onclick="refreshLogList()">Refresh list</button>
+      <button class="smallbtn" id="loadForkBtn" data-tip-key="load_log_fork" onclick="loadSelectedLog(true)">Load &amp; fork</button>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <button class="smallbtn" id="loadNoForkBtn" data-tip-key="load_log_no_fork" onclick="loadSelectedLog(false)">Load (no fork)</button>
+      <button class="smallbtn" id="clearChatBtn" data-tip-key="clear_chat" onclick="clearChat()">Clear</button>
+    </div>
+    <div class="hint" id="logHint" style="margin-top:6px; display:none;"></div>
   </div>
-  <div class="row" style="margin-top:6px;">
-    <button class="smallbtn" onclick="loadSelectedLog(false)">Load (no fork)</button>
-    <button class="smallbtn" onclick="clearChat()">Clear</button>
-  </div>
-  <div class="hint" id="logHint" style="margin-top:6px; display:none;"></div>
 </div>
 
 <div class="card" id="manualTestCard" style="margin-top:8px;">
-  <h4>Manual Test</h4>
-  <select id="manualTestMonitorMode" class="setting-select" onchange="setManualTestMonitorMode()" title="Manual-Test-Monitor Fenster">
-    <option value="show">Monitorfenster: anzeigen</option>
-    <option value="hide">Monitorfenster: ausblenden</option>
-  </select>
-  <div class="row" style="margin-top:6px;">
-    <label style="font-size:13px; user-select:none;">
-      <input type="checkbox" id="manualTestMirrorMain" onchange="setManualTestMirrorMode()" />
-      <span id="manualTestMirrorMainLabel">Im Hauptdialog spiegeln</span>
-    </label>
+  <button class="section-toggle" type="button" data-body-id="manualTestSectionBody" data-store-key="manual_test" data-default-open="0" onclick="toggleSectionByBtn(this)" aria-expanded="false">
+    <span class="section-title-wrap">Manual Test <span class="section-info" data-tip-key="section_manual_test" data-section-info="1" tabindex="0" role="button" aria-label="Manual test info">i</span></span>
+    <span class="section-chevron">▸</span>
+  </button>
+  <div id="manualTestSectionBody" class="section-body" style="display:none;">
+    <select id="manualTestMonitorMode" class="setting-select" data-tip-key="manual_monitor_mode" onchange="setManualTestMonitorMode()">
+      <option value="show">Monitorfenster: anzeigen</option>
+      <option value="hide">Monitorfenster: ausblenden</option>
+    </select>
+    <div class="row" style="margin-top:6px;">
+      <label style="font-size:13px; user-select:none;">
+        <input type="checkbox" id="manualTestMirrorMain" data-tip-key="manual_mirror_main" onchange="setManualTestMirrorMode()" />
+        <span id="manualTestMirrorMainLabel">Im Hauptdialog spiegeln</span>
+      </label>
+    </div>
+    <select id="manualTestScenario" class="setting-select" data-tip-key="manual_scenario">
+      <option value="smoke_short">Kurztest (A+C+D+F ohne HF)</option>
+      <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
+      <option value="sci_format">SCI-Format (A/B)</option>
+      <option value="qc_override_footer">QC-Override + Footer (SCI B, Gemini-Referenz)</option>
+      <option value="komplexttest">Komplexttest (Matrix + Pflichtprompts + Influence-Checks)</option>
+      <option value="full_regression_light">A-F (leicht, HF optional)</option>
+    </select>
+    <div class="row" style="margin-top:6px;">
+      <button class="smallbtn" id="manualTestStartBtn" data-tip-key="manual_start" onclick="startManualTestRunner()">Start Test</button>
+      <button class="smallbtn" id="manualTestStopBtn" data-tip-key="manual_stop" onclick="stopManualTestRunner()">Stop</button>
+    </div>
+    <div class="hint" id="manualTestHint" style="margin-top:6px;">Fuehrt einen blockierenden GUI-Testablauf ueber `api.ask(...)` aus und prueft Basis-Formatregeln.</div>
+    <div id="manualTestLog" class="test-log-box" style="display:none;"></div>
   </div>
-  <select id="manualTestScenario" class="setting-select">
-    <option value="smoke_short">Kurztest (A+C+D+F ohne HF)</option>
-    <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
-    <option value="sci_format">SCI-Format (A/B)</option>
-    <option value="qc_override_footer">QC-Override + Footer (SCI B, Gemini-Referenz)</option>
-    <option value="komplexttest">Komplexttest (Matrix + Pflichtprompts + Influence-Checks)</option>
-    <option value="full_regression_light">A-F (leicht, HF optional)</option>
-  </select>
-  <div class="row" style="margin-top:6px;">
-    <button class="smallbtn" id="manualTestStartBtn" onclick="startManualTestRunner()">Start Test</button>
-    <button class="smallbtn" id="manualTestStopBtn" onclick="stopManualTestRunner()">Stop</button>
-  </div>
-  <div class="hint" id="manualTestHint" style="margin-top:6px;">Fuehrt einen blockierenden GUI-Testablauf ueber `api.ask(...)` aus und prueft Basis-Formatregeln.</div>
-  <div id="manualTestLog" class="test-log-box" style="display:none;"></div>
 </div>
 
-<div id="status" class="status-box">Panel boot…</div>
-<div id="logs" class="log-box"></div>
 <div id="ui"></div>
+
+<div id="apiKeyModal" class="modal-backdrop" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="apiKeyModalTitle">
+    <div id="apiKeyModalTitle" class="modal-title">API-Key verwalten</div>
+    <label id="apiKeyProviderLabel" class="modal-label" for="apiKeyProvider">Provider</label>
+    <select id="apiKeyProvider" class="setting-select" data-tip-key="api_key_provider"></select>
+
+    <label id="apiKeyInputLabel" class="modal-label" for="apiKeyInput">API-Key</label>
+    <input id="apiKeyInput" class="setting-select" data-tip-key="api_key_input" type="password" autocomplete="off" spellcheck="false" />
+
+    <div class="row" style="margin-top:6px; margin-bottom:4px;">
+      <label style="font-size:11px; user-select:none; color:#334155;">
+        <input id="apiKeyEncrypt" type="checkbox" data-tip-key="api_key_encrypt" onchange="toggleApiKeyEncryptUi()" />
+        <span id="apiKeyEncryptLabel">Verschlüsselt speichern</span>
+      </label>
+    </div>
+    <div id="apiKeyPassphraseRow" style="display:none;">
+      <label id="apiKeyPassphraseLabel" class="modal-label" for="apiKeyPassphrase">Passphrase</label>
+      <input id="apiKeyPassphrase" class="setting-select" data-tip-key="api_key_passphrase" type="password" autocomplete="off" spellcheck="false" />
+      <div id="apiKeyPassphraseNote" class="modal-note">Fuer verschluesselte Nutzung muss spaeter COMM_SCI_KEY_PASSPHRASE gesetzt sein.</div>
+    </div>
+
+    <div id="apiKeyDialogHint" class="hint"></div>
+    <div class="row modal-actions" style="margin-top:6px;">
+      <button id="apiKeySaveBtn" class="smallbtn" data-tip-key="api_key_save" onclick="saveApiKeyDialog()">Speichern</button>
+      <button id="apiKeyDeleteBtn" class="smallbtn" data-tip-key="api_key_delete" onclick="deleteApiKeyDialog()">Loeschen</button>
+      <button id="apiKeyCancelBtn" class="smallbtn" data-tip-key="api_key_cancel" onclick="closeApiKeyDialog()">Schliessen</button>
+    </div>
+  </div>
+</div>
+
+<div id="connectPassModal" class="modal-backdrop" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="connectPassTitle">
+    <div id="connectPassTitle" class="modal-title">Passphrase erforderlich</div>
+    <div id="connectPassDesc" class="modal-note" style="font-size:11px; color:#1f2937; margin-bottom:10px;">
+      Fuer den verschluesselten API-Key wird eine Passphrase benoetigt.
+    </div>
+    <label id="connectPassProviderLabel" class="modal-label" for="connectPassProvider">Provider</label>
+    <input id="connectPassProvider" class="setting-select" type="text" readonly />
+    <label id="connectPassInputLabel" class="modal-label" for="connectPassInput">Passphrase</label>
+    <input id="connectPassInput" class="setting-select" type="password" autocomplete="off" spellcheck="false" />
+    <div id="connectPassHint" class="hint" style="text-align:left; margin-top:6px; min-height:14px;"></div>
+    <div class="row modal-actions" style="margin-top:6px;">
+      <button id="connectPassApplyBtn" class="smallbtn" onclick="submitConnectPassphraseDialog()">Verbinden</button>
+      <button id="connectPassCancelBtn" class="smallbtn" onclick="closeConnectPassphraseDialog()">Abbrechen</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ---------- helpers ---------- */
@@ -268,6 +364,8 @@ function _storageKeyForModelQuery(provider){
   return `model_query_${provider||'unknown'}`;
 }
 
+const _sectionStateMem = Object.create(null);
+
 function _safeLsGet(key, fallback){
   try {
     if(typeof window !== 'undefined' && window.localStorage){
@@ -288,6 +386,882 @@ function _safeLsSet(key, value){
   return false;
 }
 
+function _escHtml(s){
+  return String(s || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function _uiLang(){
+  try {
+    const el = document.getElementById('anslang');
+    const v = String((el && el.value) || 'de').toLowerCase();
+    if(v === 'en' || v === 'de') return v;
+  } catch(e) {}
+  return 'de';
+}
+
+const _TIP_STATIC = {
+  de: {
+    provider_select: 'Waehlt den LLM-Provider fuer die naechsten Antworten.',
+    refresh_models: 'Laedt die Modellliste des aktuellen Providers neu (inkl. Cache-Refresh).',
+    api_key_button: 'Oeffnet den API-Key-Dialog zum Setzen/Loeschen je Provider.',
+    api_key_provider: 'Waehlt den Provider, dessen API-Key bearbeitet wird.',
+    api_key_input: 'API-Key eingeben oder ersetzen (wird lokal gespeichert).',
+    api_key_encrypt: 'Speichert den API-Key verschluesselt (Fernet).',
+    api_key_passphrase: 'Passphrase fuer die API-Key-Verschluesselung.',
+    api_key_save: 'Speichert den API-Key fuer den gewaelten Provider.',
+    api_key_delete: 'Loescht den API-Key fuer den gewaelten Provider.',
+    api_key_cancel: 'Schliesst den API-Key-Dialog ohne Aenderung.',
+    model_select: 'Waehlt das aktive Modell fuer diese Sitzung.',
+    model_search: 'Filtert die sichtbaren Modelle lokal nach Namen.',
+    answer_language: 'Legt die gewuenschte Antwortsprache der LLM fest.',
+    hf_provider_filter: 'Filtert den Hugging-Face-Katalog nach Inference-Provider.',
+    hf_topn: 'Setzt die maximale Anzahl geladener HF-Katalogmodelle.',
+    hf_catalog: 'Laedt den HF-Katalog (Top N) und aktualisiert den lokalen Cache.',
+    free_only: 'Zeigt bei OpenRouter nur Modelle mit :free an.',
+    chatlog_select: 'Waehlt ein gespeichertes Chat-Log fuer das Laden.',
+    refresh_log_list: 'Aktualisiert die Liste verfuegbarer Chat-Logs.',
+    load_log_fork: 'Laedt das Log und startet daraus eine neue Session.',
+    load_log_no_fork: 'Laedt das Log in den aktuellen Chat, ohne Fork.',
+    clear_chat: 'Leert den Hauptchat inkl. History-Puffer.',
+    manual_monitor_mode: 'Steuert, ob das Manual-Test-Monitorfenster sichtbar ist.',
+    manual_mirror_main: 'Spiegelt Manual-Test-Events optional in den Hauptchat.',
+    manual_scenario: 'Waehlt das Manual-Test-Szenario.',
+    manual_start: 'Startet den aktuell gewaehlten Manual-Test.',
+    manual_stop: 'Stoppt den laufenden Manual-Test.',
+    section_panel: 'Zeigt den Betriebsstatus des Panels und das Live-Panel-Log.',
+    section_provider: 'Provider-, Modell- und Sprachsteuerung fuer die naechsten Antworten.',
+    section_logs: 'Laedt gespeicherte Chat-Protokolle mit oder ohne Fork in den Hauptchat.',
+    section_manual_test: 'Steuert den Manual-Test-Lauf inklusive Monitor und Spiegelung.',
+    section_comm_core: 'Grundkommandos zum Starten/Stoppen der Comm-Steuerung und Anchor-Status.',
+    section_profiles: 'Schaltet zwischen aktiven Profilen fuer Antwortstil und Governance.',
+    section_sci_workflow: 'Steuert SCI-Modi und Varianten fuer strukturierte Analyseausgaben.',
+    section_runtime_governance: 'Runtime-Overlays und Tools wie Color, Dynamic one-shot und QC Override.',
+  },
+  en: {
+    provider_select: 'Selects the LLM provider for upcoming answers.',
+    refresh_models: 'Refreshes model list for the current provider (including cache refresh).',
+    api_key_button: 'Opens API key dialog for set/delete per provider.',
+    api_key_provider: 'Selects the provider whose API key is edited.',
+    api_key_input: 'Enter or replace API key (stored locally).',
+    api_key_encrypt: 'Stores the API key encrypted (Fernet).',
+    api_key_passphrase: 'Passphrase for API key encryption.',
+    api_key_save: 'Saves API key for the selected provider.',
+    api_key_delete: 'Deletes API key for the selected provider.',
+    api_key_cancel: 'Closes API key dialog without changes.',
+    model_select: 'Selects the active model for this session.',
+    model_search: 'Filters visible models locally by name.',
+    answer_language: 'Sets the preferred answer language for the LLM.',
+    hf_provider_filter: 'Filters Hugging Face catalog by inference provider.',
+    hf_topn: 'Sets the maximum number of loaded HF catalog models.',
+    hf_catalog: 'Fetches HF catalog (Top N) and refreshes local cache.',
+    free_only: 'Shows only models with :free on OpenRouter.',
+    chatlog_select: 'Selects a stored chat log to load.',
+    refresh_log_list: 'Refreshes the list of available chat logs.',
+    load_log_fork: 'Loads the log and creates a new session from it.',
+    load_log_no_fork: 'Loads the log into current chat without forking.',
+    clear_chat: 'Clears main chat including in-memory history.',
+    manual_monitor_mode: 'Controls visibility of the manual test monitor window.',
+    manual_mirror_main: 'Optionally mirrors manual test events into main chat.',
+    manual_scenario: 'Selects the manual test scenario.',
+    manual_start: 'Starts the selected manual test.',
+    manual_stop: 'Stops the running manual test.',
+    section_panel: 'Shows panel runtime status and the live panel log.',
+    section_provider: 'Provider, model and answer-language controls for upcoming responses.',
+    section_logs: 'Loads stored chat logs into main chat with or without forking.',
+    section_manual_test: 'Controls manual test execution including monitor and mirroring.',
+    section_comm_core: 'Core commands to start/stop Comm control and anchor behavior.',
+    section_profiles: 'Switches active profiles for response style and governance.',
+    section_sci_workflow: 'Controls SCI modes and variants for structured analyses.',
+    section_runtime_governance: 'Runtime overlays and tools like Color, Dynamic one-shot and QC Override.',
+  }
+};
+
+const _TIP_CMD = {
+  de: {
+    'comm start': 'Aktiviert die Comm-Steuerungsschicht.',
+    'comm stop': 'Deaktiviert die Comm-Steuerungsschicht.',
+    'comm anchor on': 'Aktiviert automatische Comm-Anchor-Snapshots.',
+    'comm anchor off': 'Deaktiviert automatische Comm-Anchor-Snapshots.',
+    'sci on': 'Aktiviert den SCI-Workflow.',
+    'sci off': 'Deaktiviert den SCI-Workflow.',
+    'sci menu': 'Zeigt das SCI-Variantenmenue.',
+    'sci recurse': 'Fuehrt eine vertiefte SCI-Rekursion aus.',
+    'strict on': 'Aktiviert den Strict-Overlay.',
+    'strict off': 'Deaktiviert den Strict-Overlay.',
+    'explore on': 'Aktiviert den Explore-Overlay.',
+    'explore off': 'Deaktiviert den Explore-Overlay.',
+    'explorer on': 'Aktiviert den Explore-Overlay.',
+    'explorer off': 'Deaktiviert den Explore-Overlay.',
+    'color on': 'Aktiviert Farbmarker fuer Evidenzsignale.',
+    'color off': 'Deaktiviert Farbmarker fuer Evidenzsignale.',
+    'dynamic one-shot on': 'Aktiviert genau eine adaptive Nachsteuerung fuer die naechste Antwort.',
+    'qc override': 'Oeffnet den QC-Override-Dialog fuer temporare Delta-Werte.',
+  },
+  en: {
+    'comm start': 'Enables the Comm control layer.',
+    'comm stop': 'Disables the Comm control layer.',
+    'comm anchor on': 'Enables automatic Comm Anchor snapshots.',
+    'comm anchor off': 'Disables automatic Comm Anchor snapshots.',
+    'sci on': 'Enables SCI workflow.',
+    'sci off': 'Disables SCI workflow.',
+    'sci menu': 'Shows SCI variant menu.',
+    'sci recurse': 'Runs deeper SCI recursion.',
+    'strict on': 'Enables Strict overlay.',
+    'strict off': 'Disables Strict overlay.',
+    'explore on': 'Enables Explore overlay.',
+    'explore off': 'Disables Explore overlay.',
+    'explorer on': 'Enables Explore overlay.',
+    'explorer off': 'Disables Explore overlay.',
+    'color on': 'Enables color markers for evidence signals.',
+    'color off': 'Disables color markers for evidence signals.',
+    'dynamic one-shot on': 'Enables one adaptive one-shot adjustment for the next answer.',
+    'qc override': 'Opens QC override dialog for temporary delta settings.',
+  }
+};
+
+const _API_KEY_I18N = {
+  de: {
+    title: 'API-Key verwalten',
+    provider_label: 'Provider',
+    key_label: 'API-Key',
+    encrypt_label: 'Verschluesselt speichern',
+    passphrase_label: 'Passphrase',
+    passphrase_note: 'Fuer verschluesselte Nutzung muss spaeter COMM_SCI_KEY_PASSPHRASE gesetzt sein.',
+    key_placeholder: 'Neuen API-Key einfuegen...',
+    passphrase_placeholder: 'Passphrase fuer Verschluesselung',
+    save: 'Speichern',
+    delete: 'Loeschen',
+    cancel: 'Schliessen',
+    provider_prefix: 'Provider: ',
+    hint_default: 'Schluessel bleiben lokal und sollten niemals geteilt werden.',
+    hint_saved_plain: 'API-Key gespeichert.',
+    hint_saved_enc: 'API-Key verschluesselt gespeichert.',
+    hint_deleted: 'API-Key geloescht.',
+    hint_error_prefix: 'Fehler: ',
+    status_saved: 'API-Key aktualisiert.',
+    status_deleted: 'API-Key entfernt.',
+    status_error_prefix: 'API-Key Aktion fehlgeschlagen: ',
+    missing_provider: 'Bitte Provider waehlen.',
+    missing_key: 'Bitte API-Key eingeben.',
+    missing_passphrase: 'Bitte Passphrase eingeben.',
+    saving: 'Speichere API-Key...',
+    deleting: 'Loesche API-Key...',
+    confirm_delete: 'API-Key fuer den gewaehlten Provider wirklich loeschen?',
+  },
+  en: {
+    title: 'Manage API key',
+    provider_label: 'Provider',
+    key_label: 'API key',
+    encrypt_label: 'Store encrypted',
+    passphrase_label: 'Passphrase',
+    passphrase_note: 'For encrypted usage set COMM_SCI_KEY_PASSPHRASE later.',
+    key_placeholder: 'Paste new API key...',
+    passphrase_placeholder: 'Passphrase for encryption',
+    save: 'Save',
+    delete: 'Delete',
+    cancel: 'Close',
+    provider_prefix: 'Provider: ',
+    hint_default: 'Keys stay local and should never be shared.',
+    hint_saved_plain: 'API key saved.',
+    hint_saved_enc: 'API key saved encrypted.',
+    hint_deleted: 'API key deleted.',
+    hint_error_prefix: 'Error: ',
+    status_saved: 'API key updated.',
+    status_deleted: 'API key removed.',
+    status_error_prefix: 'API key action failed: ',
+    missing_provider: 'Please choose a provider.',
+    missing_key: 'Please enter an API key.',
+    missing_passphrase: 'Please enter a passphrase.',
+    saving: 'Saving API key...',
+    deleting: 'Deleting API key...',
+    confirm_delete: 'Delete API key for the selected provider?',
+  }
+};
+
+const _CONNECT_PASS_I18N = {
+  de: {
+    title: 'Passphrase erforderlich',
+    desc_startup: 'Vor dem Verbindungsaufbau mit dem verschluesselten Provider-Key bitte Passphrase eingeben.',
+    desc_switch: 'Providerwechsel pausiert: Fuer den verschluesselten Key ist zuerst die Passphrase noetig.',
+    desc_default: 'Fuer den verschluesselten API-Key wird eine Passphrase benoetigt.',
+    provider_label: 'Provider',
+    passphrase_label: 'Passphrase',
+    placeholder: 'Passphrase eingeben...',
+    apply: 'Verbinden',
+    cancel: 'Abbrechen',
+    missing_passphrase: 'Bitte Passphrase eingeben.',
+    submitting: 'Pruefe Passphrase...',
+    invalid: 'Passphrase ungueltig oder nicht passend.',
+    status_ok: 'Passphrase akzeptiert. Verbindung wird aufgebaut.',
+    status_err_prefix: 'Passphrase-Fehler: ',
+  },
+  en: {
+    title: 'Passphrase required',
+    desc_startup: 'Enter passphrase before connecting with encrypted provider key.',
+    desc_switch: 'Provider switch paused: passphrase is required for encrypted key first.',
+    desc_default: 'Passphrase is required for encrypted API key.',
+    provider_label: 'Provider',
+    passphrase_label: 'Passphrase',
+    placeholder: 'Enter passphrase...',
+    apply: 'Connect',
+    cancel: 'Cancel',
+    missing_passphrase: 'Please enter a passphrase.',
+    submitting: 'Validating passphrase...',
+    invalid: 'Passphrase is invalid or does not match key.',
+    status_ok: 'Passphrase accepted. Connecting now.',
+    status_err_prefix: 'Passphrase error: ',
+  }
+};
+
+function _apiKeyT(key){
+  const lang = _uiLang();
+  const dict = _API_KEY_I18N[lang] || _API_KEY_I18N.de;
+  if(dict && Object.prototype.hasOwnProperty.call(dict, key)) return String(dict[key] || '');
+  const fallback = _API_KEY_I18N.de || {};
+  return String(fallback[key] || key || '');
+}
+
+function _connectPassT(key){
+  const lang = _uiLang();
+  const dict = _CONNECT_PASS_I18N[lang] || _CONNECT_PASS_I18N.de;
+  if(dict && Object.prototype.hasOwnProperty.call(dict, key)) return String(dict[key] || '');
+  const fallback = _CONNECT_PASS_I18N.de || {};
+  return String(fallback[key] || key || '');
+}
+
+function _providerDisplayName(provider){
+  const p = String(provider || '').trim().toLowerCase();
+  if(p === 'gemini') return 'Gemini';
+  if(p === 'openrouter') return 'OpenRouter';
+  if(p === 'huggingface' || p === 'hf') return 'Hugging Face';
+  return provider || '';
+}
+
+function _syncApiKeyProviderOptions(selectedProvider){
+  const src = document.getElementById('provider');
+  const out = [];
+  const seen = new Set();
+  if(src && src.options){
+    for(let i = 0; i < src.options.length; i += 1){
+      const v = String(src.options[i].value || '').trim().toLowerCase();
+      if(!v || seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  ['gemini', 'openrouter', 'huggingface'].forEach((v)=>{
+    if(!seen.has(v)){
+      seen.add(v);
+      out.push(v);
+    }
+  });
+  const opts = out.map((p)=>({value: p, label: _apiKeyT('provider_prefix') + _providerDisplayName(p)}));
+  const fallbackSelected = String(selectedProvider || ((src && src.value) || 'gemini') || 'gemini').trim().toLowerCase();
+  _setSelectOptions('apiKeyProvider', opts, fallbackSelected);
+}
+
+function _syncApiKeyDialogLanguage(){
+  try {
+    const title = document.getElementById('apiKeyModalTitle');
+    const providerLabel = document.getElementById('apiKeyProviderLabel');
+    const keyLabel = document.getElementById('apiKeyInputLabel');
+    const encryptLabel = document.getElementById('apiKeyEncryptLabel');
+    const passphraseLabel = document.getElementById('apiKeyPassphraseLabel');
+    const passphraseNote = document.getElementById('apiKeyPassphraseNote');
+    const keyInput = document.getElementById('apiKeyInput');
+    const passInput = document.getElementById('apiKeyPassphrase');
+    const saveBtn = document.getElementById('apiKeySaveBtn');
+    const delBtn = document.getElementById('apiKeyDeleteBtn');
+    const cancelBtn = document.getElementById('apiKeyCancelBtn');
+    if(title) title.textContent = _apiKeyT('title');
+    if(providerLabel) providerLabel.textContent = _apiKeyT('provider_label');
+    if(keyLabel) keyLabel.textContent = _apiKeyT('key_label');
+    if(encryptLabel) encryptLabel.textContent = _apiKeyT('encrypt_label');
+    if(passphraseLabel) passphraseLabel.textContent = _apiKeyT('passphrase_label');
+    if(passphraseNote) passphraseNote.textContent = _apiKeyT('passphrase_note');
+    if(keyInput) keyInput.placeholder = _apiKeyT('key_placeholder');
+    if(passInput) passInput.placeholder = _apiKeyT('passphrase_placeholder');
+    if(saveBtn) saveBtn.textContent = _apiKeyT('save');
+    if(delBtn) delBtn.textContent = _apiKeyT('delete');
+    if(cancelBtn) cancelBtn.textContent = _apiKeyT('cancel');
+  } catch(e) {}
+}
+
+function _setApiKeyDialogHint(text, cls){
+  const el = document.getElementById('apiKeyDialogHint');
+  if(!el) return;
+  el.classList.remove('ok');
+  el.classList.remove('err');
+  el.classList.remove('warn');
+  if(cls) el.classList.add(cls);
+  el.textContent = String(text || '');
+}
+
+function _setApiKeyDialogBusy(busy){
+  const on = !!busy;
+  ['apiKeyProvider', 'apiKeyInput', 'apiKeyEncrypt', 'apiKeyPassphrase', 'apiKeySaveBtn', 'apiKeyDeleteBtn', 'apiKeyCancelBtn'].forEach((id)=>{
+    const el = document.getElementById(id);
+    if(el) el.disabled = on;
+  });
+}
+
+function toggleApiKeyEncryptUi(){
+  try {
+    const cb = document.getElementById('apiKeyEncrypt');
+    const row = document.getElementById('apiKeyPassphraseRow');
+    const enabled = !!(cb && cb.checked);
+    if(row) row.style.display = enabled ? 'block' : 'none';
+  } catch(e) {}
+}
+
+function openApiKeyDialog(){
+  const modal = document.getElementById('apiKeyModal');
+  if(!modal) return;
+  const currentProvider = String(((document.getElementById('provider') || {}).value || 'gemini') || 'gemini').trim().toLowerCase();
+  _syncApiKeyDialogLanguage();
+  _syncApiKeyProviderOptions(currentProvider);
+  try {
+    const keyInput = document.getElementById('apiKeyInput');
+    const passInput = document.getElementById('apiKeyPassphrase');
+    const encCb = document.getElementById('apiKeyEncrypt');
+    if(keyInput) keyInput.value = '';
+    if(passInput) passInput.value = '';
+    if(encCb) encCb.checked = false;
+    toggleApiKeyEncryptUi();
+  } catch(e) {}
+  _setApiKeyDialogBusy(false);
+  _setApiKeyDialogHint(_apiKeyT('hint_default'), '');
+  modal.style.display = 'flex';
+  modal.setAttribute('aria-hidden', 'false');
+  try {
+    const inp = document.getElementById('apiKeyInput');
+    if(inp && typeof inp.focus === 'function') inp.focus();
+  } catch(e) {}
+  try { _applyStaticTooltips(); } catch(e) {}
+}
+
+function closeApiKeyDialog(){
+  const modal = document.getElementById('apiKeyModal');
+  if(!modal) return;
+  modal.style.display = 'none';
+  modal.setAttribute('aria-hidden', 'true');
+  _setApiKeyDialogBusy(false);
+}
+
+function _connectPassReasonText(reason){
+  const r = String(reason || '').trim().toLowerCase();
+  if(r === 'startup') return _connectPassT('desc_startup');
+  if(r === 'provider_switch') return _connectPassT('desc_switch');
+  return _connectPassT('desc_default');
+}
+
+function _setConnectPassHint(text, cls){
+  const el = document.getElementById('connectPassHint');
+  if(!el) return;
+  el.classList.remove('ok');
+  el.classList.remove('err');
+  el.classList.remove('warn');
+  if(cls) el.classList.add(cls);
+  el.textContent = String(text || '');
+}
+
+function _setConnectPassBusy(busy){
+  const on = !!busy;
+  ['connectPassInput', 'connectPassApplyBtn', 'connectPassCancelBtn'].forEach((id)=>{
+    const el = document.getElementById(id);
+    if(el) el.disabled = on;
+  });
+}
+
+function _syncConnectPassDialogLanguage(){
+  try {
+    const title = document.getElementById('connectPassTitle');
+    const desc = document.getElementById('connectPassDesc');
+    const provLabel = document.getElementById('connectPassProviderLabel');
+    const inpLabel = document.getElementById('connectPassInputLabel');
+    const inp = document.getElementById('connectPassInput');
+    const applyBtn = document.getElementById('connectPassApplyBtn');
+    const cancelBtn = document.getElementById('connectPassCancelBtn');
+    const modal = document.getElementById('connectPassModal');
+    const reason = modal ? String(modal.dataset.reason || '') : '';
+    if(title) title.textContent = _connectPassT('title');
+    if(desc) desc.textContent = _connectPassReasonText(reason);
+    if(provLabel) provLabel.textContent = _connectPassT('provider_label');
+    if(inpLabel) inpLabel.textContent = _connectPassT('passphrase_label');
+    if(inp) inp.placeholder = _connectPassT('placeholder');
+    if(applyBtn) applyBtn.textContent = _connectPassT('apply');
+    if(cancelBtn) cancelBtn.textContent = _connectPassT('cancel');
+  } catch(e) {}
+}
+
+function openConnectPassphraseDialog(provider, reason){
+  const modal = document.getElementById('connectPassModal');
+  if(!modal) return;
+  const p = String(provider || ((document.getElementById('provider') || {}).value || 'gemini')).trim().toLowerCase();
+  const r = String(reason || 'connect').trim().toLowerCase();
+  const isOpen = (modal.style.display === 'flex');
+  if(isOpen && modal.dataset.provider === p && modal.dataset.reason === r){
+    return;
+  }
+  modal.dataset.provider = p;
+  modal.dataset.reason = r;
+  _syncConnectPassDialogLanguage();
+  const provIn = document.getElementById('connectPassProvider');
+  const inp = document.getElementById('connectPassInput');
+  if(provIn) provIn.value = _providerDisplayName(p);
+  if(inp) inp.value = '';
+  _setConnectPassBusy(false);
+  _setConnectPassHint('', '');
+  modal.style.display = 'flex';
+  modal.setAttribute('aria-hidden', 'false');
+  try { if(inp && typeof inp.focus === 'function') inp.focus(); } catch(e) {}
+}
+
+function closeConnectPassphraseDialog(){
+  const modal = document.getElementById('connectPassModal');
+  if(!modal) return;
+  modal.style.display = 'none';
+  modal.setAttribute('aria-hidden', 'true');
+  _setConnectPassBusy(false);
+}
+
+async function submitConnectPassphraseDialog(){
+  const modal = document.getElementById('connectPassModal');
+  const provider = String((modal && modal.dataset && modal.dataset.provider) || '').trim().toLowerCase();
+  const reason = String((modal && modal.dataset && modal.dataset.reason) || '').trim().toLowerCase();
+  const inp = document.getElementById('connectPassInput');
+  const passphrase = String((inp && inp.value) || '').trim();
+  if(!passphrase){
+    _setConnectPassHint(_connectPassT('missing_passphrase'), 'err');
+    return;
+  }
+  _setConnectPassBusy(true);
+  _setConnectPassHint(_connectPassT('submitting'), 'warn');
+  try {
+    const res = await _apiCall('panel_action', ['set_key_passphrase', {
+      provider: provider,
+      passphrase: passphrase,
+      reason: reason,
+      reconnect: true,
+    }], 20000);
+    if(!res || res.ok === false){
+      const err = String((res && res.error) || 'set_key_passphrase_failed');
+      if(err === 'invalid_passphrase'){
+        throw new Error(_connectPassT('invalid'));
+      }
+      throw new Error(err);
+    }
+    _setStatus(_connectPassT('status_ok'), 'ok');
+    closeConnectPassphraseDialog();
+    await buildUI();
+  } catch(e) {
+    const msg = String(e && e.message ? e.message : e);
+    _setConnectPassHint(_connectPassT('status_err_prefix') + msg, 'err');
+    _setStatus(_connectPassT('status_err_prefix') + msg, 'err');
+  } finally {
+    _setConnectPassBusy(false);
+  }
+}
+
+async function saveApiKeyDialog(){
+  const provider = String(((document.getElementById('apiKeyProvider') || {}).value || '')).trim().toLowerCase();
+  const apiKey = String(((document.getElementById('apiKeyInput') || {}).value || '')).trim();
+  const encrypt = !!((document.getElementById('apiKeyEncrypt') || {}).checked);
+  const passphrase = String(((document.getElementById('apiKeyPassphrase') || {}).value || '')).trim();
+  if(!provider){
+    _setApiKeyDialogHint(_apiKeyT('missing_provider'), 'err');
+    return;
+  }
+  if(!apiKey){
+    _setApiKeyDialogHint(_apiKeyT('missing_key'), 'err');
+    return;
+  }
+  if(encrypt && !passphrase){
+    _setApiKeyDialogHint(_apiKeyT('missing_passphrase'), 'err');
+    return;
+  }
+  _setApiKeyDialogBusy(true);
+  _setApiKeyDialogHint(_apiKeyT('saving'), 'warn');
+  try {
+    const res = await _apiCall('panel_action', ['set_api_key', {
+      provider: provider,
+      api_key: apiKey,
+      encrypt: encrypt,
+      passphrase: passphrase,
+      persist: true,
+    }], 15000);
+    if(!res || res.ok === false){
+      throw new Error((res && res.error) ? res.error : 'set_api_key_failed');
+    }
+    _setApiKeyDialogHint(encrypt ? _apiKeyT('hint_saved_enc') : _apiKeyT('hint_saved_plain'), 'ok');
+    _setStatus(_apiKeyT('status_saved'), 'ok');
+    try {
+      const keyInput = document.getElementById('apiKeyInput');
+      const passInput = document.getElementById('apiKeyPassphrase');
+      if(keyInput) keyInput.value = '';
+      if(passInput) passInput.value = '';
+    } catch(e) {}
+    await buildUI();
+  } catch(e) {
+    const msg = String(e && e.message ? e.message : e);
+    _setApiKeyDialogHint(_apiKeyT('hint_error_prefix') + msg, 'err');
+    _setStatus(_apiKeyT('status_error_prefix') + msg, 'err');
+  } finally {
+    _setApiKeyDialogBusy(false);
+  }
+}
+
+async function deleteApiKeyDialog(){
+  const provider = String(((document.getElementById('apiKeyProvider') || {}).value || '')).trim().toLowerCase();
+  if(!provider){
+    _setApiKeyDialogHint(_apiKeyT('missing_provider'), 'err');
+    return;
+  }
+  try {
+    if(!window.confirm(_apiKeyT('confirm_delete'))){
+      return;
+    }
+  } catch(e) {}
+  _setApiKeyDialogBusy(true);
+  _setApiKeyDialogHint(_apiKeyT('deleting'), 'warn');
+  try {
+    const res = await _apiCall('panel_action', ['delete_api_key', {
+      provider: provider,
+      persist: true,
+    }], 12000);
+    if(!res || res.ok === false){
+      throw new Error((res && res.error) ? res.error : 'delete_api_key_failed');
+    }
+    _setApiKeyDialogHint(_apiKeyT('hint_deleted'), 'ok');
+    _setStatus(_apiKeyT('status_deleted'), 'ok');
+    try {
+      const keyInput = document.getElementById('apiKeyInput');
+      const passInput = document.getElementById('apiKeyPassphrase');
+      if(keyInput) keyInput.value = '';
+      if(passInput) passInput.value = '';
+    } catch(e) {}
+    await buildUI();
+  } catch(e) {
+    const msg = String(e && e.message ? e.message : e);
+    _setApiKeyDialogHint(_apiKeyT('hint_error_prefix') + msg, 'err');
+    _setStatus(_apiKeyT('status_error_prefix') + msg, 'err');
+  } finally {
+    _setApiKeyDialogBusy(false);
+  }
+}
+
+function _tipForKey(key, fallback){
+  const lang = _uiLang();
+  const pack = _TIP_STATIC[lang] || _TIP_STATIC.de;
+  const value = (pack && pack[String(key || '')]) || '';
+  if(String(value || '').trim()) return String(value);
+  if(String(fallback || '').trim()) return String(fallback);
+  return '';
+}
+
+function _genericCmdTip(cmd){
+  const c = String(cmd || '').trim();
+  if(!c) return '';
+  return _uiLang() === 'de' ? ('Befehl ausfuehren: ' + c) : ('Run command: ' + c);
+}
+
+function _looksWrongLang(text, lang){
+  const t = String(text || '').trim().toLowerCase();
+  if(!t) return false;
+  if(lang === 'de'){
+    return /\b(turn|enable|disable|start|stop|show|load|refresh|fetch|set|clear|apply|open|mode|window|answer|language|models?)\b/.test(t);
+  }
+  if(lang === 'en'){
+    return /\b(aktiviert|deaktiviert|waehlt|laedt|fuer|naecht|naechst|antwort|fenster|modell|hauptchat|sichtbar)\b/.test(t);
+  }
+  return false;
+}
+
+function _tipForCmd(cmd, fallback){
+  const lang = _uiLang();
+  const pack = _TIP_CMD[lang] || _TIP_CMD.de;
+  const key = String(cmd || '').trim().toLowerCase();
+  const mapped = (pack && pack[key]) || '';
+  if(String(mapped || '').trim()) return String(mapped);
+  const fb = String(fallback || '').trim();
+  if(fb && !_looksWrongLang(fb, lang)) return fb;
+  return _genericCmdTip(cmd);
+}
+
+function _sectionTipKey(sectionKey){
+  const key = String(sectionKey || '').trim().toLowerCase();
+  if(!key) return '';
+  return 'section_' + key;
+}
+
+function _applyStaticTooltips(){
+  try {
+    document.querySelectorAll('[data-tip-key]').forEach((el)=>{
+      const key = String(el.getAttribute('data-tip-key') || '').trim();
+      if(!key) return;
+      const tip = _tipForKey(key, el.getAttribute('data-tip') || el.getAttribute('title') || '');
+      if(tip){
+        el.setAttribute('data-tip', tip);
+      } else {
+        el.removeAttribute('data-tip');
+      }
+      el.removeAttribute('title');
+    });
+  } catch(e) {}
+}
+
+function _applyDynamicTooltips(){
+  try {
+    const root = document.getElementById('ui');
+    if(!root) return;
+    root.querySelectorAll('button').forEach((el)=>{
+      const cmd = String(el.getAttribute('data-cmd') || '').trim();
+      if(!cmd) return;
+      const tip = _tipForCmd(cmd, el.getAttribute('data-tip') || el.getAttribute('title') || '');
+      if(tip){
+        el.setAttribute('data-tip', tip);
+      } else {
+        el.removeAttribute('data-tip');
+      }
+      el.removeAttribute('title');
+    });
+  } catch(e) {}
+}
+
+let __panelTipEl = null;
+function _panelTipHide(){
+  if(!__panelTipEl) return;
+  try { __panelTipEl.remove(); } catch(e) {}
+  __panelTipEl = null;
+}
+
+function _panelTipText(target){
+  if(!target) return '';
+  const direct = String(target.getAttribute('data-tip') || '').trim();
+  if(direct) return direct;
+  const key = String(target.getAttribute('data-tip-key') || '').trim();
+  if(!key) return '';
+  return _tipForKey(key, '');
+}
+
+function _panelTipShow(target, ev){
+  if(!target) return;
+  const txt = _panelTipText(target);
+  if(!txt) return;
+  _panelTipHide();
+  const tip = document.createElement('div');
+  tip.className = 'panel-tooltip';
+  tip.textContent = txt;
+  tip.style.position = 'fixed';
+  tip.style.zIndex = '99999';
+  tip.style.maxWidth = '420px';
+  tip.style.padding = '8px 10px';
+  tip.style.border = '1px solid #93c5fd';
+  tip.style.borderRadius = '8px';
+  tip.style.background = '#eff6ff';
+  tip.style.color = '#1e3a8a';
+  tip.style.fontSize = '12px';
+  tip.style.lineHeight = '1.35';
+  tip.style.boxShadow = '0 6px 16px rgba(0,0,0,0.18)';
+  tip.style.pointerEvents = 'none';
+  document.body.appendChild(tip);
+  __panelTipEl = tip;
+  try {
+    const rect = tip.getBoundingClientRect();
+    const vw = window.innerWidth || document.documentElement.clientWidth || 1024;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 768;
+    const cx = (ev && typeof ev.clientX === 'number') ? ev.clientX : Math.round(vw / 2);
+    const cy = (ev && typeof ev.clientY === 'number') ? ev.clientY : Math.round(vh / 2);
+    let left = cx + 12;
+    let top = cy + 12;
+    if(left + rect.width + 8 > vw) left = Math.max(8, vw - rect.width - 8);
+    if(top + rect.height + 8 > vh) top = Math.max(8, cy - rect.height - 12);
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  } catch(e) {}
+}
+
+function _panelTipTarget(node){
+  if(!node || !node.closest) return null;
+  return node.closest('[data-tip],[data-tip-key]');
+}
+
+function _bindPanelTooltipEvents(){
+  document.addEventListener('mousedown', (e)=>{
+    if(typeof e.button === 'number' && e.button !== 0) return;
+    const t = _panelTipTarget(e.target);
+    if(!t) return;
+    if(t.classList && t.classList.contains('section-info')){
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    _panelTipShow(t, e);
+  });
+  document.addEventListener('click', (e)=>{
+    const t = _panelTipTarget(e.target);
+    if(!t) return;
+    if(t.classList && t.classList.contains('section-info')){
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+  document.addEventListener('mouseover', (e)=>{
+    const t = _panelTipTarget(e.target);
+    if(!t) return;
+    _panelTipShow(t, e);
+  });
+  document.addEventListener('mouseout', (e)=>{
+    const t = _panelTipTarget(e.target);
+    if(!t) return;
+    const rel = e.relatedTarget;
+    if(rel && t.contains && t.contains(rel)) return;
+    _panelTipHide();
+  });
+  document.addEventListener('focusin', (e)=>{
+    const t = _panelTipTarget(e.target);
+    if(!t) return;
+    _panelTipShow(t, e);
+  });
+  document.addEventListener('focusout', (e)=>{
+    const t = _panelTipTarget(e.target);
+    if(!t) return;
+    _panelTipHide();
+  });
+  document.addEventListener('keydown', (e)=>{
+    const t = _panelTipTarget(e.target);
+    if(!t) return;
+    if(!(t.classList && t.classList.contains('section-info'))) return;
+    const k = String(e.key || '');
+    if(k === 'Enter' || k === ' '){
+      e.preventDefault();
+      e.stopPropagation();
+      _panelTipShow(t, e);
+    }
+  });
+  document.addEventListener('mouseup', _panelTipHide);
+  document.addEventListener('dragstart', _panelTipHide);
+  document.addEventListener('scroll', _panelTipHide, true);
+  window.addEventListener('blur', _panelTipHide);
+}
+
+function _setSectionState(btn, open, persist){
+  if(!btn) return;
+  const bodyId = String(btn.getAttribute('data-body-id') || '').trim();
+  const body = bodyId ? document.getElementById(bodyId) : null;
+  if(!body) return;
+  const isOpen = !!open;
+  body.style.display = isOpen ? 'block' : 'none';
+  btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  const chev = btn.querySelector('.section-chevron');
+  if(chev) chev.textContent = isOpen ? '▾' : '▸';
+  const key = String(btn.getAttribute('data-store-key') || '').trim();
+  if(key) _sectionStateMem[key] = isOpen ? '1' : '0';
+  if(persist){
+    if(key) _safeLsSet('panel_section_' + key, isOpen ? '1' : '0');
+  }
+}
+
+function toggleSectionByBtn(btn){
+  if(!btn) return;
+  const bodyId = String(btn.getAttribute('data-body-id') || '').trim();
+  const body = bodyId ? document.getElementById(bodyId) : null;
+  if(!body) return;
+  const currentOpen = (body.style.display !== 'none');
+  _setSectionState(btn, !currentOpen, true);
+}
+
+function _initSectionToggles(){
+  try {
+    document.querySelectorAll('.section-toggle[data-body-id]').forEach((btn)=>{
+      const key = String(btn.getAttribute('data-store-key') || '').trim();
+      const defOpen = (String(btn.getAttribute('data-default-open') || '0') === '1');
+      let raw = defOpen ? '1' : '0';
+      if(key && Object.prototype.hasOwnProperty.call(_sectionStateMem, key)){
+        raw = _sectionStateMem[key];
+      } else if(key){
+        raw = _safeLsGet('panel_section_' + key, raw);
+      }
+      const open = (String(raw || '0') !== '0');
+      if(key) _sectionStateMem[key] = open ? '1' : '0';
+      _setSectionState(btn, open, false);
+    });
+  } catch(e) {}
+}
+
+function _cmdKey(item){
+  try {
+    if(typeof item === 'string') return String(item || '').trim().toLowerCase();
+    if(item && typeof item === 'object') return String(item.cmd || item.name || '').trim().toLowerCase();
+  } catch(e) {}
+  return '';
+}
+
+function _asCmdItem(item){
+  if(typeof item === 'string'){
+    const s = String(item || '').trim();
+    return s ? { name: s, cmd: s, desc: '' } : null;
+  }
+  if(item && typeof item === 'object'){
+    const cmd = String(item.cmd || item.name || '').trim();
+    if(!cmd) return null;
+    return {
+      name: String(item.name || cmd),
+      cmd: cmd,
+      desc: String(item.desc || ''),
+    };
+  }
+  return null;
+}
+
+function _mergeRuntimeItems(overlays, tools, opts){
+  const raw = [];
+  (Array.isArray(overlays) ? overlays : []).forEach((it)=>{ const x = _asCmdItem(it); if(x) raw.push(x); });
+  (Array.isArray(tools) ? tools : []).forEach((it)=>{ const x = _asCmdItem(it); if(x) raw.push(x); });
+  const showQc = !!(opts && opts.qcOverrideVisible);
+  if(showQc){
+    raw.push({ name: 'QC Override', cmd: 'QC Override', desc: '' });
+  }
+
+  const seen = new Set();
+  const byKey = new Map();
+  const insertionOrder = [];
+  raw.forEach((it)=>{
+    const k = _cmdKey(it);
+    if(!k || seen.has(k)) return;
+    seen.add(k);
+    byKey.set(k, it);
+    insertionOrder.push(k);
+  });
+
+  const pref = [
+    'strict on', 'strict off',
+    'explore on', 'explore off',
+    'explorer on', 'explorer off',
+    'color on', 'color off',
+    'dynamic one-shot on',
+    'qc override',
+  ];
+  const out = [];
+  pref.forEach((k)=>{
+    if(byKey.has(k)){
+      out.push(byKey.get(k));
+      byKey.delete(k);
+    }
+  });
+  insertionOrder.forEach((k)=>{
+    if(byKey.has(k)){
+      out.push(byKey.get(k));
+      byKey.delete(k);
+    }
+  });
+  return out;
+}
+
 function buildUIFromData(raw){
   const base = _fallbackData();
   const data = Object.assign({}, base, (raw || {}));
@@ -302,6 +1276,18 @@ function buildUIFromData(raw){
   // Provider select
   const providers = (data.providers || ['gemini']);
   _setSelectOptions('provider', providers.map(p => ({value:p, label:`Provider: ${p}`})), data.current_provider || 'gemini');
+  try { _syncApiKeyProviderOptions(data.current_provider || 'gemini'); } catch(e) {}
+  try {
+    const req = !!data.passphrase_required;
+    const reqProvider = String(data.passphrase_provider || data.current_provider || 'gemini').trim().toLowerCase();
+    const reqReason = String(data.passphrase_reason || 'connect').trim().toLowerCase();
+    if(req){
+      openConnectPassphraseDialog(reqProvider, reqReason);
+    } else {
+      const cpm = document.getElementById('connectPassModal');
+      if(cpm && cpm.style.display === 'flex') closeConnectPassphraseDialog();
+    }
+  } catch(e) {}
 
   const p = (data.current_provider || 'gemini');
   const btn = document.getElementById('refreshModelsBtn');
@@ -369,6 +1355,7 @@ function buildUIFromData(raw){
   // Answer language
   try { document.getElementById('anslang').value = (data.answer_language || 'de'); } catch(e) {}
   try { _mtApplyLocalizedUi(); } catch(e) {}
+  try { _applyStaticTooltips(); } catch(e) {}
 
   // Chat logs
   try {
@@ -388,25 +1375,47 @@ function buildUIFromData(raw){
 
   // Buttons sections
   let html = '';
-  const section = (title, items) => {
-    if(!items || !items.length) return;
-    html += `<div class="card"><h4>${title}</h4><div class="grid">`;
-    items.forEach(i => {
-      let cmd, lbl, tip;
-      if (typeof i === 'string') { cmd = i; lbl = i; tip = ""; }
-      else { cmd = i.cmd ? i.cmd : i.name; lbl = i.name; tip = i.desc || ""; }
-      html += `<button title="${tip}" onclick="run('${cmd}')">${lbl}</button>`;
+  const section = (title, items, sectionKey) => {
+    const arr = Array.isArray(items) ? items : [];
+    if(!arr.length) return;
+    const key = String(sectionKey || '').trim();
+    const bodyId = key ? ('sectionBody_' + key) : ('sectionBody_' + Math.random().toString(36).slice(2));
+    const sectionTipKey = _sectionTipKey(key);
+    html += `<div class="card">`;
+    html += `<button class="section-toggle" type="button" data-body-id="${_escHtml(bodyId)}" data-store-key="${_escHtml(key)}" data-default-open="1" onclick="toggleSectionByBtn(this)" aria-expanded="true">`;
+    html += `<span class="section-title-wrap">${_escHtml(title)} <span class="section-info" data-tip-key="${_escHtml(sectionTipKey)}" data-section-info="1" tabindex="0" role="button" aria-label="${_escHtml(title)} info">i</span></span><span class="section-chevron">▾</span>`;
+    html += `</button>`;
+    html += `<div id="${_escHtml(bodyId)}" class="section-body"><div class="grid">`;
+    arr.forEach(i => {
+      const it = _asCmdItem(i);
+      if(!it) return;
+      const cmd = String(it.cmd || '').trim();
+      const lbl = String(it.name || cmd).trim() || cmd;
+      const tip = _tipForCmd(cmd, String(it.desc || '').trim());
+      const cmdEsc = _escHtml(cmd);
+      const lblEsc = _escHtml(lbl);
+      const tipEsc = _escHtml(tip);
+      if(_cmdKey(it) === 'qc override'){
+        html += `<button id="qcOverrideBtn" data-tip="${tipEsc}" data-cmd="QC Override" onclick="run('QC Override')">${lblEsc}</button>`;
+      } else {
+        html += `<button data-tip="${tipEsc}" data-cmd="${cmdEsc}" onclick="run(this.getAttribute('data-cmd') || '')">${lblEsc}</button>`;
+      }
     });
-    html += '</div></div>';
+    html += '</div></div></div>';
   };
 
-  section('Comm Core', data.comm);
-  section('Profiles', data.profiles);
-  section('SCI Workflow', data.sci);
-  section('Modes & Overlays', data.overlays);
-  section('Tools', data.tools);
+  section('Comm Core', data.comm, 'comm_core');
+  section('Profiles', data.profiles, 'profiles');
+  section('SCI Workflow', data.sci, 'sci_workflow');
+  const qcVisible = (typeof data.qc_override_visible === 'boolean')
+    ? !!data.qc_override_visible
+    : !!(data && data.comm_active === true);
+  section('Runtime & Governance', _mergeRuntimeItems(data.overlays, data.tools, {qcOverrideVisible: qcVisible}), 'runtime_governance');
 
   document.getElementById('ui').innerHTML = html;
+  try { _initSectionToggles(); } catch(e) {}
+  try { _applyStaticTooltips(); } catch(e) {}
+  try { _applyDynamicTooltips(); } catch(e) {}
 }
 
 async function buildUI(){
@@ -484,13 +1493,54 @@ function initPanelFailOpen(){
 document.addEventListener('DOMContentLoaded', initPanelFailOpen);
 document.addEventListener('DOMContentLoaded', () => {
   try {
+    _bindPanelTooltipEvents();
+    _initSectionToggles();
     const saved = _safeLsGet('manual_test_monitor_mode', 'show');
     const el = document.getElementById('manualTestMonitorMode');
     if(el) el.value = (saved === 'hide' ? 'hide' : 'show');
     const mirrorSaved = _safeLsGet('manual_test_mirror_main', 'off');
     const mirrorEl = document.getElementById('manualTestMirrorMain');
     if(mirrorEl) mirrorEl.checked = (mirrorSaved === 'on');
+    _syncApiKeyDialogLanguage();
+    _syncApiKeyProviderOptions(((document.getElementById('provider') || {}).value || 'gemini'));
+    _setApiKeyDialogHint(_apiKeyT('hint_default'), '');
+    _syncConnectPassDialogLanguage();
+    _setConnectPassHint('', '');
+    const modal = document.getElementById('apiKeyModal');
+    const connectModal = document.getElementById('connectPassModal');
+    if(modal && !modal.dataset.bound){
+      modal.addEventListener('click', (ev)=>{
+        if(ev && ev.target === modal) closeApiKeyDialog();
+      });
+      modal.dataset.bound = '1';
+    }
+    if(connectModal && !connectModal.dataset.bound){
+      connectModal.addEventListener('click', (ev)=>{
+        if(ev && ev.target === connectModal) closeConnectPassphraseDialog();
+      });
+      connectModal.dataset.bound = '1';
+    }
+    const connectInput = document.getElementById('connectPassInput');
+    if(connectInput && !connectInput.dataset.bound){
+      connectInput.addEventListener('keydown', (ev)=>{
+        try{
+          if(String(ev && ev.key || '') === 'Enter'){
+            ev.preventDefault();
+            submitConnectPassphraseDialog();
+          }
+        } catch(e){}
+      });
+      connectInput.dataset.bound = '1';
+    }
+    document.addEventListener('keydown', (ev)=>{
+      try {
+        if(String(ev && ev.key || '') !== 'Escape') return;
+        if(modal && modal.style.display === 'flex') closeApiKeyDialog();
+        if(connectModal && connectModal.style.display === 'flex') closeConnectPassphraseDialog();
+      } catch(e) {}
+    });
     _mtApplyLocalizedUi();
+    _applyStaticTooltips();
     setManualTestMonitorMode();
   } catch(e) {}
 });
@@ -551,8 +1601,22 @@ async function changeProvider() {
     if(hfRow) hfRow.style.display = (provider === 'huggingface') ? 'flex' : 'none';
   } catch(e) {}
   try {
-    await _apiCall('panel_action', ['set_provider', {provider: provider}], 8000);
-    await _apiCall('panel_action', ['refresh_models', {provider: provider}], 15000);
+    const setRes = await _apiCall('panel_action', ['set_provider', {provider: provider}], 8000);
+    if(!setRes || setRes.ok === false){
+      const err = String((setRes && setRes.error) || 'set_provider_failed');
+      if(err === 'passphrase_required'){
+        openConnectPassphraseDialog(provider, 'provider_switch');
+        _setStatus('Passphrase erforderlich fuer verschluesselten Provider-Key.', 'warn');
+      } else {
+        _setStatus('set_provider failed: ' + err, 'err');
+      }
+      await buildUI();
+      return;
+    }
+    const refreshRes = await _apiCall('panel_action', ['refresh_models', {provider: provider}], 15000);
+    if(refreshRes && refreshRes.ok === false){
+      _setStatus('refresh_models failed: ' + String(refreshRes.error || 'unknown'), 'err');
+    }
   } catch(e) {
     _setStatus('set_provider failed: ' + (e && e.message ? e.message : String(e)), 'err');
     return;
@@ -581,6 +1645,12 @@ function changeAnswerLanguage() {
   (async () => {
     try {
       await _apiCall('panel_action', ['set_answer_language', {lang: l}], 8000);
+      try { _syncApiKeyDialogLanguage(); } catch(e) {}
+      try { _syncConnectPassDialogLanguage(); } catch(e) {}
+      try { _mtApplyLocalizedUi(); } catch(e) {}
+      try { _applyStaticTooltips(); } catch(e) {}
+      try { _applyDynamicTooltips(); } catch(e) {}
+      try { await buildUI(); } catch(e) {}
     } catch(e) {
       _setStatus('set_answer_language failed: ' + (e && e.message ? e.message : String(e)), 'err');
     }
@@ -915,8 +1985,8 @@ function _mtPromptLong(){
 function _mtContainsUCode(html, plainText){
   const raw = String(html || '');
   const txt = String(plainText || '');
-  if(/\bU[1-6]\b/i.test(txt)) return true;
-  if(/data-u-code\s*=\s*(?:\"|')?U[1-6](?:\"|')?/i.test(raw)) return true;
+  if(/\bU[1-8]\b/i.test(txt)) return true;
+  if(/data-u-code\s*=\s*(?:\"|')?U[1-8](?:\"|')?/i.test(raw)) return true;
   return false;
 }
 

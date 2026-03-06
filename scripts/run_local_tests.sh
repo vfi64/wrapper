@@ -4,20 +4,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-PY_BIN=""
-if [[ -x ".venv/bin/python" ]]; then
-  PY_BIN=".venv/bin/python"
-elif [[ -x ".venc/bin/python" ]]; then
-  PY_BIN=".venc/bin/python"
-else
-  if command -v python3.12 >/dev/null 2>&1; then
-    python3.12 -m venv .venv
-  else
-    python3 -m venv .venv
-  fi
-  PY_BIN=".venv/bin/python"
+VENV_DIR="${VENV_DIR:-.venc}"
+PY_BIN="$VENV_DIR/bin/python"
+
+if [[ ! -x "$PY_BIN" ]]; then
+  echo "[run_local_tests] Kein venv gefunden unter $VENV_DIR. Starte Setup..."
+  bash scripts/setup_venv.sh --venv "$VENV_DIR" --extras local-dev
 fi
 
-"$PY_BIN" -m pip install -U pip >/dev/null
-"$PY_BIN" -m pip install -r requirements-dev.txt >/dev/null
-"$PY_BIN" -m pytest -q tests
+if [[ ! -x "$PY_BIN" ]]; then
+  echo "ERROR: Test-Python fehlt: $PY_BIN" >&2
+  exit 1
+fi
+
+"$PY_BIN" -m pytest -q tests "$@"

@@ -51,6 +51,14 @@ class _ApiStub:
         self.calls.append(("close_app",))
         return {"ok": True}
 
+    def set_exit_confirm_open(self, is_open):
+        self.calls.append(("set_exit_confirm_open", bool(is_open)))
+        return {"ok": True, "open": bool(is_open)}
+
+    def get_help_content(self):
+        self.calls.append(("get_help_content",))
+        return {"ok": True, "lang": "de", "payload": {"title": "Hilfe"}}
+
 
 def test_main_bridge_forwards_methods_to_api():
     api = _ApiStub()
@@ -67,6 +75,8 @@ def test_main_bridge_forwards_methods_to_api():
     assert br.export()["ok"] is True
     assert br.settings()["ok"] is True
     assert br.close_app()["ok"] is True
+    assert br.set_exit_confirm_open(True)["ok"] is True
+    assert br.get_help_content()["ok"] is True
 
     assert api.calls == [
         ("ask", "hi"),
@@ -80,4 +90,6 @@ def test_main_bridge_forwards_methods_to_api():
         ("export",),
         ("settings",),
         ("close_app",),
+        ("set_exit_confirm_open", True),
+        ("get_help_content",),
     ]

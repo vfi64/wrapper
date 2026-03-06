@@ -1,171 +1,398 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Comm-SCI-Control-App Docs</title>
-  <style>
-    :root {
-      --bg: #f7f5ef;
-      --ink: #142026;
-      --muted: #4a5a62;
-      --brand: #0f766e;
-      --accent: #d97706;
-      --card: #ffffff;
-      --line: #d9e1e5;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: "Avenir Next", "Segoe UI", sans-serif;
-      color: var(--ink);
-      background:
-        radial-gradient(1200px 380px at 10% -20%, #b8d4c9 0%, transparent 55%),
-        radial-gradient(900px 340px at 90% -30%, #f2d3a1 0%, transparent 50%),
-        var(--bg);
-      line-height: 1.45;
-    }
-    .wrap {
-      max-width: 1060px;
-      margin: 0 auto;
-      padding: 28px 18px 56px;
-    }
-    .top {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      margin-bottom: 24px;
-    }
-    .lang a {
-      color: var(--brand);
-      text-decoration: none;
-      font-weight: 600;
-      border: 1px solid var(--brand);
-      border-radius: 999px;
-      padding: 6px 12px;
-      background: #f2fffc;
-    }
-    h1 {
-      margin: 0;
-      font-size: clamp(1.6rem, 2.2vw, 2.4rem);
-      letter-spacing: 0.01em;
-    }
-    .lead {
-      margin: 10px 0 0;
-      color: var(--muted);
-      max-width: 78ch;
-    }
-    .grid {
-      margin-top: 22px;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
-      gap: 14px;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 16px 16px 14px;
-      box-shadow: 0 5px 18px rgba(20, 32, 38, 0.06);
-    }
-    .card h2 {
-      margin: 0 0 8px;
-      font-size: 1.03rem;
-    }
-    .card p {
-      margin: 0 0 10px;
-      color: var(--muted);
-      font-size: 0.97rem;
-    }
-    ul {
-      margin: 0;
-      padding-left: 18px;
-      color: var(--ink);
-    }
-    li { margin: 6px 0; }
-    a {
-      color: var(--brand);
-      text-decoration-thickness: 1px;
-      text-underline-offset: 2px;
-    }
-    .cta {
-      margin-top: 22px;
-      background: linear-gradient(120deg, #f3faf8 0%, #fff5e7 100%);
-      border: 1px solid #cddbd3;
-      border-radius: 14px;
-      padding: 16px;
-    }
-    .cta strong { color: #0b4f49; }
-    .foot {
-      margin-top: 26px;
-      color: #5e6c74;
-      font-size: 0.9rem;
-    }
-  </style>
-</head>
-<body>
-  <main class="wrap">
-    <header class="top">
-      <div>
-        <h1>Comm-SCI-Control-App Documentation</h1>
-        <p class="lead">
-          Stable DOI links, didactic installation routes (beginner + advanced), and secure API key onboarding in one place.
-        </p>
-      </div>
-      <div class="lang">
-        <a href="./index.de.html" hreflang="de">Deutsch</a>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Comm-SCI-Control Wrapper | Runtime</title>
+    <meta
+      name="description"
+      content="Public wrapper/runtime track for deterministic Comm-SCI governance execution, QA contracts, and bilingual documentation."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/landing.css" />
+  </head>
+  <body>
+    <div class="bg-glow bg-glow-a" aria-hidden="true"></div>
+    <div class="bg-glow bg-glow-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="#top">
+        <span class="brand-mark">CSC</span>
+        <span class="brand-text">Wrapper</span>
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="#value">Value</a>
+        <a href="#fit">Fit</a>
+        <a href="#usecases">Use cases</a>
+        <a href="#pipeline">Pipeline</a>
+        <a href="#terms">Terms</a>
+        <a href="#install">Install</a>
+        <a href="#screens">Screens</a>
+        <a href="#docs">Docs</a>
+        <a href="#doi">DOI</a>
+      </nav>
+      <div class="topbar-actions">
+        <div class="lang-switch" aria-label="Language switch">
+          <a class="lang-link is-active" href="index.html">EN</a>
+          <span aria-hidden="true">|</span>
+          <a class="lang-link" href="index.de.html">DE</a>
+        </div>
+        <a class="btn btn-line" href="https://github.com/vfi64/wrapper" target="_blank" rel="noreferrer">Repo</a>
       </div>
     </header>
 
-    <section class="grid">
-      <article class="card">
-        <h2>Stable DOI policy</h2>
-        <p>Use concept DOIs in handbook/README/website. Version DOIs are release-specific and should be used only for pinned reproducibility.</p>
-        <ul>
-          <li>Runtime concept DOI: <a href="https://doi.org/10.5281/zenodo.18445672">10.5281/zenodo.18445672</a></li>
-          <li>Ruleset concept DOI: <a href="https://doi.org/10.5281/zenodo.17928357">10.5281/zenodo.17928357</a></li>
-        </ul>
-      </article>
+    <main id="top">
+      <section class="hero reveal">
+        <p class="eyebrow">Comm-SCI-Control Wrapper Runtime</p>
+        <h1>
+          Deterministic governance execution for production wrappers.
+          <span>Commands, contracts, and quality gates stay explicit and auditable.</span>
+        </h1>
+        <p class="hero-copy">
+          This wrapper project line focuses on robust runtime operation for Comm-SCI:
+          strict command routing, SCI state handling, QC and verification enforcement,
+          panel-driven operations, and bilingual project documentation.
+          The core design is LLM-agnostic: the same governance layer can be applied
+          across providers and models with explicit, comparable controls.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-solid" href="../README.md">Readme (EN)</a>
+          <a class="btn btn-soft" href="HANDBOOK.md">Handbook (EN)</a>
+          <a class="btn btn-soft" href="https://vfi64.github.io/Comm-SCI-Control/">Public ruleset website</a>
+        </div>
+        <div class="hero-metrics">
+          <article class="metric-card reveal">
+            <p class="metric-value" data-count="6" data-animate-from="0">6</p>
+            <p class="metric-label">Execution phases (P0-P5)</p>
+          </article>
+          <article class="metric-card reveal">
+            <p class="metric-value" data-count="8" data-animate-from="0">8</p>
+            <p class="metric-label">SCI variants (A-H)</p>
+          </article>
+          <article class="metric-card reveal">
+            <p class="metric-value" data-count="400" data-animate-from="350">400</p>
+            <p class="metric-label">Contract and regression tests</p>
+          </article>
+        </div>
+      </section>
 
-      <article class="card">
-        <h2>Installation tracks</h2>
-        <p>Separate onboarding for non-technical users and professional users.</p>
-        <ul>
-          <li>Beginner path: <code>bash scripts/setup_venv.sh</code></li>
-          <li>Advanced path: explicit Python + tests + diagnostics</li>
-          <li>Details: <a href="./HANDBOOK.md">HANDBOOK.md</a> / <a href="./HANDBOOK.de.md">HANDBOOK.de.md</a></li>
-        </ul>
-      </article>
+      <section id="value" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Why this wrapper line</p>
+          <h2>From normative JSON to operational reliability</h2>
+        </div>
+        <div class="card-grid">
+          <article class="info-card reveal">
+            <h3>Deterministic command flow</h3>
+            <p>Standalone-only command parsing reduces accidental state changes and keeps automation stable.</p>
+          </article>
+          <article class="info-card reveal">
+            <h3>Traceable quality enforcement</h3>
+            <p><a href="glossary.html#sci">SCI Trace</a>, <a href="glossary.html#self-debunking">Self-Debunking</a>, <a href="glossary.html#qc-footer">QC footer</a>, and <a href="glossary.html#verification-gates">verification gates</a> are enforced through <a href="glossary.html#runtime-contract">runtime contracts</a> and make evidence limits explicit.</p>
+          </article>
+          <article class="info-card reveal">
+            <h3>Operational observability</h3>
+            <p>Comm State, Comm <a href="glossary.html#anchor">Anchor</a>, Comm <a href="glossary.html#audit">Audit</a>, and panel diagnostics expose <a href="glossary.html#drift">drift</a> and <a href="glossary.html#module-status">module status</a> early.</p>
+          </article>
+        </div>
+      </section>
 
-      <article class="card">
-        <h2>API key onboarding</h2>
-        <p>Create provider keys only in official portals and always check billing before productive usage.</p>
-        <ul>
-          <li>Gemini: <a href="https://aistudio.google.com/apikey">API key</a> / <a href="https://ai.google.dev/pricing">pricing</a></li>
-          <li>OpenRouter: <a href="https://openrouter.ai/keys">API keys</a> / <a href="https://openrouter.ai/models">models + pricing</a></li>
-          <li>Hugging Face: <a href="https://huggingface.co/settings/tokens">tokens</a> / <a href="https://huggingface.co/pricing">pricing</a></li>
-        </ul>
-      </article>
+      <section id="fit" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Fit and scope</p>
+          <h2>Who this wrapper is for and what it is not</h2>
+        </div>
+        <div class="card-grid">
+          <article class="info-card reveal">
+            <h3>Good fit</h3>
+            <p>For users who want more efficient human-machine communication, explicit evidence assessment, and reproducible LLM workflows.</p>
+          </article>
+          <article class="info-card reveal">
+            <h3>Not the objective</h3>
+            <p>Not a cosmetic prompt improver and not a "better prompt trick". The focus is governance, transparency, and controlled quality behavior.</p>
+          </article>
+          <article class="info-card reveal">
+            <h3>LLM-agnostic uniqueness</h3>
+            <p>The same rule and scoring logic persists across provider switches, enabling fair model comparison and stable <a href="glossary.html#regression-tests">regression</a> baselines.</p>
+          </article>
+        </div>
+      </section>
 
-      <article class="card">
-        <h2>Security guidance</h2>
-        <p>Never commit secrets. Prefer environment variables in shared or production-like setups.</p>
-        <ul>
-          <li>Local key file: <code>Config/Comm-SCI-API-Keys.json</code> (gitignored)</li>
-          <li>Template: <code>Config/Comm-SCI-API-Keys.example.json</code></li>
-          <li>Current encrypted key support is documented in the handbook.</li>
-        </ul>
-      </article>
-    </section>
+      <section id="usecases" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Use cases</p>
+          <h2>Where the wrapper can be applied</h2>
+        </div>
+        <div class="matrix">
+          <article class="matrix-card reveal">
+            <h3>School and higher education</h3>
+            <p>Structured argumentation, didactic outputs, and explicit uncertainty handling for learning workflows.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Science and research</h3>
+            <p>Comparable prompt runs, explicit evidence labeling, auditability, and version-aware documentation.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Regulated professions</h3>
+            <p>Useful for doctors, legal professionals, and other high-accountability roles as a structuring/checking aid, not as a responsibility replacement.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Critical reasoning workflows</h3>
+            <p><a href="glossary.html#self-debunking">Self-Debunking</a> and <a href="glossary.html#verification-gates">verification gates</a> support active challenge of plausible but weak claims.</p>
+          </article>
+        </div>
+      </section>
 
-    <section class="cta">
-      <strong>Recommended start:</strong> open <a href="./HANDBOOK.de.md">German handbook</a> (or <a href="./HANDBOOK.md">English handbook</a>), follow the installation path for your target audience, then configure provider keys securely.
-    </section>
+      <section id="pipeline" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Execution model</p>
+          <h2>Wrapper pipeline in fixed order</h2>
+        </div>
+        <ol class="timeline">
+          <li class="timeline-item reveal">
+            <span class="phase">P0 Parse</span>
+            <p>Input is classified as standalone command, SCI selection, or content request.</p>
+          </li>
+          <li class="timeline-item reveal">
+            <span class="phase">P1 Route</span>
+            <p>Command intent dispatch or governed content route is selected deterministically.</p>
+          </li>
+          <li class="timeline-item reveal">
+            <span class="phase">P2 State</span>
+            <p>Runtime state updates are applied (profile, <a href="glossary.html#sci">SCI</a>, <a href="glossary.html#overlay">overlay</a>, <a href="glossary.html#language-policy">language policy</a>, <a href="glossary.html#qc-overrides">QC overrides</a>).</p>
+          </li>
+          <li class="timeline-item reveal">
+            <span class="phase">P2B Preflight</span>
+            <p>Contract guards and <a href="glossary.html#compliance-prerequisites">compliance prerequisites</a> are checked before content rendering.</p>
+          </li>
+          <li class="timeline-item reveal">
+            <span class="phase">P3-P4 Contract + Repair</span>
+            <p>Violations trigger deterministic correction logic or explicit <a href="glossary.html#control-layer-block">control-layer blocking</a>.</p>
+          </li>
+          <li class="timeline-item reveal">
+            <span class="phase">P5 Render + Audit</span>
+            <p>Structured HTML output, <a href="glossary.html#timestamp">timestamps</a>, and <a href="glossary.html#audit">audit</a> records are emitted for reproducibility.</p>
+          </li>
+        </ol>
+      </section>
 
-    <p class="foot">
-      License: Apache-2.0 (see <code>LICENSE</code>) &middot; Maintainer: Volker Fickert
-    </p>
-  </main>
-</body>
+      <section class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Operational modules</p>
+          <h2>Four governance protection surfaces</h2>
+        </div>
+        <div class="matrix">
+          <article class="matrix-card reveal">
+            <h3><a href="glossary.html#control-layer-block">Control Layer</a></h3>
+            <p>Maintains strict command contracts, output ordering, and deterministic fallback behavior.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3><a href="glossary.html#qc-matrix-term">QC</a> and <a href="glossary.html#qc-overrides">Overrides</a></h3>
+            <p>Normalizes QC footer targets and keeps explicit override visibility in state and output.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3><a href="glossary.html#sci-orchestration">SCI orchestration</a></h3>
+            <p>Handles <a href="glossary.html#pending-selection">pending selection</a>, <a href="glossary.html#trace-step-requirements">trace-step requirements</a>, and <a href="glossary.html#recurse-behavior">recurse behavior</a>.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3><a href="glossary.html#cgi">CGI</a> feedback loop</h3>
+            <p>Captures structured user feedback for iterative quality adaptation without hidden state jumps.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="terms" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Didactic terminology</p>
+          <h2>Dedicated page for all core terms</h2>
+        </div>
+        <div class="doc-grid">
+          <a class="link-card reveal" href="glossary.html">
+            <h3>Glossary (EN)</h3>
+            <p><a href="glossary.html#sci-orchestration">SCI orchestration</a>, <a href="glossary.html#pending-selection">pending selection</a>, <a href="glossary.html#runtime-contract">runtime contract</a>, <a href="glossary.html#drift">drift</a>, <a href="glossary.html#csc">CSC</a>, <a href="glossary.html#qc-footer">QC footer</a>, <a href="glossary.html#verification-gates">verification gates</a>, and more.</p>
+          </a>
+          <a class="link-card reveal" href="glossar.de.html">
+            <h3>Glossar (DE)</h3>
+            <p>German version with aligned explanations for non-technical readers.</p>
+          </a>
+          <a class="link-card reveal" href="glossary.html#sci-variants">
+            <h3>SCI A-H with examples</h3>
+            <p>Each variant mapped to typical task types and practical usage guidance.</p>
+          </a>
+        </div>
+      </section>
+
+      <section id="install" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Installation on the website</p>
+          <h2>Main-page quick path plus separate detail pages for beginners and professionals</h2>
+        </div>
+        <div class="card-grid">
+          <article class="info-card reveal">
+            <h3>Quick path on landing page</h3>
+            <p>Core setup remains visible on the homepage so first-time users can start without navigation friction.</p>
+          </article>
+          <article class="info-card reveal">
+            <h3>Beginner detail page</h3>
+            <p>Includes link, download, unpack, prerequisites, installation, startup, API-key dialog (plaintext/encrypted), passphrase guidance, confidentiality, and cost notes.</p>
+          </article>
+          <article class="info-card reveal">
+            <h3>Professional detail page</h3>
+            <p>Includes reproducible setup, test/diagnostics paths, provider validation, and explicit policy for encrypted vs plaintext API-key operation.</p>
+          </article>
+        </div>
+        <table class="doi-table" style="margin-top:0.95rem;">
+          <thead>
+            <tr>
+              <th>On-page quickstart</th>
+              <th>Command</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Setup</td><td><code>bash scripts/setup_venv.sh</code></td></tr>
+            <tr><td>Activate venv</td><td><code>source .venc/bin/activate</code></td></tr>
+            <tr><td>Start runtime</td><td><code>python Comm-SCI-Control-App.py</code></td></tr>
+          </tbody>
+        </table>
+        <div class="doc-grid" style="margin-top:0.95rem;">
+          <a class="link-card reveal" href="install-beginner.html">
+            <h3>Beginner installation (EN)</h3>
+            <p>Step-by-step onboarding for non-technical users.</p>
+          </a>
+          <a class="link-card reveal" href="install-pro.html">
+            <h3>Professional installation (EN)</h3>
+            <p>Detailed setup and reproducibility controls.</p>
+          </a>
+          <a class="link-card reveal" href="install-beginner.de.html">
+            <h3>Installation fuer Einsteiger (DE)</h3>
+            <p>German onboarding equivalent.</p>
+          </a>
+        </div>
+      </section>
+
+      <section id="screens" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Interface impressions</p>
+          <h2>Panel and wrapper UI snapshots</h2>
+        </div>
+        <div class="shot-grid">
+          <figure class="shot reveal">
+            <img src="images/wrapper-ui-1.png" alt="Wrapper UI screenshot 1" loading="lazy" />
+            <figcaption>Main dialog with deterministic response framing.</figcaption>
+          </figure>
+          <figure class="shot reveal">
+            <img src="images/wrapper-ui-2.png" alt="Wrapper UI screenshot 2" loading="lazy" />
+            <figcaption>Panel controls for provider, model, and language settings.</figcaption>
+          </figure>
+          <figure class="shot reveal">
+            <img src="images/wrapper-ui-3.png" alt="Wrapper UI screenshot 3" loading="lazy" />
+            <figcaption>Governance command sections and operational toggles.</figcaption>
+          </figure>
+          <figure class="shot reveal">
+            <img src="images/wrapper-ui-4.png" alt="Wrapper UI screenshot 4" loading="lazy" />
+            <figcaption>Comm status/control views for runtime verification.</figcaption>
+          </figure>
+          <figure class="shot reveal">
+            <img src="images/wrapper-ui-5.png" alt="Wrapper UI screenshot 5" loading="lazy" />
+            <figcaption>Audit-oriented output with explicit structure markers.</figcaption>
+          </figure>
+          <figure class="shot reveal">
+            <img src="images/wrapper-ui-6.png" alt="Wrapper UI screenshot 6" loading="lazy" />
+            <figcaption>Panel diagnostics and manual test integration.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="docs" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Project documentation</p>
+          <h2>Bilingual docs for operations and architecture</h2>
+        </div>
+        <div class="doc-grid">
+          <a class="link-card reveal" href="HANDBOOK.md">
+            <h3>Handbook (EN)</h3>
+            <p>Operational model, command discipline, <a href="glossary.html#language-policy">language policy</a>, and governance playbook.</p>
+          </a>
+          <a class="link-card reveal" href="HANDBOOK.de.md">
+            <h3>Handbuch (DE)</h3>
+            <p>Deutschsprachige Betriebs- und Architekturreferenz fuer Team und Review.</p>
+          </a>
+          <a class="link-card reveal" href="../README.md">
+            <h3>README</h3>
+            <p>Quickstart, test commands, repository map, and DOI strategy.</p>
+          </a>
+          <a class="link-card reveal" href="../README.de.md">
+            <h3>README (DE)</h3>
+            <p>Deutschsprachiger Einstieg fuer Setup, Tests und Betrieb.</p>
+          </a>
+          <a class="link-card reveal" href="proposals/README.md">
+            <h3>Proposal backlog</h3>
+            <p>How extension ideas are documented professionally before implementation.</p>
+          </a>
+          <a class="link-card reveal" href="INSTALL_SYNC.md">
+            <h3>Install + sync runbook</h3>
+            <p>Production-oriented setup routine and safe local transfer to the wrapper clone.</p>
+          </a>
+          <a class="link-card reveal" href="install-beginner.html">
+            <h3>Beginner install page</h3>
+            <p>Didactic onboarding for non-technical users.</p>
+          </a>
+          <a class="link-card reveal" href="install-pro.html">
+            <h3>Professional install page</h3>
+            <p>Advanced setup and diagnostics workflow.</p>
+          </a>
+          <a class="link-card reveal" href="glossary.html">
+            <h3>Terminology glossary</h3>
+            <p>Didactic explanation of wrapper concepts and governance vocabulary.</p>
+          </a>
+          <a class="link-card reveal" href="manual-test-checklist.md">
+            <h3>Manual test checklist</h3>
+            <p>Release-facing manual checks and panel regression routine.</p>
+          </a>
+        </div>
+      </section>
+
+      <section id="doi" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Citation baseline</p>
+          <h2>DOI mapping for wrapper and ruleset</h2>
+        </div>
+        <table class="doi-table">
+          <thead>
+            <tr>
+              <th>Resource</th>
+              <th>DOI / Link</th>
+              <th>Usage</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Wrapper concept DOI</td>
+              <td><a href="https://doi.org/10.5281/zenodo.18445672">10.5281/zenodo.18445672</a></td>
+              <td>Stable reference across all wrapper versions.</td>
+            </tr>
+            <tr>
+              <td>Ruleset concept DOI</td>
+              <td><a href="https://doi.org/10.5281/zenodo.17928357">10.5281/zenodo.17928357</a></td>
+              <td>Normative governance source across releases.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Comm-SCI-Control wrapper docs. Last updated: March 6, 2026.
+        Public project website: <a href="https://vfi64.github.io/wrapper/">vfi64.github.io/wrapper</a>
+      </p>
+    </footer>
+
+    <script src="assets/landing.js"></script>
+  </body>
 </html>

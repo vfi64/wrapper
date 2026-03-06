@@ -61,6 +61,31 @@
   .exit-btn { background: #a50e0e; font-size: 10px; height: auto; padding: 5px 10px; margin-left: 10px;}
   .menu-btn { font-size: 10px; height: auto; padding: 5px 10px; background: #444; }
   .load-btn { cursor: pointer; font-size: 12px; margin-right: 5px; background: transparent; border: none; color: white;}
+  .exit-confirm-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: none; align-items: center; justify-content: center; z-index: 120000; }
+  .exit-confirm-overlay.show { display: flex; }
+  .exit-confirm-dialog { width: min(360px, calc(100vw - 24px)); background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.25); padding: 14px; color: #0f172a; }
+  .exit-confirm-title { margin: 0 0 8px 0; font-size: 14px; font-weight: 700; }
+  .exit-confirm-text { margin: 0; font-size: 12px; color: #334155; }
+  .exit-confirm-actions { margin-top: 14px; display: flex; justify-content: flex-end; gap: 8px; }
+  .exit-confirm-actions button { height: auto; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; }
+  .exit-confirm-cancel { background: #f8fafc; color: #1f2937; }
+  .exit-confirm-cancel:hover { background: #e2e8f0; }
+  .exit-confirm-exit { background: #b91c1c; border-color: #b91c1c !important; color: #fff; }
+  .exit-confirm-exit:hover { background: #991b1b; }
+  .help-modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: none; align-items: center; justify-content: center; z-index: 120100; }
+  .help-modal-overlay.show { display: flex; }
+  .help-modal-dialog { width: min(860px, calc(100vw - 24px)); max-height: calc(100vh - 28px); background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.25); color: #0f172a; display: flex; flex-direction: column; overflow: hidden; }
+  .help-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
+  .help-modal-title { margin: 0; font-size: 14px; font-weight: 700; }
+  .help-modal-close { height: auto; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; background: #fff; color: #1f2937; }
+  .help-modal-close:hover { background: #e2e8f0; }
+  .help-modal-body { padding: 14px; overflow: auto; font-size: 13px; line-height: 1.45; }
+  .help-modal-subtitle { margin: 0 0 10px 0; color: #475569; }
+  .help-modal-section { margin: 0 0 12px 0; }
+  .help-modal-section h4 { margin: 0 0 6px 0; font-size: 13px; }
+  .help-modal-section ul { margin: 0; padding-left: 18px; }
+  .help-modal-section li { margin: 0 0 4px 0; }
+  .help-modal-footer { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e2e8f0; color: #475569; font-size: 12px; }
 
   .qc-bar { margin-top: 8px; border-top: 1px solid #eee; padding-top: 5px; font-size: 11px; color:#555; }
   .qc-btn { cursor: pointer; margin-right: 8px; color: #1a73e8; background:#f1f3f4; padding:2px 6px; border-radius:4px; }
@@ -148,17 +173,37 @@
 <body>
   <div class="top">
     <div style="display:flex; align-items:center;">
-        <span style="font-weight:bold; margin-right:10px;">__WRAPPER_LABEL__</span>
-        
         <button class="load-btn" onclick="window.pywebview.api.load_rule_file()" title="Load ruleset">📂</button>
         <span id="rulefile" style="font-size:11px; color:#8ab4f8; margin-right:10px;"></span>
         
         <span id="stats" class="top-stats">Session: loading...</span>
     </div>
     <div>
+       <button id="helpBtn" class="menu-btn" onclick="openHelpModal()">❓ HELP</button>
        <button class="menu-btn" onclick="window.pywebview.api.export()">💾 EXPORT</button>
        <button class="menu-btn" onclick="window.pywebview.api.settings()">⚙️ PANEL</button>
-       <button class="exit-btn" onclick="window.pywebview.api.close_app()">❌ EXIT</button>
+       <button class="exit-btn" onclick="openExitConfirm()">❌ EXIT</button>
+    </div>
+  </div>
+
+  <div id="exitConfirmOverlay" class="exit-confirm-overlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="exitConfirmTitle">
+    <div class="exit-confirm-dialog" onclick="event.stopPropagation()">
+      <h3 id="exitConfirmTitle" class="exit-confirm-title">Exit Application</h3>
+      <p class="exit-confirm-text">Do you really want to close Comm-SCI-Control-App?</p>
+      <div class="exit-confirm-actions">
+        <button id="exitConfirmCancelBtn" class="exit-confirm-cancel" type="button" onclick="closeExitConfirm()">Cancel</button>
+        <button class="exit-confirm-exit" type="button" onclick="confirmExit()">Exit</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="helpModalOverlay" class="help-modal-overlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+    <div class="help-modal-dialog" onclick="event.stopPropagation()">
+      <div class="help-modal-header">
+        <h3 id="helpModalTitle" class="help-modal-title">Comm-SCI Help</h3>
+        <button id="helpModalCloseBtn" class="help-modal-close" type="button" onclick="closeHelpModal()">Close</button>
+      </div>
+      <div id="helpModalBody" class="help-modal-body"></div>
     </div>
   </div>
   
@@ -200,6 +245,7 @@
           document.getElementById('btn').innerText = "Send";
           document.getElementById('inp').focus();
           window.pywebview.api.update_stats_ui();
+          await refreshHelpContent();
           // Auto-show panel once after rules are loaded
           if(!window.__panel_auto_shown){ window.__panel_auto_shown = true; window.pywebview.api.ensure_panel_visible(); }
 
@@ -218,8 +264,143 @@
       document.getElementById('rulefile').innerText = "[" + parts.pop() + "]";
   }
 
+  async function openExitConfirm(){
+      const ov = document.getElementById('exitConfirmOverlay');
+      if(!ov) return;
+      ov.classList.add('show');
+      ov.setAttribute('aria-hidden', 'false');
+      try {
+          await window.pywebview.api.set_exit_confirm_open(true);
+      } catch(e) {}
+      try {
+          const btn = document.getElementById('exitConfirmCancelBtn');
+          if(btn) btn.focus();
+      } catch(e) {}
+  }
+
+  async function closeExitConfirm(){
+      const ov = document.getElementById('exitConfirmOverlay');
+      if(!ov) return;
+      ov.classList.remove('show');
+      ov.setAttribute('aria-hidden', 'true');
+      try {
+          await window.pywebview.api.set_exit_confirm_open(false);
+      } catch(e) {}
+  }
+
+  async function confirmExit(){
+      try {
+          await window.pywebview.api.close_app();
+      } catch(e) {
+          console.error('close_app failed', e);
+          await closeExitConfirm();
+      }
+  }
+
+  function _bindExitConfirm(){
+      // Intentionally no backdrop/Escape close:
+      // the modal is exclusive and can only be closed via Cancel or Exit.
+  }
+  _bindExitConfirm();
+
   function escHtml(s){
       return (''+s).replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function _helpLinkifyText(raw){
+      const src = String(raw || '').trim();
+      if(!src) return '';
+      const re = /(https?:\/\/[^\s]+|10\.5281\/zenodo\.\d+|\bLICENSE\b)/g;
+      let out = '';
+      let last = 0;
+      let m;
+      while((m = re.exec(src)) !== null){
+          out += escHtml(src.slice(last, m.index));
+          const tok = String(m[0] || '');
+          let href = '';
+          if(tok === 'LICENSE'){
+              href = 'https://github.com/vfi64/wrapper/blob/main/LICENSE';
+          } else if(tok.startsWith('http://') || tok.startsWith('https://')){
+              href = tok;
+          } else {
+              href = 'https://doi.org/' + tok;
+          }
+          out += `<a href="${escHtml(href)}" target="_blank" rel="noreferrer">${escHtml(tok)}</a>`;
+          last = re.lastIndex;
+      }
+      out += escHtml(src.slice(last));
+      return out;
+  }
+
+  function _renderHelpModal(payload){
+      const p = payload || {};
+      const title = document.getElementById('helpModalTitle');
+      const closeBtn = document.getElementById('helpModalCloseBtn');
+      const helpBtn = document.getElementById('helpBtn');
+      const body = document.getElementById('helpModalBody');
+      if(title) title.textContent = String(p.title || 'Comm-SCI Help');
+      if(closeBtn) closeBtn.textContent = String(p.close_label || 'Close');
+      if(helpBtn) helpBtn.textContent = String(p.button_label || '❓ HELP');
+      if(!body) return;
+
+      const parts = [];
+      const subtitle = String(p.subtitle || '').trim();
+      if(subtitle){
+          parts.push(`<p class=\"help-modal-subtitle\">${escHtml(subtitle)}</p>`);
+      }
+
+      const sections = Array.isArray(p.sections) ? p.sections : [];
+      for(const s of sections){
+          if(!s || typeof s !== 'object') continue;
+          const st = String(s.title || '').trim();
+          const items = Array.isArray(s.items) ? s.items : [];
+          if(!st || !items.length) continue;
+          const rows = items.map((it)=>`<li>${_helpLinkifyText(String(it || '').trim())}</li>`).join('');
+          parts.push(
+              `<section class=\"help-modal-section\">` +
+              `<h4>${escHtml(st)}</h4>` +
+              `<ul>${rows}</ul>` +
+              `</section>`
+          );
+      }
+
+      const footer = String(p.footer || '').trim();
+      if(footer){
+          parts.push(`<div class=\"help-modal-footer\">${escHtml(footer)}</div>`);
+      }
+      body.innerHTML = parts.join('');
+  }
+
+  async function refreshHelpContent(){
+      try {
+          const res = await window.pywebview.api.get_help_content();
+          if(res && res.ok && res.payload){
+              _renderHelpModal(res.payload);
+              return true;
+          }
+      } catch(e) {}
+      return false;
+  }
+
+  async function openHelpModal(){
+      const ex = document.getElementById('exitConfirmOverlay');
+      if(ex && ex.classList.contains('show')) return;
+      const ov = document.getElementById('helpModalOverlay');
+      if(!ov) return;
+      await refreshHelpContent();
+      ov.classList.add('show');
+      ov.setAttribute('aria-hidden', 'false');
+      try {
+          const btn = document.getElementById('helpModalCloseBtn');
+          if(btn) btn.focus();
+      } catch(e) {}
+  }
+
+  function closeHelpModal(){
+      const ov = document.getElementById('helpModalOverlay');
+      if(!ov) return;
+      ov.classList.remove('show');
+      ov.setAttribute('aria-hidden', 'true');
   }
 
   function renderCscBlock(csc){
@@ -233,8 +414,12 @@
       const tok = escHtml(csc.token_count ?? '');
       const mult = escHtml(csc.threshold_multiplier ?? '');
       const thrFs = escHtml(csc.threshold_f_score ?? '');
-      const thrTok = escHtml(csc.min_token_count ?? '');
+      const thrTok = escHtml((csc.min_token_count ?? csc.threshold_token_count) ?? '');
       const thrGov = escHtml(csc.min_token_count_governance ?? '');
+      const scoreTip = escHtml(csc.score_tooltip || '');
+      const thrTip = escHtml(csc.thresholds_tooltip || '');
+      const scoreInfo = scoreTip ? ` <span class="cgi-help csc-help-icon" data-u-title="${scoreTip}">i</span>` : '';
+      const thrInfo = thrTip ? ` <span class="cgi-help csc-help-icon" data-u-title="${thrTip}">i</span>` : '';
 
       let details = '';
       details += `<details><summary>Details</summary>`;
@@ -242,11 +427,11 @@
       details += `Trigger: ${trig || '—'}<br>`;
       details += `Mode: ${mode || '—'}${csc.governance_triggered ? ' (governance)' : ''}<br>`;
       details += `Overlay: ${ov || 'off'} · Profile: ${prof || '—'}<br>`;
-      details += `Score: f=${fs} · tokens=${tok}<br>`;
-      details += `Thresholds (x${mult || 1}): f≥${thrFs}, tok≥${thrTok}, gov_tok≥${thrGov}`;
+      details += `Score: f=${fs} · tokens=${tok}${scoreInfo}<br>`;
+      details += `Thresholds (x${mult || 1}): f>=${thrFs}, tok>=${thrTok}, gov_tok>=${thrGov}${thrInfo}`;
       details += `</div></details>`;
 
-      return `<span class="csc-badge" title="CSC applied">CSC applied</span>` +
+      return `<span class="csc-badge">CSC applied</span>` +
              `<div class="csc-warning"><b>CSC</b>: ${msg}${details}</div>`;
   }
 
@@ -305,11 +490,122 @@
           `<span class="cgi-sep">/</span>` +
           `<label class="cgi-field">${escHtml(t.efficiency)} <select class="cgi-select" data-cgi-field="efficiency">${_cgiOptions()}</select></label>` +
           `<button type="button" class="cgi-action repeat" onclick="submitCgi('${id}','repeat')">${escHtml(t.repeat)}</button>` +
-          `<span class="cgi-help" data-u-title="${escHtml(t.help)}" title="${escHtml(t.help)}">i</span>` +
+          `<span class="cgi-help" data-u-title="${escHtml(t.help)}">i</span>` +
           `<span class="cgi-status"></span>` +
           `<div class="cgi-hint-line">${escHtml(t.hint)}</div>` +
           `</div>`
       );
+  }
+
+  function _copyTip(answerLang){
+      return _cgiLang(answerLang) === 'en'
+          ? 'Copy message to clipboard.'
+          : 'Nachricht in die Zwischenablage kopieren.';
+  }
+
+  function _qcDimKey(label){
+      const raw = String(label || '').trim().toLowerCase();
+      const map = {
+          'clarity': 'clarity',
+          'brevity': 'brevity',
+          'evidence': 'evidence',
+          'empathy': 'empathy',
+          'consistency': 'consistency',
+          'neutrality': 'neutrality',
+          'klarheit': 'clarity',
+          'kürze': 'brevity',
+          'kuerze': 'brevity',
+          'evidenz': 'evidence',
+          'empathie': 'empathy',
+          'konsistenz': 'consistency',
+          'neutralität': 'neutrality',
+          'neutralitaet': 'neutrality',
+      };
+      return map[raw] || '';
+  }
+
+  function _qcDimScaleRows(dimKey, lang){
+      const de = {
+          clarity: ['unklar / schwer lesbar', 'grundlegend klar', 'klar und gut strukturiert', 'sehr klar, didaktisch stark'],
+          brevity: ['sehr ausfuehrlich / lang', 'eher ausfuehrlich', 'ausgewogen', 'sehr knapp / stark verdichtet'],
+          evidence: ['kaum Belege', 'einige Begruendungen', 'solide belegt', 'stark belegt, gut nachverfolgbar'],
+          empathy: ['sehr sachlich / distanziert', 'hoeflich, eher distanziert', 'ruecksichtsvoll', 'sehr unterstuetzend'],
+          consistency: ['Widersprueche moeglich', 'ueberwiegend konsistent', 'konsistente Logik', 'sehr strikt konsistent'],
+          neutrality: ['deutlich wertend', 'leichte Tendenz moeglich', 'weitgehend neutral', 'streng neutral / ausbalanciert'],
+      };
+      const en = {
+          clarity: ['unclear / hard to follow', 'basically clear', 'clear and well structured', 'very clear, highly didactic'],
+          brevity: ['very detailed / long', 'rather detailed', 'balanced length', 'very concise / compressed'],
+          evidence: ['little support', 'some justification', 'solid support', 'strongly supported and traceable'],
+          empathy: ['very factual / distant', 'polite but somewhat distant', 'considerate tone', 'highly supportive tone'],
+          consistency: ['contradictions possible', 'mostly consistent', 'consistent logic', 'very strict consistency'],
+          neutrality: ['clearly opinionated', 'slight bias possible', 'mostly neutral', 'strictly neutral / balanced'],
+      };
+      const rows = (lang === 'en' ? en : de)[dimKey] || (lang === 'en' ? ['low', 'basic', 'good', 'high'] : ['niedrig', 'grundlegend', 'gut', 'hoch']);
+      return rows.map((txt, idx) => `${idx} | ${txt}`);
+  }
+
+  function _qcDimTipText(dimKey, value, delta, answerLang){
+      const lang = _cgiLang(answerLang);
+      const v = Number.isFinite(Number(value)) ? Number(value) : null;
+      const d = String(delta || '').replace('−', '-');
+      const baseEN = {
+          clarity: 'Clarity: readability and structure quality.',
+          brevity: 'Brevity: conciseness versus detail depth.',
+          evidence: 'Evidence: support and traceability of claims.',
+          empathy: 'Empathy: considerate and supportive tone.',
+          consistency: 'Consistency: internal logic and contradiction control.',
+          neutrality: 'Neutrality: unbiased and balanced wording.',
+      };
+      const baseDE = {
+          clarity: 'Clarity: Verstaendlichkeit und Struktur der Antwort.',
+          brevity: 'Brevity: Kuerze im Verhaeltnis zur Detailtiefe.',
+          evidence: 'Evidence: Belegbarkeit und Nachvollziehbarkeit der Aussagen.',
+          empathy: 'Empathy: ruecksichtsvolle, unterstuetzende Tonalitaet.',
+          consistency: 'Consistency: innere Logik und Widerspruchsfreiheit.',
+          neutrality: 'Neutrality: neutrale, ausgewogene Formulierung.',
+      };
+      const base = (lang === 'en' ? baseEN : baseDE)[dimKey] || (lang === 'en' ? 'QC dimension.' : 'QC-Dimension.');
+      const vTxt = (v === null)
+          ? (lang === 'en' ? 'Current value: n/a.' : 'Aktueller Wert: n/a.')
+          : (lang === 'en' ? `Current value: ${v} of 3.` : `Aktueller Wert: ${v} von 3.`);
+      const dTxt = d
+          ? (lang === 'en' ? `Delta ${d}: offset to profile target.` : `Delta ${d}: Abweichung zum Profilziel.`)
+          : (lang === 'en' ? 'Delta n/a.' : 'Delta n/a.');
+      const hdr = (lang === 'en') ? 'Scale 0-3 (table):' : 'Skala 0-3 (Tabelle):';
+      const rows = _qcDimScaleRows(dimKey, lang).join('\n');
+      return `${base}\n${vTxt} ${dTxt}\n${hdr}\n${rows}`;
+  }
+
+  function _decorateQcMatrixTooltips(root, answerLang){
+      if(!root) return;
+      const src = String(root.innerHTML || '');
+      if(src.indexOf('QC-Matrix:') < 0) return;
+      if(src.indexOf('qc-dim-tip') >= 0) return;
+      const re = /(Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality|Klarheit|Kürze|Kuerze|Evidenz|Empathie|Konsistenz|Neutralität|Neutralitaet)\s+([0-3])\s*\(\s*Δ\s*([+\-−]?\d+)\s*\)/g;
+      const out = src.replace(re, (full, label, value, delta) => {
+          const key = _qcDimKey(label);
+          if(!key) return full;
+          const tip = _qcDimTipText(key, value, delta, answerLang);
+          return `<span class="qc-dim-tip" data-u-title="${escHtml(tip)}">${full}</span>`;
+      });
+      if(out !== src) root.innerHTML = out;
+  }
+
+  function _normalizeCustomTooltipTargets(root){
+      if(!root || !root.querySelectorAll) return;
+      root.querySelectorAll('.uncertainty-inline-marker, .signal-dot-marker, .cgi-help, .csc-badge, .csc-warning, .control-layer-note, .copy-btn, .qc-dim-tip').forEach((el)=>{
+          try {
+              const tip = String(el.getAttribute('data-u-title') || '').trim();
+              const nativeTitle = String(el.getAttribute('title') || '').trim();
+              if(!tip && nativeTitle){
+                  el.setAttribute('data-u-title', nativeTitle);
+              }
+              if(nativeTitle){
+                  el.removeAttribute('title');
+              }
+          } catch(e) {}
+      });
   }
 
   async function submitCgi(widgetId, mode){
@@ -373,11 +669,14 @@
   function addMsg(role, text, qc=false, csc=null, opts={}) {
       const d = document.createElement('div');
       d.className = 'msg ' + role;
-      let html = '<button class="copy-btn" onclick="copyToClipboard(this)" title="Copy">📋</button>';
+      const copyTip = escHtml(_copyTip((opts && opts.answerLang) ? opts.answerLang : ''));
+      let html = `<button class="copy-btn" onclick="copyToClipboard(this)" data-u-title="${copyTip}">📋</button>`;
       if(role === 'bot') html += renderCscBlock(csc);
       html += text;
       if(qc && role === 'bot') html += _buildCgiWidgetHtml((opts && opts.answerLang) ? opts.answerLang : '');
       d.innerHTML = html;
+      _decorateQcMatrixTooltips(d, (opts && opts.answerLang) ? opts.answerLang : '');
+      _normalizeCustomTooltipTargets(d);
       document.getElementById('chat').appendChild(d);
       document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
       if(window.MathJax) MathJax.typesetPromise();
@@ -424,7 +723,7 @@
 
   function _uTipShow(target, ev){
       if(!target) return;
-      const txt = String(target.getAttribute('data-u-title') || target.getAttribute('title') || '').trim();
+      const txt = String(target.getAttribute('data-u-title') || '').trim();
       if(!txt) return;
       _uTipHide();
       const tip = document.createElement('div');
@@ -440,6 +739,7 @@
       tip.style.color = '#1e3a8a';
       tip.style.fontSize = '12px';
       tip.style.lineHeight = '1.35';
+      tip.style.whiteSpace = 'pre-line';
       tip.style.boxShadow = '0 6px 16px rgba(0,0,0,0.18)';
       tip.style.pointerEvents = 'none';
       document.body.appendChild(tip);
@@ -459,24 +759,25 @@
       } catch(e) {}
   }
 
+  const __uTipTargets = '.uncertainty-inline-marker, .signal-dot-marker, .cgi-help, .csc-badge, .csc-warning, .control-layer-note, .copy-btn, .qc-dim-tip, [data-u-title]';
   document.addEventListener('mousedown', (e)=>{
       if(typeof e.button === 'number' && e.button !== 0) return;
       const t = (e.target && e.target.closest)
-          ? e.target.closest('.uncertainty-inline-marker, .signal-dot-marker, .cgi-help')
+          ? e.target.closest(__uTipTargets)
           : null;
       if(!t) return;
       _uTipShow(t, e);
   });
   document.addEventListener('mouseover', (e)=>{
       const t = (e.target && e.target.closest)
-          ? e.target.closest('.cgi-help')
+          ? e.target.closest(__uTipTargets)
           : null;
       if(!t) return;
       _uTipShow(t, e);
   });
   document.addEventListener('mouseout', (e)=>{
       const t = (e.target && e.target.closest)
-          ? e.target.closest('.cgi-help')
+          ? e.target.closest(__uTipTargets)
           : null;
       if(!t) return;
       _uTipHide();
@@ -492,6 +793,37 @@
       draft: '',
       maxEntries: 200
   };
+
+  function _cmdHistNormalizeEntries(entries, maxEntries){
+      const arr = Array.isArray(entries) ? entries : [];
+      const out = [];
+      for(const v of arr){
+          const txt = String(v || '').trim();
+          if(!txt) continue;
+          if(out.length && out[out.length - 1] === txt) continue;
+          out.push(txt);
+      }
+      const lim = Math.max(20, parseInt(maxEntries || 200, 10) || 200);
+      while(out.length > lim) out.shift();
+      return out;
+  }
+
+  async function _cmdHistLoadFromBackend(){
+      const h = window.__cmdHistory;
+      if(!h) return;
+      try{
+          if(!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_input_history) return;
+          const payload = await window.pywebview.api.get_input_history(parseInt(h.maxEntries || 200, 10) || 200);
+          if(!payload || payload.ok !== true) return;
+          if(typeof payload.max_entries === 'number' && Number.isFinite(payload.max_entries)){
+              h.maxEntries = Math.max(20, parseInt(payload.max_entries, 10) || 200);
+          }
+          h.entries = _cmdHistNormalizeEntries(payload.entries || [], h.maxEntries);
+          _cmdHistResetBrowse();
+      } catch(_e){
+          // silent fail-open
+      }
+  }
 
   function _cmdHistResetBrowse() {
       const h = window.__cmdHistory;
@@ -544,39 +876,78 @@
       inp.value = _cmdHistBrowse(inp.value, step);
   }
 
+  let _sendInFlight = false;
+  const _sendQueue = [];
+  const _sendQueueMax = 20;
+
+  function _enqueueSend(txt) {
+      const s = String(txt || '').trim();
+      if(!s) return false;
+      if(_sendQueue.length >= _sendQueueMax){
+          // Keep bounded memory; prefer latest user intent.
+          _sendQueue.shift();
+      }
+      _sendQueue.push(s);
+      return true;
+  }
+
+  async function _drainSendQueue() {
+      if(_sendInFlight) return;
+      const inp = document.getElementById('inp');
+      const btn = document.getElementById('btn');
+      _sendInFlight = true;
+      try {
+          while(_sendQueue.length){
+              const txt = String(_sendQueue.shift() || '').trim();
+              if(!txt) continue;
+              _cmdHistPush(txt);
+              _cmdHistResetBrowse();
+              try {
+                  if(window.pywebview && window.pywebview.api && window.pywebview.api.append_input_history){
+                      await window.pywebview.api.append_input_history(txt);
+                  }
+              } catch(_e) {
+                  // fail-open: local history still works
+              }
+              addMsg('user', txt);
+              if(btn) btn.disabled = true;
+              try {
+                  const res = await window.pywebview.api.ask(txt);
+                  const qcEnabled = await window.pywebview.api.ui_qc_bar_enabled();
+                  if(typeof res === 'string') {
+                      addMsg('bot', res, false);
+                  } else {
+                      const showCgi = !!qcEnabled && !!(res && res.cgi_bar);
+                      const answerLang = (res && typeof res.answer_lang === 'string') ? res.answer_lang : '';
+                      addMsg('bot', res.html || '', showCgi, res.csc || null, {answerLang: answerLang});
+                  }
+              } catch(e) {
+                  addMsg('bot', '<span style="color:red">Error: '+e+'</span>');
+              }
+          }
+      } finally {
+          _sendInFlight = false;
+          if(btn) btn.disabled = false;
+          if(inp) inp.focus();
+      }
+  }
+
   async function send() {
       const inp = document.getElementById('inp');
-      const txt = inp.value.trim();
+      if(!inp) return;
+      const txt = (inp.value || '').trim();
       if(!txt) return;
-      _cmdHistPush(txt);
       inp.value = '';
-      _cmdHistResetBrowse();
-      addMsg('user', txt);
-      const btn = document.getElementById('btn');
-      btn.disabled = true;
-      try {
-          const res = await window.pywebview.api.ask(txt);
-          const qcEnabled = await window.pywebview.api.ui_qc_bar_enabled();
-          if(typeof res === 'string') {
-              addMsg('bot', res, false);
-          } else {
-              const showCgi = !!qcEnabled && !!(res && res.cgi_bar);
-              const answerLang = (res && typeof res.answer_lang === 'string') ? res.answer_lang : '';
-              addMsg('bot', res.html || '', showCgi, res.csc || null, {answerLang: answerLang});
-          }
-      } catch(e) {
-          addMsg('bot', '<span style="color:red">Error: '+e+'</span>');
-      }
-      btn.disabled = false;
-      inp.focus();
+      if(!_enqueueSend(txt)) return;
+      await _drainSendQueue();
   }
 
   function remoteInput(txt) {
+      if(!_enqueueSend(txt)) return;
       const inp = document.getElementById('inp');
-      if(!inp) return;
-      inp.value = txt;
+      if(inp) inp.value = '';
       _cmdHistResetBrowse();
-      send();
+      _drainSendQueue();
   }
   
   document.getElementById('inp').addEventListener('keydown', (e)=>{
@@ -591,6 +962,23 @@
           h.index = -1;
       }
   });
+  document.addEventListener('keydown', (e)=>{
+      if(String(e.key || '').toUpperCase() === 'F1'){
+          e.preventDefault();
+          openHelpModal();
+          return;
+      }
+      if(String(e.key || '') === 'Escape'){
+          const hov = document.getElementById('helpModalOverlay');
+          if(hov && hov.classList.contains('show')){
+              e.preventDefault();
+              closeHelpModal();
+          }
+      }
+  });
+  _cmdHistLoadFromBackend();
+  window.addEventListener('pywebviewready', _cmdHistLoadFromBackend);
+  setTimeout(_cmdHistLoadFromBackend, 350);
 
 // --- Panel helpers: allow Python to replay a loaded chat log into the main UI (no model call).
 function resetChatToStatus(msg) {

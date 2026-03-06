@@ -1,0 +1,91 @@
+{
+  "button_label": "? Hilfe",
+  "title": "Comm-SCI Hilfe",
+  "subtitle": "Deterministische Wrapper-Hilfe: Start, Command-Routing, SCI, Qualitaetskontrolle, Zitation",
+  "close_label": "Schliessen",
+  "sections": [
+    {
+      "id": "quickstart",
+      "title": "Quickstart (Production)",
+      "items": [
+        "Regelwerk ueber das Ordner-Symbol laden und vor der ersten Inhaltsfrage Comm State pruefen.",
+        "Provider/Modell im Panel verbinden und danach Comm Start als Standalone-Kommando senden.",
+        "Profil explizit setzen (z. B. Profile Expert) und erst dann die eigentliche Aufgabe stellen.",
+        "Bei langen Sitzungen regelmaessig Comm Anchor und Comm Audit nutzen."
+      ]
+    },
+    {
+      "id": "commands",
+      "title": "Command-Disziplin",
+      "items": [
+        "Kommandos sind standalone-only: nur die Command-Zeile senden, kein gemischter Text.",
+        "Comm State / Comm Config / Comm Help / Comm Audit sind lokal-deterministische Renderer.",
+        "Comm Stop beendet den Comm-Governance-Flow fuer folgende Inhaltsantworten.",
+        "Profilwechsel sind explizit und ueber die Command-Historie auditierbar."
+      ]
+    },
+    {
+      "id": "sci",
+      "title": "SCI-Workflow",
+      "items": [
+        "Nach SCI on waehrend Pending im naechsten Prompt eine Variante A-H auswaehlen.",
+        "SCI-Trace-Schritte haengen von der Variante ab und werden durch Contracts validiert.",
+        "SCI recurse nur bei aktivem SCI verwenden, wenn ein One-Turn-Deep-Dive noetig ist.",
+        "Mit SCI off zur nicht-tracebasierten Inhaltsausgabe zurueckkehren."
+      ]
+    },
+    {
+      "id": "quality",
+      "title": "Qualitaet und Language Policy",
+      "items": [
+        "QC-Matrix und Self-Debunking werden fuer Inhaltsantworten durch Contracts erzwungen.",
+        "QC-Override-Werte aendern effektive QC-Ziele und sind in Comm State sichtbar.",
+        "Language policy production haelt die Nutzer-Ausgabe strikt und betriebssicher.",
+        "Language policy benchmark dient kontrollierter Evaluation und Regressionsvergleich."
+      ]
+    },
+    {
+      "id": "wrapper_components",
+      "title": "Wrapper-Bestandteile und Wirkung",
+      "items": [
+        "Provider-/Modellauswahl steuert Runtime-Verhalten und Render-Eigenschaften.",
+        "Comm-Kommandos aendern expliziten State (Profil, SCI-Modus, Overlay, Color, Policy).",
+        "Audit und Logs liefern Nachvollziehbarkeit fuer Troubleshooting und Regression.",
+        "Manual-Test-Szenarien validieren deterministische Contracts vor Releases."
+      ]
+    },
+    {
+      "id": "api_keys",
+      "title": "API-Keys: Klartext vs. Verschluesselt",
+      "items": [
+        "Panel-Pfad: Provider & LLM -> API-Key; dort Provider-Key eingeben, aendern oder loeschen.",
+        "api_key_plain bedeutet lokale unverschluesselte Speicherung ohne Passphrase-Dialog.",
+        "api_key_enc bedeutet lokale verschluesselte Speicherung mit Passphrase-Dialog.",
+        "Passphrase wird beim Start oder Provider-Wechsel nur abgefragt, wenn der Ziel-Provider verschluesselt gespeichert ist."
+      ]
+    },
+    {
+      "id": "troubleshooting",
+      "title": "Troubleshooting",
+      "items": [
+        "Wenn ein Kommando ignoriert wirkt: zuerst Standalone-Format und Comm State pruefen.",
+        "Bei sehr schnellem Panel-Klicken immer auf Abschluss des letzten Befehls warten.",
+        "Bei Provider-Fehlern API-Key, Provider-Auswahl und Modellverfuegbarkeit kontrollieren.",
+        "Bei Strukturdrift vor dem Weiterarbeiten Comm Anchor und Comm Audit ausfuehren.",
+        "Eingabe-History wird beim Beenden automatisch in Logs/History gespeichert und beim Start wieder geladen."
+      ]
+    },
+    {
+      "id": "citation",
+      "title": "Zitation und DOI",
+      "items": [
+        "Wrapper Concept DOI: 10.5281/zenodo.18445672",
+        "Regelwerk Concept DOI: 10.5281/zenodo.17928357",
+        "Regelwerk-Webseite: https://vfi64.github.io/Comm-SCI-Control/",
+        "Lizenz: Apache-2.0 (siehe LICENSE)",
+        "Maintainer: Volker Fickert"
+      ]
+    }
+  ],
+  "footer": "Tipp: Mit F1 diese Hilfe jederzeit oeffnen. Comm Help im Chat zeigt den Command-Satz aus dem aktuell geladenen Regelwerk."
+}

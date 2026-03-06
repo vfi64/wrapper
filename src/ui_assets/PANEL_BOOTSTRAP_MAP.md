@@ -4,13 +4,12 @@ Ziel: `panel.html` sicher auslagern, ohne die pywebview-Bridge oder das dynamisc
 
 ## Sichtbare Symptomatik beim fehlgeschlagenen S7-Panel-Schritt
 
-- Statische obere Panel-Elemente sichtbar (`Provider`, `Model`, `Answer language`, `Logs`, `Manual Test`)
+- Statische obere Panel-Elemente sichtbar (`Panel`, `Provider & LLM`, `Logs`, `Manual Test`)
 - Dynamische Sektionen fehlen:
   - `Comm Core`
   - `Profiles`
   - `SCI Workflow`
-  - `Modes & Overlays`
-  - `Tools` (inkl. `Dynamic one-shot on`)
+  - `Runtime & Governance` (konsolidiert `Modes & Overlays` + `Tools`, inkl. `QC Override` und `Dynamic one-shot on`)
 - Buttons/Controls sichtbar, aber funktional wirkungslos
 - Status blieb bei `Panel boot…` / offline
 
@@ -38,7 +37,7 @@ Das spricht fuer einen Bootstrap-/Bridge-Ausfall, nicht fuer einzelne Action-Han
 - `initPanelFailOpen()`
 - `_startRetryLoop()`
 - `_tryBringOnline()`
-- `run(cmd)` (Comm/Profile/SCI/Modes/Tools Buttons)
+- `run(cmd)` (Comm/Profile/SCI/Runtime-&-Governance Buttons)
 - `changeProvider()`
 - `changeModel()`
 - `changeAnswerLanguage()`

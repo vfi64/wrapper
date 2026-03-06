@@ -4,8 +4,8 @@ import html
 import re
 
 
-_U_CODE_RE = re.compile(r"\b(U[1-6])\b")
-_U_MARKED_RE = re.compile(r"(?i)data-u-code\s*=\s*(?:\"|')?(U[1-6])(?:\"|')?")
+_U_CODE_RE = re.compile(r"\b(U[1-8])\b")
+_U_MARKED_RE = re.compile(r"(?i)data-u-code\s*=\s*(?:\"|')?(U[1-8])(?:\"|')?")
 _BLOCK_TAG_RE = re.compile(r"(?is)<(p|li)([^>]*)>(.*?)</\1>")
 _STATUS_KEY_RE = re.compile(r"(?i)\b(?:active profile|profile|overlay|sci|control layer|qc|cgi|color|comm)\s*:")
 _TS_FOOTER_RE = re.compile(
@@ -61,6 +61,18 @@ _U_CODES = {
         "de_desc": "Mehrere Deutungen sind plausibel; gezielte Rueckfrage empfohlen.",
         "en_name": "Interpretation ambiguity",
         "en_desc": "Multiple interpretations are plausible; targeted clarification is recommended.",
+    },
+    "U7": {
+        "de_name": "Retrieval-Konflikt",
+        "de_desc": "Abgerufene Quellen widersprechen sich; Konflikt muss explizit offengelegt werden.",
+        "en_name": "Retrieval conflict",
+        "en_desc": "Retrieved sources conflict; the conflict must be disclosed explicitly.",
+    },
+    "U8": {
+        "de_name": "Retrieval-Metadatenluecke",
+        "de_desc": "Provenienz-/Qualitaetsmetadaten fehlen oder Retrieval-Tools sind nicht verfuegbar.",
+        "en_name": "Retrieval metadata gap",
+        "en_desc": "Provenance/quality metadata is missing or retrieval tools are unavailable.",
     },
 }
 
@@ -153,6 +165,26 @@ _INFER_RULES = {
         "interpretationsspielraum",
         "mehrere plausible",
         "nicht eindeutig",
+    ],
+    "U7": [
+        "retrieval conflict",
+        "source conflict",
+        "conflicting sources",
+        "widerspruechliche quellen",
+        "quellenkonflikt",
+        "konfligierende quelle",
+    ],
+    "U8": [
+        "qualityclass",
+        "quality class",
+        "metadata gap",
+        "provenance missing",
+        "tool unavailable",
+        "retrieval unavailable",
+        "metadatenluecke",
+        "metadatenluecke",
+        "provenienz fehlt",
+        "retrieval nicht verfuegbar",
     ],
 }
 
@@ -287,7 +319,7 @@ def _replace_first_plain_code_with_marker(inner_html: str, code: str, *, lang: s
         prev_ch = plain[ps - 1] if ps > 0 else ""
         next_ch = plain[pe] if pe < len(plain) else ""
         if prev_ch == "-" or next_ch == "-":
-            # Keep range notations like U1-U6 untouched.
+            # Keep range notations like U1-U8 untouched.
             continue
 
         # If the source already contains "(U1)", replace the whole parenthesized token
@@ -511,7 +543,7 @@ def infer_uncertainty_codes(text: str, *, user_text: str = "") -> list[str]:
             seen.add(c)
             out.append(c)
 
-    for code in ("U1", "U2", "U3", "U4", "U5", "U6"):
+    for code in ("U1", "U2", "U3", "U4", "U5", "U6", "U7", "U8"):
         needles = _INFER_RULES.get(code, [])
         if _contains_any(merged, needles):
             _add(code)
