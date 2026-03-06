@@ -198,7 +198,7 @@ src/
 └── Module/
     ├── auditstream.py
     ├── compliance_scan.py
-    ├── rendering_pipeline_v192.py
+    ├── rendering_pipeline.py
     └── rendering_utils.py
 
 tests/

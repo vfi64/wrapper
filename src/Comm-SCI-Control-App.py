@@ -40,9 +40,14 @@ except Exception:
     _rendering_utils = None  # type: ignore
 
 try:
-    import Module.rendering_pipeline_v192 as _rendering_pipeline_v192  # type: ignore
+    # Canonical rendering pipeline module name.
+    import Module.rendering_pipeline as _rendering_pipeline_v192  # type: ignore
 except Exception:
-    _rendering_pipeline_v192 = None  # type: ignore
+    try:
+        # Compatibility fallback for older snapshots/tests.
+        import Module.rendering_pipeline_v192 as _rendering_pipeline_v192  # type: ignore
+    except Exception:
+        _rendering_pipeline_v192 = None  # type: ignore
 
 try:
     from ui_panel_model import StateSnapshot as _PanelStateSnapshot, normalize_panel_ui as _panel_normalize_ui  # type: ignore

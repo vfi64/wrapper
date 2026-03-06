@@ -119,28 +119,38 @@ def load_fix_module():
 
 def _load_rendering_pipeline_v192():
     """
-    Load Module/rendering_pipeline_v192.py in a robust, informative way.
+    Load rendering pipeline module in a robust, informative way.
 
     We keep DOM-pipeline tests optional, but the skip reason should reflect the real cause.
     """
     global RP192_IMPORT_ERROR
     RP192_IMPORT_ERROR = None
 
-    # Preferred: normal package import (matches runtime usage)
+    # Preferred: canonical package import (matches runtime usage)
+    try:
+        if str(SRC) not in sys.path:
+            sys.path.insert(0, str(SRC))
+        return importlib.import_module("Module.rendering_pipeline")
+    except Exception as e_pkg:
+        RP192_IMPORT_ERROR = f"package import failed: {type(e_pkg).__name__}: {e_pkg}"
+
+    # Compatibility import for older snapshots
     try:
         if str(SRC) not in sys.path:
             sys.path.insert(0, str(SRC))
         return importlib.import_module("Module.rendering_pipeline_v192")
     except Exception as e_pkg:
-        RP192_IMPORT_ERROR = f"package import failed: {type(e_pkg).__name__}: {e_pkg}"
+        RP192_IMPORT_ERROR = (RP192_IMPORT_ERROR or "") + f" | compat import failed: {type(e_pkg).__name__}: {e_pkg}"
 
     # Fallback: direct file load via importlib.util
-    mod_path = SRC / "Module" / "rendering_pipeline_v192.py"
+    mod_path = SRC / "Module" / "rendering_pipeline.py"
+    if not mod_path.exists():
+        mod_path = SRC / "Module" / "rendering_pipeline_v192.py"
     if not mod_path.exists():
         RP192_IMPORT_ERROR = (RP192_IMPORT_ERROR or "") + f" | file not found at: {mod_path}"
         return None
     try:
-        spec = importlib.util.spec_from_file_location("Module.rendering_pipeline_v192", mod_path)
+        spec = importlib.util.spec_from_file_location("Module.rendering_pipeline", mod_path)
         if spec is None or spec.loader is None:
             RP192_IMPORT_ERROR = (RP192_IMPORT_ERROR or "") + " | spec/loader missing"
             return None
@@ -149,14 +159,6 @@ def _load_rendering_pipeline_v192():
         return module
     except Exception as e_file:
         RP192_IMPORT_ERROR = (RP192_IMPORT_ERROR or "") + f" | file load failed: {type(e_file).__name__}: {e_file}"
-        return None
-    try:
-        spec = importlib.util.spec_from_file_location("rendering_pipeline_v192", mod_path)
-        module = importlib.util.module_from_spec(spec)
-        assert spec is not None and spec.loader is not None
-        spec.loader.exec_module(module)  # type: ignore[attr-defined]
-        return module
-    except Exception:
         return None
 
 
