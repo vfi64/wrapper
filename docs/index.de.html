@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Comm-SCI-Control-App Dokumentation</title>
+  <style>
+    :root {
+      --bg: #f6f4ef;
+      --ink: #162026;
+      --muted: #4c5a62;
+      --brand: #0c6d68;
+      --accent: #c96a05;
+      --card: #ffffff;
+      --line: #d9e1e5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 360px at 8% -18%, #b9d6c8 0%, transparent 54%),
+        radial-gradient(900px 320px at 92% -30%, #f3d7a9 0%, transparent 52%),
+        var(--bg);
+      line-height: 1.45;
+    }
+    .wrap {
+      max-width: 1060px;
+      margin: 0 auto;
+      padding: 28px 18px 56px;
+    }
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .lang a {
+      color: var(--brand);
+      text-decoration: none;
+      font-weight: 600;
+      border: 1px solid var(--brand);
+      border-radius: 999px;
+      padding: 6px 12px;
+      background: #f2fffc;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(1.6rem, 2.2vw, 2.4rem);
+      letter-spacing: 0.01em;
+    }
+    .lead {
+      margin: 10px 0 0;
+      color: var(--muted);
+      max-width: 78ch;
+    }
+    .grid {
+      margin-top: 22px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px 16px 14px;
+      box-shadow: 0 5px 18px rgba(20, 32, 38, 0.06);
+    }
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 1.03rem;
+    }
+    .card p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 0.97rem;
+    }
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--ink);
+    }
+    li { margin: 6px 0; }
+    a {
+      color: var(--brand);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+    .cta {
+      margin-top: 22px;
+      background: linear-gradient(120deg, #f3faf8 0%, #fff5e7 100%);
+      border: 1px solid #cddbd3;
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .cta strong { color: #0b4f49; }
+    .foot {
+      margin-top: 26px;
+      color: #5e6c74;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <div>
+        <h1>Comm-SCI-Control-App Dokumentation</h1>
+        <p class="lead">
+          Stabile DOI-Verweise, didaktische Installationspfade (Einsteiger + Profis) und sichere API-Key-Einrichtung an einer Stelle.
+        </p>
+      </div>
+      <div class="lang">
+        <a href="./index.html" hreflang="en">English</a>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Stabile DOI-Policy</h2>
+        <p>In Handbuch/README/Website sollten Concept-DOIs verwendet werden. Versions-DOIs sind release-spezifisch.</p>
+        <ul>
+          <li>Runtime Concept DOI: <a href="https://doi.org/10.5281/zenodo.18445672">10.5281/zenodo.18445672</a></li>
+          <li>Regelwerk Concept DOI: <a href="https://doi.org/10.5281/zenodo.17928357">10.5281/zenodo.17928357</a></li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Installationspfade</h2>
+        <p>Getrennte Einstiege fuer nicht technische Nutzer und Entwickler.</p>
+        <ul>
+          <li>Einsteiger: <code>bash scripts/setup_venv.sh</code></li>
+          <li>Profi: explizite Python-Wahl + Tests + Diagnosepfad</li>
+          <li>Details: <a href="./HANDBOOK.de.md">HANDBOOK.de.md</a> / <a href="./HANDBOOK.md">HANDBOOK.md</a></li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>API-Key Onboarding</h2>
+        <p>Keys nur in offiziellen Portalen erzeugen und Kostenmodell vor Nutzung pruefen.</p>
+        <ul>
+          <li>Gemini: <a href="https://aistudio.google.com/apikey">API-Key</a> / <a href="https://ai.google.dev/pricing">Pricing</a></li>
+          <li>OpenRouter: <a href="https://openrouter.ai/keys">API-Keys</a> / <a href="https://openrouter.ai/models">Modelle + Preise</a></li>
+          <li>Hugging Face: <a href="https://huggingface.co/settings/tokens">Tokens</a> / <a href="https://huggingface.co/pricing">Pricing</a></li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Sicherheitsregeln</h2>
+        <p>Keine Secrets committen. In Team-/Produktivumgebungen ENV-Variablen bevorzugen.</p>
+        <ul>
+          <li>Lokale Datei: <code>Config/Comm-SCI-API-Keys.json</code> (gitignored)</li>
+          <li>Vorlage: <code>Config/Comm-SCI-API-Keys.example.json</code></li>
+          <li>Aktueller Stand zu Verschluesselung im Handbuch dokumentiert.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="cta">
+      <strong>Empfohlener Einstieg:</strong> zuerst <a href="./HANDBOOK.de.md">deutsches Handbuch</a> lesen (oder <a href="./HANDBOOK.md">englisch</a>), dann den passenden Installationspfad auswaehlen und API-Keys sicher konfigurieren.
+    </section>
+
+    <p class="foot">
+      Lizenz: Apache-2.0 (siehe <code>LICENSE</code>) &middot; Maintainer: Volker Fickert
+    </p>
+  </main>
+</body>
+</html>

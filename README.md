@@ -3,16 +3,28 @@
 Deterministic Python runtime for Comm-SCI governance workflows.
 
 Current app version: **1.0.0**  
-Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.0.3.json`**
+Recommended ruleset line: **`JSON/Comm-SCI-v20.2.x`** (current file: **`JSON/Comm-SCI-v20.2.0.json`**)
 
-## DOI (current Zenodo records)
+## DOI (stable references)
 
-- Wrapper (concept DOI / all versions): [10.5281/zenodo.18445672](https://doi.org/10.5281/zenodo.18445672)
-- Wrapper (version DOI / current public release `v1.0.0 (JSON-v20.0.3)`): [10.5281/zenodo.18759479](https://doi.org/10.5281/zenodo.18759479)
-- Ruleset (concept DOI / all versions): [10.5281/zenodo.17928357](https://doi.org/10.5281/zenodo.17928357)
-- Ruleset (version DOI / currently maintained Zenodo release): [10.5281/zenodo.18154098](https://doi.org/10.5281/zenodo.18154098)
+- Runtime app (concept DOI / all versions, stable link): [10.5281/zenodo.18445672](https://doi.org/10.5281/zenodo.18445672)
+- Ruleset (concept DOI / all versions, stable link): [10.5281/zenodo.17928357](https://doi.org/10.5281/zenodo.17928357)
+- Recommendation for stable README/handbook/website links: reference concept DOIs.
+- Release-specific (version) DOIs should be used only in release notes or when you need exact, pinned reproducibility for one single release.
+- DOI links in this README resolve to Zenodo records (archive + metadata), not to GitHub repository pages.
+- GitHub repository URL for code navigation: `https://github.com/vfi64/Comm-SCI-Control`
 
-## Quick Start (recommended, reproducible)
+## Command status (ruleset v20.2.0)
+
+- Canonical anchor commands: `Comm Anchor`, `Comm Anchor on`, `Comm Anchor off`.
+- `Anchor auto on/off` is removed in v20.2.0 runtime handling. Use `Comm Anchor on/off` only.
+- `anchor_auto` may still appear as an internal status flag, but `Anchor auto on/off` is not a user command token.
+- `Control on/off` are **not** canonical command tokens in v20.2.0.
+- `Color on` and `Color off` are canonical command tokens in v20.2.0.
+
+## Installation Paths (by user type)
+
+### A) Beginner path (students, non-programmers, domain users)
 
 ```bash
 cd /path/to/repo
@@ -21,8 +33,23 @@ source .venc/bin/activate
 python Comm-SCI-Control-App.py
 ```
 
-The setup script creates (or refreshes) `.venc` and installs the local development
-environment from `pyproject.toml` via `pip install -e ".[local-dev]"`.
+### B) Advanced path (developers, CI-oriented users)
+
+```bash
+cd /path/to/repo
+PYTHON_BIN=python3.14 VENV_DIR=.venc bash scripts/setup_venv.sh
+source .venc/bin/activate
+python -m pytest -q tests
+python Comm-SCI-Control-App.py
+```
+
+The setup script creates (or refreshes) `.venc` and installs dependencies from
+`pyproject.toml` with `pip install -e ".[local-dev]"`.
+Detailed installation guides:
+
+- English handbook: [`docs/HANDBOOK.md`](docs/HANDBOOK.md)
+- German handbook: [`docs/HANDBOOK.de.md`](docs/HANDBOOK.de.md)
+- Web docs (if GitHub Pages via `docs/` is enabled): [`docs/index.html`](docs/index.html) / [`docs/index.de.html`](docs/index.de.html)
 
 ## Start (manual)
 
@@ -40,7 +67,7 @@ python Comm-SCI-Control-App.py
 ```bash
 cd /path/to/repo
 source .venc/bin/activate
-python -m pytest -q
+python -m pytest -q tests
 ```
 
 Targeted fast regression checks (S8 / panel bootstrap):
@@ -93,7 +120,7 @@ Note: local artifacts such as `.git/`, `.venc/`, `.pytest_cache/`, or `.DS_Store
 | `pyproject.toml` | Packaging/install config and base pytest settings. |
 | `requirements.txt` | Compatibility/reference dependency list for runtime. |
 | `MODULARIZATION.md` | S0-S8 roadmap and acceptance criteria. |
-| `ARCHITECTURE.md` | Architecture rationale (governance vs wrapper responsibilities). |
+| `ARCHITECTURE.md` | Architecture rationale (governance vs runtime responsibilities). |
 | `JSON/` | Rulesets / governance JSON files. |
 | `Config/` | Local configuration, provider keys, caches (partly gitignored). |
 | `Logs/` | Chat/audit/manual-test exports and runtime traces (contents gitignored). |
@@ -140,6 +167,7 @@ tests/
 - `Config/Comm-SCI-API-Keys.json` is local-only and ignored by Git.
 - A template file `Config/Comm-SCI-API-Keys.example.json` (without real API keys) is included in the repository.
 - `Logs/**` content is ignored by Git (folder structure kept).
+- Provider key onboarding, cost warnings, and secure handling guidance are documented in [`docs/HANDBOOK.md`](docs/HANDBOOK.md).
 
 ## Dependencies
 

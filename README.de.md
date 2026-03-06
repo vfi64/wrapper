@@ -3,16 +3,28 @@
 Deterministische Python-Runtime fuer Comm-SCI-Governance-Workflows.
 
 Aktuelle App-Version: **1.0.0**  
-Standardmaessig geladenes Regelwerk beim Start: **`JSON/Comm-SCI-v20.0.3.json`**
+Empfohlene Regelwerk-Linie: **`JSON/Comm-SCI-v20.2.x`** (aktuelle Datei: **`JSON/Comm-SCI-v20.2.0.json`**)
 
-## DOI (aktuelle Zenodo-Records)
+## DOI (stabile Referenzen)
 
-- Wrapper (Concept DOI / alle Versionen): [10.5281/zenodo.18445672](https://doi.org/10.5281/zenodo.18445672)
-- Wrapper (Versions-DOI / aktuelles oeffentliches Release `v1.0.0 (JSON-v20.0.3)`): [10.5281/zenodo.18759479](https://doi.org/10.5281/zenodo.18759479)
-- Regelwerk (Concept DOI / alle Versionen): [10.5281/zenodo.17928357](https://doi.org/10.5281/zenodo.17928357)
-- Regelwerk (Versions-DOI / aktuell gepflegter Zenodo-Release): [10.5281/zenodo.18154098](https://doi.org/10.5281/zenodo.18154098)
+- Runtime-App (Concept DOI / alle Versionen, stabiler Link): [10.5281/zenodo.18445672](https://doi.org/10.5281/zenodo.18445672)
+- Regelwerk (Concept DOI / alle Versionen, stabiler Link): [10.5281/zenodo.17928357](https://doi.org/10.5281/zenodo.17928357)
+- Empfehlung fuer stabile README-/Handbuch-/Webseiten-Links: Concept DOIs verwenden.
+- Versions-DOIs nur in Release-Notizen oder fuer exakt gepinnte Reproduzierbarkeit eines einzelnen Releases nutzen.
+- DOI-Links in dieser README zeigen auf Zenodo-Records (Archiv + Metadaten), nicht direkt auf GitHub-Repository-Seiten.
+- GitHub-Repository-URL zur Code-Navigation: `https://github.com/vfi64/Comm-SCI-Control`
 
-## Schnellstart (empfohlen, reproduzierbar)
+## Kommando-Status (Regelwerk v20.2.0)
+
+- Kanonische Anchor-Kommandos: `Comm Anchor`, `Comm Anchor on`, `Comm Anchor off`.
+- `Anchor auto on/off` ist in der v20.2.0-Runtime-Logik entfernt. Bitte nur `Comm Anchor on/off` verwenden.
+- `anchor_auto` kann weiterhin als internes Status-Flag erscheinen, ist aber kein eigenes Nutzer-Kommando.
+- `Control on/off` sind in v20.2.0 **keine** kanonischen Kommando-Tokens.
+- `Color on` und `Color off` sind kanonische Kommando-Tokens in v20.2.0.
+
+## Installationspfade (nach Zielgruppe)
+
+### A) Einsteigerpfad (Laien, Schueler, Studierende, Fachanwender)
 
 ```bash
 cd /pfad/zum/repo
@@ -21,8 +33,23 @@ source .venc/bin/activate
 python Comm-SCI-Control-App.py
 ```
 
-Das Setup-Skript erstellt (oder aktualisiert) `.venc` und installiert die lokale
-Entwicklungsumgebung aus `pyproject.toml` via `pip install -e ".[local-dev]"`.
+### B) Profi-Pfad (Entwickler, fortgeschrittene Nutzer, CI-nah)
+
+```bash
+cd /pfad/zum/repo
+PYTHON_BIN=python3.14 VENV_DIR=.venc bash scripts/setup_venv.sh
+source .venc/bin/activate
+python -m pytest -q tests
+python Comm-SCI-Control-App.py
+```
+
+Das Setup-Skript erstellt (oder aktualisiert) `.venc` und installiert Abhaengigkeiten
+aus `pyproject.toml` via `pip install -e ".[local-dev]"`.
+Detaillierte Installationsanleitungen:
+
+- Deutsches Handbuch: [`docs/HANDBOOK.de.md`](docs/HANDBOOK.de.md)
+- Englisches Handbuch: [`docs/HANDBOOK.md`](docs/HANDBOOK.md)
+- Web-Doku (wenn GitHub Pages via `docs/` aktiv ist): [`docs/index.de.html`](docs/index.de.html) / [`docs/index.html`](docs/index.html)
 
 ## Start (manuell)
 
@@ -40,7 +67,7 @@ python Comm-SCI-Control-App.py
 ```bash
 cd /pfad/zum/repo
 source .venc/bin/activate
-python -m pytest -q
+python -m pytest -q tests
 ```
 
 Gezielter schneller Testlauf (S8-/Panel-Bootstrap):
@@ -93,7 +120,7 @@ Hinweis: Lokale Artefakte wie `.git/`, `.venc/`, `.pytest_cache/` oder `.DS_Stor
 | `pyproject.toml` | Packaging-/Installationskonfiguration und pytest-Basisoptionen. |
 | `requirements.txt` | Kompatibilitaets-/Referenzliste fuer Runtime-Abhaengigkeiten. |
 | `MODULARIZATION.md` | Stufenplan S0-S8 und Akzeptanzkriterien. |
-| `ARCHITECTURE.md` | Architekturprinzipien / Design-Rationale (Governance vs. Wrapper-Verantwortung). |
+| `ARCHITECTURE.md` | Architekturprinzipien / Design-Rationale (Governance vs. Runtime-Verantwortung). |
 | `JSON/` | Regelwerke / Governance-JSONs. |
 | `Config/` | Lokale Konfiguration, Provider-Keys, Caches (teils gitignored). |
 | `Logs/` | Chat-/Audit-/ManualTest-Exports und Laufzeitspuren (Inhalte gitignored). |
@@ -140,6 +167,7 @@ tests/
 - `Config/Comm-SCI-API-Keys.json` ist nur lokal und wird von Git ignoriert.
 - Als Vorlage liegt `Config/Comm-SCI-API-Keys.example.json` ohne echte API-Keys im Repo.
 - Inhalte unter `Logs/**` werden von Git ignoriert (Ordnerstruktur bleibt erhalten).
+- Provider-Key-Onboarding, Kostenhinweise und sichere Handhabung sind im [`docs/HANDBOOK.de.md`](docs/HANDBOOK.de.md) dokumentiert.
 
 ## Abhaengigkeiten
 
