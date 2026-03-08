@@ -106,9 +106,9 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 #### S7 acceptance checklist (planned)
 - [x] Panel HTML/JS is loaded from local asset file(s) with deterministic fallback.
 - [x] Chat HTML/JS/CSS is loaded from local asset file(s) with deterministic fallback.
-- [x] No change in `panel_action` command names or payload schemas.
-- [x] Existing panel/manual-test smoke checks remain green.
-- [x] Wrapper file size is materially reduced (documented delta).
+- [ ] No change in `panel_action` command names or payload schemas.
+- [ ] Existing panel/manual-test smoke checks remain green.
+- [ ] Wrapper file size is materially reduced (documented delta).
 
 ### Optional later
 - External templates (feature‑flagged)

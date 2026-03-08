@@ -1,6 +1,6 @@
-# Installation und Sync (Quelle -> lokaler Wrapper-Klon)
+# Installation und Sync (Privat -> lokaler Wrapper-Klon)
 
-Dieses Dokument definiert eine lokale Uebergaberoutine aus einem Quell-Repository/-Workspace in den lokalen Klon von `vfi64/wrapper`.
+Dieses Dokument definiert die lokale Uebergaberoutine von diesem Quell-Repository in den lokalen Klon von `vfi64/wrapper`.
 
 ## Ziel
 
@@ -53,4 +53,4 @@ Sicherheitsmechanismen:
 ## 3) Release-Gating (spaeterer Schritt)
 
 In dieser Phase kein Push auf `vfi64/wrapper`.
-Erst Verifikation im Quell-Repo abschliessen, dann lokal kopieren, dann Bezeichner/Links auf Public-Kontext anpassen, dann veroeffentlichen.
+Erst private Verifikation abschliessen, dann lokal kopieren, dann Bezeichner/Links auf public-Kontext anpassen, dann veroeffentlichen.

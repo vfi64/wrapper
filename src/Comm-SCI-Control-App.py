@@ -40,14 +40,9 @@ except Exception:
     _rendering_utils = None  # type: ignore
 
 try:
-    # Canonical rendering pipeline module name.
-    import Module.rendering_pipeline as _rendering_pipeline_v192  # type: ignore
+    import Module.rendering_pipeline_v192 as _rendering_pipeline_v192  # type: ignore
 except Exception:
-    try:
-        # Compatibility fallback for older snapshots/tests.
-        import Module.rendering_pipeline_v192 as _rendering_pipeline_v192  # type: ignore
-    except Exception:
-        _rendering_pipeline_v192 = None  # type: ignore
+    _rendering_pipeline_v192 = None  # type: ignore
 
 try:
     from ui_panel_model import StateSnapshot as _PanelStateSnapshot, normalize_panel_ui as _panel_normalize_ui  # type: ignore
@@ -731,10 +726,12 @@ def _safe_sha256(s: str) -> str:
         return ""
 
 # Default ruleset location preference (latest first):
-#   1) ./JSON/Comm-SCI-v20.2.0.json
-#   2) ./JSON/Comm-SCI-v20.1.0.json
-#   3) legacy fallbacks (v20.0.3 / v20.0.2)
+#   1) ./JSON/Comm-SCI-v20.2.1.json
+#   2) ./JSON/Comm-SCI-v20.2.0.json
+#   3) ./JSON/Comm-SCI-v20.1.0.json
+#   4) legacy fallbacks (v20.0.3 / v20.0.2)
 _DEFAULT_RULESET_CANDIDATES = [
+    'Comm-SCI-v20.2.1.json',
     'Comm-SCI-v20.2.0.json',
     'Comm-SCI-v20.1.0.json',
     'Comm-SCI-v20.0.3.json',
@@ -754,7 +751,7 @@ if not DEFAULT_JSON:
             break
 if not DEFAULT_JSON:
     # Final fallback path (may still fail later with clear file-not-found log).
-    DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.2.0.json')
+    DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.2.1.json')
 
 # Config/keys location: ./Config/
 CONFIG_FILENAME = 'Comm-SCI-Config.json'
@@ -9061,6 +9058,7 @@ class CSCRefiner:
                 "doi_col": "DOI / Link",
                 "wrapper_concept": "Wrapper concept DOI",
                 "ruleset_concept": "Ruleset concept DOI",
+                "wrapper_site": "Public wrapper website",
                 "qc_overrides": "QC-Overrides",
                 "public_site": "Public ruleset website",
                 "ruleset_repo": "Ruleset GitHub repository",
@@ -9122,6 +9120,7 @@ class CSCRefiner:
                 "doi_col": "DOI / Link",
                 "wrapper_concept": "Wrapper Concept DOI",
                 "ruleset_concept": "Regelwerk Concept DOI",
+                "wrapper_site": "Oeffentliche Wrapper-Webseite",
                 "qc_overrides": "QC-Overrides",
                 "public_site": "Oeffentliche Regelwerk-Webseite",
                 "ruleset_repo": "Regelwerk GitHub-Repository",
@@ -9382,10 +9381,11 @@ class CSCRefiner:
         citation_rows = [
             (txt["wrapper_concept"], "https://doi.org/10.5281/zenodo.18445672", "10.5281/zenodo.18445672"),
             (txt["ruleset_concept"], "https://doi.org/10.5281/zenodo.17928357", "10.5281/zenodo.17928357"),
+            (txt["wrapper_site"], "https://vfi64.github.io/wrapper/", "vfi64.github.io/wrapper"),
             (txt["public_site"], "https://vfi64.github.io/Comm-SCI-Control/", "vfi64.github.io/Comm-SCI-Control"),
             (txt["ruleset_repo"], "https://github.com/vfi64/Comm-SCI-Control", "github.com/vfi64/Comm-SCI-Control"),
             (txt["wrapper_repo"], "https://github.com/vfi64/wrapper", "github.com/vfi64/wrapper"),
-            (txt["license"], "https://github.com/vfi64/wrapper/blob/main/LICENSE", txt["license_text"]),
+            (txt["license"], "https://github.com/vfi64/Comm-SCI-Control-private/blob/main/LICENSE", txt["license_text"]),
             (txt["maintainer"], "", "Volker Fickert"),
         ]
         out = []
@@ -10541,7 +10541,7 @@ class CSCRefiner:
             # Harte Sperre: Config-Datei ist KEIN Ruleset.
             if base.lower() == "comm-sci-config.json" or base.lower().endswith("-config.json") or base.lower().endswith("config.json"):
                 self._ui_add_system_message(
-                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.2.0.json)."
+                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.2.1.json)."
                 )
                 start_dir = os.path.dirname(new_file)
                 continue  # retry once
@@ -16409,6 +16409,7 @@ class CSCRefiner:
         Some pywebview backends (macOS in particular) can get into a weird state after multiple
         evaluate_js refreshes. Recreating the panel window is the most reliable fix.
         Preserves the user's last panel position/size when possible.
+        After a successful rebuild, the panel is shown again deterministically.
         """
         _rebuild_plan = None
         try:
@@ -16455,10 +16456,10 @@ class CSCRefiner:
             else False
         )
 
-        # Recreate and bring to front
+        # Recreate and show panel again (ruleset reload must not leave panel hidden)
         try:
             self._create_panel()
-            # best-effort focus
+            # best-effort extra window methods from seam plan
             try:
                 _methods = (
                     tuple(_rebuild_plan.get("post_create_window_methods") or ())
@@ -16468,6 +16469,10 @@ class CSCRefiner:
                 for _meth in _methods:
                     if hasattr(self.panel_win, _meth):
                         getattr(self.panel_win, _meth)()
+            except Exception:
+                pass
+            try:
+                self._show_panel(activate_panel=False, return_focus_to_main=True)
             except Exception:
                 pass
             if self.main_win:

@@ -3,21 +3,55 @@
 Deterministic Python runtime for Comm-SCI governance workflows.
 
 Current app version: **1.0.0**  
-Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.2.0.json`**
+Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.2.1.json`**
+
+## Positioning
+
+**Not more autonomy at any price, but more control per answer.**
+
+**Not mere linguistic plausibility, but visible classification, fallibility, and inspectability.**
+
+The wrapper exists because a ruleset without technical execution can remain an aspiration instead of stable runtime behavior.
+
+## Why this wrapper exists
+
+Comm-SCI-Control defines normative governance behavior. The wrapper line focuses on operational enforcement and repeatability: command contracts, SCI state handling, QC/verification contracts, and panel-auditable runtime behavior.
+
+## Practical orientation
+
+- When JSON-only is often enough: conceptual tests, quick exploratory usage.
+- When wrapper runtime is clearly preferable: reproducible runs, explicit control paths, diagnostics, and audit-oriented comparison.
+
+See detailed pages:
+
+- [`docs/why-wrapper.en.md`](docs/why-wrapper.en.md)
+- [`docs/why-wrapper.de.md`](docs/why-wrapper.de.md)
+- [`docs/runtime-use-cases.en.md`](docs/runtime-use-cases.en.md)
+- [`docs/runtime-use-cases.de.md`](docs/runtime-use-cases.de.md)
+- Website: [`docs/why-wrapper.html`](docs/why-wrapper.html)
+- Website: [`docs/runtime-scenarios.html`](docs/runtime-scenarios.html)
+- Website: [`docs/limits-wrapper.html`](docs/limits-wrapper.html)
 
 ## What This Repository Is
 
-This repository contains the public wrapper/runtime line that executes Comm-SCI governance deterministically.
+This repository contains the development line of the Python wrapper/runtime that executes Comm-SCI governance deterministically.
 It is the implementation counterpart to the public ruleset repository.
 
 - Public ruleset reference: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
 - Wrapper/runtime repository: [vfi64/wrapper](https://github.com/vfi64/wrapper)
 - Wrapper project website (public): [vfi64.github.io/wrapper](https://vfi64.github.io/wrapper/)
+- Ruleset website (public): [vfi64.github.io/Comm-SCI-Control](https://vfi64.github.io/Comm-SCI-Control/)
 
 ## Documentation Hub
 
 - Website (EN): [`docs/index.html`](docs/index.html)
 - Website (DE): [`docs/index.de.html`](docs/index.de.html)
+- Why Wrapper (EN): [`docs/why-wrapper.html`](docs/why-wrapper.html)
+- Why Wrapper (DE): [`docs/why-wrapper.de.html`](docs/why-wrapper.de.html)
+- Runtime scenarios (EN): [`docs/runtime-scenarios.html`](docs/runtime-scenarios.html)
+- Runtime scenarios (DE): [`docs/runtime-scenarios.de.html`](docs/runtime-scenarios.de.html)
+- Wrapper limits (EN): [`docs/limits-wrapper.html`](docs/limits-wrapper.html)
+- Wrapper limits (DE): [`docs/limits-wrapper.de.html`](docs/limits-wrapper.de.html)
 - Glossary (EN): [`docs/glossary.html`](docs/glossary.html)
 - Glossary (DE): [`docs/glossar.de.html`](docs/glossar.de.html)
 - Beginner install (EN): [`docs/install-beginner.html`](docs/install-beginner.html)
@@ -82,7 +116,7 @@ bash scripts/setup_venv.sh --dry-run
 bash scripts/setup_venv.sh --python python3.12 --venv .venc --extras local-dev
 ```
 
-2. Dry-run sync from source repo to local `vfi64/wrapper` clone:
+2. Dry-run sync from wrapper repo to local `vfi64/wrapper` clone:
 
 ```bash
 bash scripts/sync_to_wrapper_local.sh --target /path/to/wrapper
@@ -198,7 +232,7 @@ src/
 └── Module/
     ├── auditstream.py
     ├── compliance_scan.py
-    ├── rendering_pipeline.py
+    ├── rendering_pipeline_v192.py
     └── rendering_utils.py
 
 tests/

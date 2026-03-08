@@ -1,6 +1,6 @@
-# Install and Sync (Source -> Local Wrapper Clone)
+# Install and Sync (Private -> Local Wrapper Clone)
 
-This document defines a local handover routine from a source repository/workspace to the local clone of `vfi64/wrapper`.
+This document defines the local handover routine from this wrapper repository to the local clone of `vfi64/wrapper`.
 
 ## Goal
 
@@ -47,10 +47,10 @@ bash scripts/sync_to_wrapper_local.sh --target /path/to/wrapper --apply --valida
 Safety controls:
 - Verifies target is a git repo with origin containing `vfi64/wrapper`.
 - Blocks dirty target repos unless `--allow-dirty-target` is set.
-- Copies only tracked files from source repo.
+- Copies only tracked files from wrapper repo.
 - Skips local secrets/caches/log artifacts.
 
 ## 3) Release gating (later step)
 
 Do not push `vfi64/wrapper` remote in this phase.
-First complete verification in the source repo, then copy locally, then adapt naming/links for public context, then release.
+First complete verification in wrapper repo, then copy locally, then adapt naming/links for public context, then release.

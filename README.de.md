@@ -3,21 +3,55 @@
 Deterministische Python-Runtime fuer Comm-SCI-Governance-Workflows.
 
 Aktuelle App-Version: **1.0.0**  
-Standardmaessig geladenes Regelwerk beim Start: **`JSON/Comm-SCI-v20.2.0.json`**
+Standardmaessig geladenes Regelwerk beim Start: **`JSON/Comm-SCI-v20.2.1.json`**
+
+## Positionierung
+
+**Nicht mehr Autonomie um jeden Preis, sondern mehr Kontrolle pro Antwort.**
+
+**Nicht bloss sprachliche Plausibilitaet, sondern sichtbare Einordnung, Fehlbarkeit und Pruefbarkeit.**
+
+Der Wrapper existiert, weil ein Regelwerk ohne technische Ausfuehrung leicht nur Wunsch bleibt.
+
+## Warum dieser Wrapper existiert
+
+Comm-SCI-Control definiert normative Governance-Regeln. Die Wrapper-Linie fokussiert den operativen Vollzug und Wiederholbarkeit: Command-Contracts, SCI-State-Handling, QC/Verification-Vertraege und panel-auditierbares Runtime-Verhalten.
+
+## Praktische Orientierung
+
+- JSON-only reicht oft fuer konzeptionelle Tests und schnelle Exploration.
+- Wrapper-Runtime ist klar im Vorteil bei reproduzierbaren Laeufen, expliziten Kontrollpfaden, Diagnostik und auditierbaren Vergleichen.
+
+Vertiefungsseiten:
+
+- [`docs/why-wrapper.de.md`](docs/why-wrapper.de.md)
+- [`docs/why-wrapper.en.md`](docs/why-wrapper.en.md)
+- [`docs/runtime-use-cases.de.md`](docs/runtime-use-cases.de.md)
+- [`docs/runtime-use-cases.en.md`](docs/runtime-use-cases.en.md)
+- Webseite: [`docs/why-wrapper.de.html`](docs/why-wrapper.de.html)
+- Webseite: [`docs/runtime-scenarios.de.html`](docs/runtime-scenarios.de.html)
+- Webseite: [`docs/limits-wrapper.de.html`](docs/limits-wrapper.de.html)
 
 ## Zweck dieses Repos
 
-Dieses Repository enthaelt die oeffentliche Wrapper-/Runtime-Linie, die Comm-SCI-Governance deterministisch ausfuehrt.
+Dieses Repository enthaelt die Wrapper-Entwicklungslinie der Python-Runtime, die Comm-SCI-Governance deterministisch ausfuehrt.
 Es ist die Implementierungsseite zum oeffentlichen Regelwerk.
 
 - Oeffentliches Regelwerk: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
 - Wrapper/Runtime-Repository: [vfi64/wrapper](https://github.com/vfi64/wrapper)
-- Oeffentliche Projekt-Webseite: [vfi64.github.io/wrapper](https://vfi64.github.io/wrapper/)
+- Oeffentliche Wrapper-Webseite: [vfi64.github.io/wrapper](https://vfi64.github.io/wrapper/)
+- Oeffentliche Regelwerk-Webseite: [vfi64.github.io/Comm-SCI-Control](https://vfi64.github.io/Comm-SCI-Control/)
 
 ## Dokumentations-Hub
 
 - Webseite (EN): [`docs/index.html`](docs/index.html)
 - Webseite (DE): [`docs/index.de.html`](docs/index.de.html)
+- Why Wrapper (EN): [`docs/why-wrapper.html`](docs/why-wrapper.html)
+- Why Wrapper (DE): [`docs/why-wrapper.de.html`](docs/why-wrapper.de.html)
+- Runtime Scenarios (EN): [`docs/runtime-scenarios.html`](docs/runtime-scenarios.html)
+- Runtime Scenarios (DE): [`docs/runtime-scenarios.de.html`](docs/runtime-scenarios.de.html)
+- Wrapper-Grenzen (EN): [`docs/limits-wrapper.html`](docs/limits-wrapper.html)
+- Wrapper-Grenzen (DE): [`docs/limits-wrapper.de.html`](docs/limits-wrapper.de.html)
 - Glossar (EN): [`docs/glossary.html`](docs/glossary.html)
 - Glossar (DE): [`docs/glossar.de.html`](docs/glossar.de.html)
 - Installation Einsteiger (EN): [`docs/install-beginner.html`](docs/install-beginner.html)
@@ -198,7 +232,7 @@ src/
 └── Module/
     ├── auditstream.py
     ├── compliance_scan.py
-    ├── rendering_pipeline.py
+    ├── rendering_pipeline_v192.py
     └── rendering_utils.py
 
 tests/

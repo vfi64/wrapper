@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Runtime Scenarios | Comm-SCI-Control Wrapper</title>
+    <meta
+      name="description"
+      content="Operational scenarios where wrapper runtime adds measurable value."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/landing.css" />
+  </head>
+  <body>
+    <div class="bg-glow bg-glow-a" aria-hidden="true"></div>
+    <div class="bg-glow bg-glow-b" aria-hidden="true"></div>
+    <header class="topbar">
+      <a class="brand" href="index.html#top">
+        <span class="brand-mark">CSC</span>
+        <span class="brand-text">Wrapper</span>
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="index.html">Home</a>
+        <a href="why-wrapper.html">Why Wrapper</a>
+        <a href="limits-wrapper.html">Limits</a>
+        <a href="install-pro.html">Install</a>
+      </nav>
+      <div class="topbar-actions">
+        <div class="lang-switch" aria-label="Language switch">
+          <a class="lang-link is-active" href="runtime-scenarios.html">EN</a>
+          <span aria-hidden="true">|</span>
+          <a class="lang-link" href="runtime-scenarios.de.html">DE</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero reveal">
+        <p class="eyebrow">Runtime scenarios</p>
+        <h1>
+          Where wrapper execution is worth the overhead.
+          <span>Use runtime when you need reproducible governance behavior.</span>
+        </h1>
+      </section>
+
+      <section class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">JSON-only vs runtime</p>
+          <h2>Decision guideline</h2>
+        </div>
+        <div class="matrix">
+          <article class="matrix-card reveal">
+            <h3>JSON-only is often enough</h3>
+            <p>Early exploration, conceptual validation, low-stakes interactive tests.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Wrapper runtime preferred</h3>
+            <p>Reproducibility, deterministic command behavior, diagnostics, audit trail requirements.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Model comparison</h3>
+            <p>Stable governance state across providers for fair output comparison.</p>
+          </article>
+          <article class="matrix-card reveal">
+            <h3>Long-session control</h3>
+            <p>When drift risk must stay visible and traceable.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Install path stays central</p>
+          <h2>Start quickly, then scale rigor</h2>
+        </div>
+        <div class="hero-actions">
+          <a class="btn btn-solid" href="install-beginner.html">Beginner install</a>
+          <a class="btn btn-soft" href="install-pro.html">Professional install</a>
+          <a class="btn btn-soft" href="INSTALL_SYNC.md">Install + sync runbook</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Comm-SCI-Control Wrapper Docs · Runtime Scenarios</p>
+    </footer>
+    <script src="assets/landing.js"></script>
+  </body>
+</html>

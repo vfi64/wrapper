@@ -20,6 +20,7 @@ The wrapper is intentionally strict on command tokens and fail-soft on optional 
 
 - Public ruleset and concepts: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
 - Runtime implementation: [vfi64/wrapper](https://github.com/vfi64/wrapper)
+- Public wrapper website: [vfi64.github.io/wrapper](https://vfi64.github.io/wrapper/)
 - This repository: staging and integration track for wrapper changes
 
 Practical rule:

@@ -81,6 +81,7 @@
       "items": [
         "Wrapper concept DOI: 10.5281/zenodo.18445672",
         "Ruleset concept DOI: 10.5281/zenodo.17928357",
+        "Wrapper website: https://vfi64.github.io/wrapper/",
         "Ruleset website: https://vfi64.github.io/Comm-SCI-Control/",
         "License: Apache-2.0 (see LICENSE)",
         "Maintainer: Volker Fickert"

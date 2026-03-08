@@ -11,7 +11,7 @@
       "api_key_env": "OPENROUTER_API_KEY",
       "api_key_plain": "",
       "api_key_enc": "",
-      "default_model": "openrouter/test-model",
+      "default_model": "anthropic/claude-sonnet-4.6",
       "app_referrer": "",
       "app_title": "Comm-SCI Desktop"
     },
@@ -25,9 +25,9 @@
   "rate_limit_per_minute": 30,
   "rate_limit_per_hour": 120,
   "panel_geom": {
-    "x": 1128,
+    "x": 1129,
     "y": 34,
-    "width": 384,
+    "width": 383,
     "height": 948
   },
   "rate_limit_scopes": {

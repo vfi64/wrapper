@@ -5,7 +5,7 @@ Default-Regelwerk zur Laufzeit: `JSON/Comm-SCI-v20.2.0.json`
 
 ## 1. Zweck
 
-Dieses Repository enthaelt die Runtime-Implementierung der Comm-SCI-Governance.
+Dieses Repository enthaelt die Wrapper-Runtime-Implementierung der Comm-SCI-Governance.
 Das oeffentliche Regelwerk definiert die Normen, der Wrapper setzt diese operativ durch:
 
 - deterministisches Command-Routing
@@ -20,6 +20,7 @@ Der Wrapper ist bewusst strikt bei Command-Tokens und fail-soft bei optionalen M
 
 - Oeffentliches Regelwerk und Konzepte: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
 - Runtime-Implementierung: [vfi64/wrapper](https://github.com/vfi64/wrapper)
+- Oeffentliche Wrapper-Webseite: [vfi64.github.io/wrapper](https://vfi64.github.io/wrapper/)
 - Dieses Repository: Staging- und Integrationslinie fuer Wrapper-Weiterentwicklung
 
 Praxisregel:

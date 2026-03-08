@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Comm-SCI-Control Wrapper | Runtime</title>
+    <title>Comm-SCI-Control Wrapper | Wrapper Runtime</title>
     <meta
       name="description"
-      content="Public wrapper/runtime track for deterministic Comm-SCI governance execution, QA contracts, and bilingual documentation."
+      content="Wrapper/runtime track for deterministic Comm-SCI governance execution, QA contracts, and bilingual documentation."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,7 +27,10 @@
       </a>
       <nav class="nav-links" aria-label="Main navigation">
         <a href="#value">Value</a>
+        <a href="why-wrapper.html">Why Wrapper</a>
         <a href="#fit">Fit</a>
+        <a href="runtime-scenarios.html">Runtime</a>
+        <a href="limits-wrapper.html">Limits</a>
         <a href="#usecases">Use cases</a>
         <a href="#pipeline">Pipeline</a>
         <a href="#terms">Terms</a>
@@ -54,7 +57,7 @@
           <span>Commands, contracts, and quality gates stay explicit and auditable.</span>
         </h1>
         <p class="hero-copy">
-          This wrapper project line focuses on robust runtime operation for Comm-SCI:
+          This wrapper project line focuses on robust wrapper operation for Comm-SCI:
           strict command routing, SCI state handling, QC and verification enforcement,
           panel-driven operations, and bilingual project documentation.
           The core design is LLM-agnostic: the same governance layer can be applied
@@ -63,6 +66,7 @@
         <div class="hero-actions">
           <a class="btn btn-solid" href="../README.md">Readme (EN)</a>
           <a class="btn btn-soft" href="HANDBOOK.md">Handbook (EN)</a>
+          <a class="btn btn-soft" href="https://vfi64.github.io/wrapper/">Public wrapper website</a>
           <a class="btn btn-soft" href="https://vfi64.github.io/Comm-SCI-Control/">Public ruleset website</a>
         </div>
         <div class="hero-metrics">
@@ -120,6 +124,21 @@
             <h3>LLM-agnostic uniqueness</h3>
             <p>The same rule and scoring logic persists across provider switches, enabling fair model comparison and stable <a href="glossary.html#regression-tests">regression</a> baselines.</p>
           </article>
+        </div>
+      </section>
+
+      <section class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Control-first guidance</p>
+          <h2>Dedicated pages for motivation, scenarios, and limits</h2>
+        </div>
+        <p class="hero-copy">
+          The landing page keeps architecture and installation visible. Additional pages provide didactic entry points for why the wrapper exists, when runtime is worth it, and where hard limits remain.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-solid" href="why-wrapper.html">Why Wrapper</a>
+          <a class="btn btn-soft" href="runtime-scenarios.html">Runtime Scenarios</a>
+          <a class="btn btn-soft" href="limits-wrapper.html">Limits</a>
         </div>
       </section>
 
@@ -214,7 +233,7 @@
         <div class="doc-grid">
           <a class="link-card reveal" href="glossary.html">
             <h3>Glossary (EN)</h3>
-            <p><a href="glossary.html#sci-orchestration">SCI orchestration</a>, <a href="glossary.html#pending-selection">pending selection</a>, <a href="glossary.html#runtime-contract">runtime contract</a>, <a href="glossary.html#drift">drift</a>, <a href="glossary.html#csc">CSC</a>, <a href="glossary.html#qc-footer">QC footer</a>, <a href="glossary.html#verification-gates">verification gates</a>, and more.</p>
+            <p>SCI orchestration, pending selection, runtime contract, drift, CSC, QC footer, verification gates, and more.</p>
           </a>
           <a class="link-card reveal" href="glossar.de.html">
             <h3>Glossar (DE)</h3>
@@ -233,20 +252,20 @@
           <h2>Main-page quick path plus separate detail pages for beginners and professionals</h2>
         </div>
         <div class="card-grid">
-          <article class="info-card reveal">
+          <a class="link-card reveal" href="#install-quickstart">
             <h3>Quick path on landing page</h3>
             <p>Core setup remains visible on the homepage so first-time users can start without navigation friction.</p>
-          </article>
-          <article class="info-card reveal">
+          </a>
+          <a class="link-card reveal" href="install-beginner.html">
             <h3>Beginner detail page</h3>
             <p>Includes link, download, unpack, prerequisites, installation, startup, API-key dialog (plaintext/encrypted), passphrase guidance, confidentiality, and cost notes.</p>
-          </article>
-          <article class="info-card reveal">
+          </a>
+          <a class="link-card reveal" href="install-pro.html">
             <h3>Professional detail page</h3>
             <p>Includes reproducible setup, test/diagnostics paths, provider validation, and explicit policy for encrypted vs plaintext API-key operation.</p>
-          </article>
+          </a>
         </div>
-        <table class="doi-table" style="margin-top:0.95rem;">
+        <table id="install-quickstart" class="doi-table" style="margin-top:0.95rem;">
           <thead>
             <tr>
               <th>On-page quickstart</th>
@@ -316,7 +335,7 @@
         <div class="doc-grid">
           <a class="link-card reveal" href="HANDBOOK.md">
             <h3>Handbook (EN)</h3>
-            <p>Operational model, command discipline, <a href="glossary.html#language-policy">language policy</a>, and governance playbook.</p>
+            <p>Operational model, command discipline, language policy, and governance playbook.</p>
           </a>
           <a class="link-card reveal" href="HANDBOOK.de.md">
             <h3>Handbuch (DE)</h3>
@@ -349,6 +368,18 @@
           <a class="link-card reveal" href="glossary.html">
             <h3>Terminology glossary</h3>
             <p>Didactic explanation of wrapper concepts and governance vocabulary.</p>
+          </a>
+          <a class="link-card reveal" href="why-wrapper.html">
+            <h3>Why Wrapper</h3>
+            <p>Purpose, design rationale, and control-first positioning.</p>
+          </a>
+          <a class="link-card reveal" href="runtime-scenarios.html">
+            <h3>Runtime scenarios</h3>
+            <p>When JSON-only is enough and when runtime execution is preferable.</p>
+          </a>
+          <a class="link-card reveal" href="limits-wrapper.html">
+            <h3>Wrapper limits</h3>
+            <p>Operational trade-offs and explicit non-guarantees.</p>
           </a>
           <a class="link-card reveal" href="manual-test-checklist.md">
             <h3>Manual test checklist</h3>
@@ -389,7 +420,8 @@
     <footer class="footer">
       <p>
         Comm-SCI-Control wrapper docs. Last updated: March 6, 2026.
-        Public project website: <a href="https://vfi64.github.io/wrapper/">vfi64.github.io/wrapper</a>
+        Public wrapper website: <a href="https://vfi64.github.io/wrapper/">vfi64.github.io/wrapper</a> ·
+        Public ruleset website: <a href="https://vfi64.github.io/Comm-SCI-Control/">vfi64.github.io/Comm-SCI-Control</a>
       </p>
     </footer>
 
