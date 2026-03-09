@@ -3918,9 +3918,19 @@ def test_submit_cgi_feedback_repeat_reuses_last_content_prompt_and_injects_feedb
     assert any("[CGI Feedback]" in p for p in replay_prompts)
     assert any("0,0,0" in p for p in replay_prompts)
     assert any("[CGI One-Shot Rewrite Constraints]" in p for p in replay_prompts)
-    assert any("Nur fuer diese naechste Antwort anwenden" in p for p in replay_prompts)
-    assert any("Behandle dies als Ueberarbeitung, nicht als Paraphrase" in p for p in replay_prompts)
-    assert any("Clarity-QC ist bereits 3" in p for p in replay_prompts)
+    assert any(
+        ("Nur fuer diese naechste Antwort anwenden" in p) or ("Apply only to this next answer" in p)
+        for p in replay_prompts
+    )
+    assert any(
+        ("Behandle dies als Ueberarbeitung, nicht als Paraphrase" in p)
+        or ("Treat this as a rewrite, not a paraphrase" in p)
+        for p in replay_prompts
+    )
+    assert any(
+        ("Clarity-QC ist bereits 3" in p) or ("Clarity QC already at 3" in p)
+        for p in replay_prompts
+    )
 
     nested = res.get("response")
     assert isinstance(nested, dict)
