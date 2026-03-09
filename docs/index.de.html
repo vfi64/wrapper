@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Comm-SCI-Control Wrapper | Wrapper Runtime</title>
+    <title>Wrapper | Wrapper-Laufzeit</title>
     <meta
       name="description"
-      content="Wrapper-Runtime fuer deterministische Comm-SCI-Governance-Ausfuehrung, QA-Contracts und zweisprachige Projektdokumentation."
+      content="Private Wrapper-Runtime fuer deterministische Comm-SCI-Governance-Ausfuehrung, QA-Contracts und zweisprachige Projektdokumentation."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,16 +27,17 @@
       </a>
       <nav class="nav-links" aria-label="Hauptnavigation">
         <a href="#nutzen">Nutzen</a>
-        <a href="why-wrapper.de.html">Why Wrapper</a>
+        <a href="why-wrapper.de.html">Warum?</a>
         <a href="#eignung">Eignung</a>
-        <a href="runtime-scenarios.de.html">Runtime</a>
-        <a href="limits-wrapper.de.html">Limits</a>
+        <a href="runtime-scenarios.de.html">Laufzeit</a>
+        <a href="limits-wrapper.de.html">Grenzen</a>
         <a href="#einsatz">Einsatz</a>
         <a href="#pipeline">Pipeline</a>
         <a href="#begriffe">Begriffe</a>
+        <a href="#seitenbaum">Seitenbaum</a>
         <a href="#install">Installation</a>
-        <a href="#screens">Screens</a>
-        <a href="#docs">Docs</a>
+        <a href="#screens">Screenshots</a>
+        <a href="#docs">Dokumente</a>
         <a href="#doi">DOI</a>
       </nav>
       <div class="topbar-actions">
@@ -51,20 +52,50 @@
 
     <main id="top">
       <section class="hero reveal">
-        <p class="eyebrow">Comm-SCI-Control Wrapper Runtime</p>
+        <p class="eyebrow">Wrapper Laufzeit</p>
         <h1>
           Deterministische Governance-Ausfuehrung fuer produktive Wrapper.
           <span>Kommandos, Contracts und Qualitaetsgates bleiben explizit und auditierbar.</span>
         </h1>
         <p class="hero-copy">
-          Diese Wrapper-Projektlinie fokussiert den robusten Wrapper-Betrieb fuer Comm-SCI:
+          Diese Projektlinie fokussiert den robusten Wrapper-Betrieb fuer Comm-SCI:
           striktes Command-Routing, SCI-State-Handling, QC- und Verification-Durchsetzung,
           panelgestuetzte Bedienung und zweisprachige Projektdokumentation.
           Das System ist LLM-agnostisch: dieselben Governance-Regeln koennen gegenueber
           mehreren Providern und Modellen konsistent angewendet werden.
         </p>
+        <div class="hero-showcase reveal" aria-label="Einstiegs-Screenshots">
+          <button
+            class="hero-shot"
+            type="button"
+            data-lightbox-image="images/01-Wrapper-20-2-2-Standard-Gemini-20-flash.png"
+            data-lightbox-alt="Wrapper-Ausgabe im Standard-Profil mit Governance-Markern"
+            data-lightbox-caption="Standard-Profil-Ausgabe mit Strict-Overlay und sichtbaren Governance-Markern."
+          >
+            <img
+              src="images/01-Wrapper-20-2-2-Standard-Gemini-20-flash.png"
+              alt="Wrapper-Ausgabe im Standard-Profil mit Governance-Markern"
+              loading="lazy"
+            />
+            <span>Standard-Profil-Ausgabe</span>
+          </button>
+          <button
+            class="hero-shot"
+            type="button"
+            data-lightbox-image="images/02-Wrapper-20-2-2-Standard-Gemini-20-flash.png"
+            data-lightbox-alt="Wrapper-Panel und Governance-Steuerung mit aktiven Runtime-Modulen"
+            data-lightbox-caption="Wrapper-Panel mit aktiven Governance-Modulen und Steuerbereichen."
+          >
+            <img
+              src="images/02-Wrapper-20-2-2-Standard-Gemini-20-flash.png"
+              alt="Wrapper-Panel und Governance-Steuerung mit aktiven Runtime-Modulen"
+              loading="lazy"
+            />
+            <span>Panel und Steuerung</span>
+          </button>
+        </div>
         <div class="hero-actions">
-          <a class="btn btn-solid" href="../README.de.md">README (DE)</a>
+          <a class="btn btn-solid" href="https://github.com/vfi64/wrapper/blob/main/README.de.md" target="_blank" rel="noreferrer">README (DE)</a>
           <a class="btn btn-soft" href="HANDBOOK.de.md">Handbuch (DE)</a>
           <a class="btn btn-soft" href="https://vfi64.github.io/wrapper/">Oeffentliche Wrapper-Webseite</a>
           <a class="btn btn-soft" href="https://vfi64.github.io/Comm-SCI-Control/">Oeffentliche Regelwerk-Webseite</a>
@@ -72,15 +103,15 @@
         <div class="hero-metrics">
           <article class="metric-card reveal">
             <p class="metric-value" data-count="6" data-animate-from="0">6</p>
-            <p class="metric-label">Execution-Phasen (P0-P5)</p>
+            <p class="metric-label"><a class="metric-link" href="#pipeline">Execution-Phasen (P0-P5)</a></p>
           </article>
           <article class="metric-card reveal">
             <p class="metric-value" data-count="8" data-animate-from="0">8</p>
-            <p class="metric-label">SCI-Varianten (A-H)</p>
+            <p class="metric-label"><a class="metric-link" href="glossar.de.html#sci-varianten">SCI-Varianten (A-H)</a></p>
           </article>
           <article class="metric-card reveal">
             <p class="metric-value" data-count="400" data-animate-from="350">400</p>
-            <p class="metric-label">Contract- und Regressionstests</p>
+            <p class="metric-label"><a class="metric-link" href="glossar.de.html#contract-tests">Contract- und Regressionstests</a></p>
           </article>
         </div>
       </section>
@@ -136,9 +167,9 @@
           Die Startseite behaelt Architektur und Installation sichtbar. Zusaetzliche Seiten liefern didaktische Einstiege: warum der Wrapper existiert, wann Runtime sich lohnt und wo harte Grenzen liegen.
         </p>
         <div class="hero-actions">
-          <a class="btn btn-solid" href="why-wrapper.de.html">Why Wrapper</a>
-          <a class="btn btn-soft" href="runtime-scenarios.de.html">Runtime Scenarios</a>
-          <a class="btn btn-soft" href="limits-wrapper.de.html">Limits</a>
+          <a class="btn btn-solid" href="why-wrapper.de.html">Warum Wrapper</a>
+          <a class="btn btn-soft" href="runtime-scenarios.de.html">Laufzeit-Szenarien</a>
+          <a class="btn btn-soft" href="limits-wrapper.de.html">Grenzen</a>
         </div>
       </section>
 
@@ -236,13 +267,48 @@
             <p>SCI-Orchestrierung, Pending-Auswahl, Runtime-Contract, Drift, CSC, QC-Footer, Verification Gates und weitere Begriffe mit einfachen Erklaerungen.</p>
           </a>
           <a class="link-card reveal" href="glossary.html">
-            <h3>Glossary (EN)</h3>
+            <h3>Glossar (EN)</h3>
             <p>English counterpart with aligned terminology and governance context.</p>
           </a>
           <a class="link-card reveal" href="glossar.de.html#sci-varianten">
             <h3>SCI A-H mit Beispielen</h3>
             <p>Jede Variante wird mit typischen Aufgabenarten und Einsatzempfehlungen erklaert.</p>
           </a>
+        </div>
+      </section>
+
+      <section id="seitenbaum" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Orientierung</p>
+          <h2>Seitenbaum fuer schnelle Navigation</h2>
+        </div>
+        <div class="doc-grid site-map-grid">
+          <article class="info-card reveal">
+            <h3>Kernseiten</h3>
+            <ul class="site-tree">
+              <li><a href="index.de.html">Startseite</a></li>
+              <li><a href="why-wrapper.de.html">Warum Wrapper</a></li>
+              <li><a href="runtime-scenarios.de.html">Laufzeit-Szenarien</a></li>
+              <li><a href="limits-wrapper.de.html">Grenzen</a></li>
+            </ul>
+          </article>
+          <article class="info-card reveal">
+            <h3>Installation und Betrieb</h3>
+            <ul class="site-tree">
+              <li><a href="install-beginner.de.html">Installation Einsteiger</a></li>
+              <li><a href="install-pro.de.html">Installation Profis</a></li>
+              <li><a href="INSTALL_SYNC.de.md">Installations-/Sync-Runbook</a></li>
+              <li><a href="manual-test-checklist.md">Manual-Test-Checkliste</a></li>
+            </ul>
+          </article>
+          <article class="info-card reveal">
+            <h3>Begriffe und Struktur</h3>
+            <ul class="site-tree">
+              <li><a href="glossar.de.html">Glossar (DE)</a></li>
+              <li><a href="glossary.html">Glossar (EN)</a></li>
+              <li><a href="HANDBOOK.de.md">Handbuch</a></li>
+            </ul>
+          </article>
         </div>
       </section>
 
@@ -300,27 +366,69 @@
           <h2>Panel- und Wrapper-Screenshots</h2>
         </div>
         <div class="shot-grid">
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-1.png"
+            data-lightbox-alt="Wrapper UI Screenshot 1"
+            data-lightbox-caption="Hauptdialog mit deterministischer Antwortstruktur."
+          >
             <img src="images/wrapper-ui-1.png" alt="Wrapper UI Screenshot 1" loading="lazy" />
             <figcaption>Hauptdialog mit deterministischer Antwortstruktur.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-2.png"
+            data-lightbox-alt="Wrapper UI Screenshot 2"
+            data-lightbox-caption="Panel-Steuerung fuer Provider-, Modell- und Spracheinstellungen."
+          >
             <img src="images/wrapper-ui-2.png" alt="Wrapper UI Screenshot 2" loading="lazy" />
             <figcaption>Panel-Steuerung fuer Provider-, Modell- und Spracheinstellungen.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-3.png"
+            data-lightbox-alt="Wrapper UI Screenshot 3"
+            data-lightbox-caption="Governance-Command-Sektionen und operative Schalter."
+          >
             <img src="images/wrapper-ui-3.png" alt="Wrapper UI Screenshot 3" loading="lazy" />
             <figcaption>Governance-Command-Sektionen und operative Schalter.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-4.png"
+            data-lightbox-alt="Wrapper UI Screenshot 4"
+            data-lightbox-caption="Comm-Status- und Kontrollansichten fuer Runtime-Verifikation."
+          >
             <img src="images/wrapper-ui-4.png" alt="Wrapper UI Screenshot 4" loading="lazy" />
             <figcaption>Comm-Status- und Kontrollansichten fuer Runtime-Verifikation.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-5.png"
+            data-lightbox-alt="Wrapper UI Screenshot 5"
+            data-lightbox-caption="Audit-orientierte Ausgabe mit expliziten Strukturmarkern."
+          >
             <img src="images/wrapper-ui-5.png" alt="Wrapper UI Screenshot 5" loading="lazy" />
             <figcaption>Audit-orientierte Ausgabe mit expliziten Strukturmarkern.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-6.png"
+            data-lightbox-alt="Wrapper UI Screenshot 6"
+            data-lightbox-caption="Panel-Diagnostik und Integration manueller Testlaeufe."
+          >
             <img src="images/wrapper-ui-6.png" alt="Wrapper UI Screenshot 6" loading="lazy" />
             <figcaption>Panel-Diagnostik und Integration manueller Testlaeufe.</figcaption>
           </figure>
@@ -330,7 +438,7 @@
       <section id="docs" class="section reveal">
         <div class="section-head">
           <p class="eyebrow">Projektdokumentation</p>
-          <h2>Zweisprachige Docs fuer Betrieb und Architektur</h2>
+          <h2>Zweisprachige Dokumente fuer Betrieb und Architektur</h2>
         </div>
         <div class="doc-grid">
           <a class="link-card reveal" href="HANDBOOK.de.md">
@@ -341,11 +449,11 @@
             <h3>Handbook (EN)</h3>
             <p>Englische Referenz fuer Architektur, Ablauflogik und Reproduzierbarkeit.</p>
           </a>
-          <a class="link-card reveal" href="../README.de.md">
+          <a class="link-card reveal" href="https://github.com/vfi64/wrapper/blob/main/README.de.md" target="_blank" rel="noreferrer">
             <h3>README (DE)</h3>
             <p>Schneller Einstieg, Testkommandos, Repository-Map und DOI-Strategie.</p>
           </a>
-          <a class="link-card reveal" href="../README.md">
+          <a class="link-card reveal" href="https://github.com/vfi64/wrapper/blob/main/README.md" target="_blank" rel="noreferrer">
             <h3>README (EN)</h3>
             <p>English onboarding and operational command references.</p>
           </a>
@@ -370,11 +478,11 @@
             <p>Zentrale Wrapper-Begriffe mit Bedeutung und Praxisbezug.</p>
           </a>
           <a class="link-card reveal" href="why-wrapper.de.html">
-            <h3>Why Wrapper</h3>
+            <h3>Warum Wrapper</h3>
             <p>Zweck, Design-Rationale und kontrollorientierte Positionierung.</p>
           </a>
           <a class="link-card reveal" href="runtime-scenarios.de.html">
-            <h3>Runtime Scenarios</h3>
+            <h3>Laufzeit-Szenarien</h3>
             <p>Wann JSON-only reicht und wann Runtime-Ausfuehrung vorzuziehen ist.</p>
           </a>
           <a class="link-card reveal" href="limits-wrapper.de.html">
@@ -419,7 +527,8 @@
 
     <footer class="footer">
       <p>
-        Comm-SCI-Control Wrapper Docs. Letzte Aktualisierung: 6. Maerz 2026.
+        Wrapper-Dokumentation. Letzte Aktualisierung: 6. Maerz 2026.
+        Glossar: <a href="glossar.de.html">DE</a> / <a href="glossary.html">EN</a> ·
         Oeffentliche Wrapper-Webseite: <a href="https://vfi64.github.io/wrapper/">vfi64.github.io/wrapper</a> ·
         Oeffentliche Regelwerk-Webseite: <a href="https://vfi64.github.io/Comm-SCI-Control/">vfi64.github.io/Comm-SCI-Control</a>
       </p>

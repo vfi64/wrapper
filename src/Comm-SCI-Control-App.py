@@ -726,11 +726,13 @@ def _safe_sha256(s: str) -> str:
         return ""
 
 # Default ruleset location preference (latest first):
-#   1) ./JSON/Comm-SCI-v20.2.1.json
-#   2) ./JSON/Comm-SCI-v20.2.0.json
-#   3) ./JSON/Comm-SCI-v20.1.0.json
-#   4) legacy fallbacks (v20.0.3 / v20.0.2)
+#   1) ./JSON/Comm-SCI-v20.2.2.json
+#   2) ./JSON/Comm-SCI-v20.2.1.json
+#   3) ./JSON/Comm-SCI-v20.2.0.json
+#   4) ./JSON/Comm-SCI-v20.1.0.json
+#   5) legacy fallbacks (v20.0.3 / v20.0.2)
 _DEFAULT_RULESET_CANDIDATES = [
+    'Comm-SCI-v20.2.2.json',
     'Comm-SCI-v20.2.1.json',
     'Comm-SCI-v20.2.0.json',
     'Comm-SCI-v20.1.0.json',
@@ -751,7 +753,7 @@ if not DEFAULT_JSON:
             break
 if not DEFAULT_JSON:
     # Final fallback path (may still fail later with clear file-not-found log).
-    DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.2.1.json')
+    DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.2.2.json')
 
 # Config/keys location: ./Config/
 CONFIG_FILENAME = 'Comm-SCI-Config.json'
@@ -10541,7 +10543,7 @@ class CSCRefiner:
             # Harte Sperre: Config-Datei ist KEIN Ruleset.
             if base.lower() == "comm-sci-config.json" or base.lower().endswith("-config.json") or base.lower().endswith("config.json"):
                 self._ui_add_system_message(
-                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.2.1.json)."
+                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.2.2.json)."
                 )
                 start_dir = os.path.dirname(new_file)
                 continue  # retry once

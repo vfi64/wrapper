@@ -19,15 +19,15 @@
       "default_model": "meta-llama/Llama-3.3-70B-Instruct"
     }
   },
-  "answer_language": "de",
+  "answer_language": "en",
   "language_policy_mode": "production",
   "rate_limit_enabled": true,
   "rate_limit_per_minute": 30,
   "rate_limit_per_hour": 120,
   "panel_geom": {
-    "x": 1129,
+    "x": 1119,
     "y": 34,
-    "width": 383,
+    "width": 393,
     "height": 948
   },
   "rate_limit_scopes": {

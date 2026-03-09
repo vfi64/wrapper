@@ -53,4 +53,4 @@ Sicherheitsmechanismen:
 ## 3) Release-Gating (spaeterer Schritt)
 
 In dieser Phase kein Push auf `vfi64/wrapper`.
-Erst private Verifikation abschliessen, dann lokal kopieren, dann Bezeichner/Links auf public-Kontext anpassen, dann veroeffentlichen.
+Erst Vorab-Verifikation im Quell-Repo abschliessen, dann lokal kopieren, dann Bezeichner/Links auf public-Kontext anpassen, dann veroeffentlichen.

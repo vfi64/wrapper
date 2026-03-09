@@ -94,7 +94,7 @@ if not JSON_PATH.exists():
 if not JSON_PATH.exists():
     JSON_PATH = ROOT / 'JSON' / 'Comm-SCI-v20.1.0.json'
 if not JSON_PATH.exists():
-    JSON_PATH = ROOT / 'JSON' / 'Comm-SCI-v20.2.0.json'
+    JSON_PATH = ROOT / 'JSON' / 'Comm-SCI-v20.2.2.json'
 if not JSON_PATH.exists():
     JSON_PATH = ROOT / 'Comm-SCI-v20.0.3.json'
 if not JSON_PATH.exists():
@@ -102,7 +102,7 @@ if not JSON_PATH.exists():
 if not JSON_PATH.exists():
     JSON_PATH = ROOT / 'Comm-SCI-v20.1.0.json'
 if not JSON_PATH.exists():
-    JSON_PATH = ROOT / 'Comm-SCI-v20.2.0.json'
+    JSON_PATH = ROOT / 'Comm-SCI-v20.2.2.json'
 
 
 def load_fix_module():
@@ -2114,12 +2114,12 @@ def test_startup_default_provider_and_model_are_gemini():
     assert getattr(cfg, 'get_provider_model', lambda _p=None: '')('gemini') == 'gemini-2.0-flash'
 
 
-def test_default_ruleset_prefers_v20_2_1_when_available():
+def test_default_ruleset_prefers_v20_2_2_when_available():
     mod = load_fix_module()
     default_json = Path(str(getattr(mod, 'DEFAULT_JSON', '') or ''))
-    target = ROOT / 'JSON' / 'Comm-SCI-v20.2.1.json'
+    target = ROOT / 'JSON' / 'Comm-SCI-v20.2.2.json'
     if target.exists():
-        assert default_json.name == 'Comm-SCI-v20.2.1.json'
+        assert default_json.name == 'Comm-SCI-v20.2.2.json'
 
 def test_can_switch_back_to_gemini_after_other_provider():
     """Regression: switching back to gemini must not be blocked by a broken no-op guard."""

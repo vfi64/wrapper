@@ -2,8 +2,9 @@
 
 Deterministic Python runtime for Comm-SCI governance workflows.
 
-Current app version: **1.0.0**  
-Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.2.1.json`**
+Current app version line: **1.0.x (current: 1.0.11)**  
+Latest wrapper release: **https://github.com/vfi64/wrapper/releases/latest**  
+Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.2.2.json`**
 
 ## Positioning
 
@@ -116,7 +117,7 @@ bash scripts/setup_venv.sh --dry-run
 bash scripts/setup_venv.sh --python python3.12 --venv .venc --extras local-dev
 ```
 
-2. Dry-run sync from wrapper repo to local `vfi64/wrapper` clone:
+2. Dry-run sync from source repo to local `vfi64/wrapper` clone:
 
 ```bash
 bash scripts/sync_to_wrapper_local.sh --target /path/to/wrapper

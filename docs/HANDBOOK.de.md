@@ -1,11 +1,11 @@
-# Comm-SCI-Control Wrapper Handbuch (DE)
+# Comm-SCI-Control-Private Handbuch (DE)
 
-Versionsbasis: Wrapper `1.0.0`  
-Default-Regelwerk zur Laufzeit: `JSON/Comm-SCI-v20.2.0.json`
+Versionsbasis: Wrapper `1.0.x` (aktuell: `1.0.11`)  
+Default-Regelwerk zur Laufzeit: `JSON/Comm-SCI-v20.2.2.json`
 
 ## 1. Zweck
 
-Dieses Repository enthaelt die Wrapper-Runtime-Implementierung der Comm-SCI-Governance.
+Dieses Repository enthaelt die Runtime-Implementierung der Comm-SCI-Governance.
 Das oeffentliche Regelwerk definiert die Normen, der Wrapper setzt diese operativ durch:
 
 - deterministisches Command-Routing

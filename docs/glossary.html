@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Comm-SCI-Control Wrapper | Glossary (EN)</title>
+    <title>Wrapper | Glossary (EN)</title>
     <meta
       name="description"
       content="Didactic glossary for wrapper terminology, SCI variants A-H, and QC matrix value meanings."
@@ -68,36 +68,47 @@
             </tr>
           </thead>
           <tbody>
-            <tr id="sci"><td>SCI</td><td>Structured answer mode with visible trace steps.</td><td>Improves transparency of reasoning output.</td></tr>
-            <tr id="sci-orchestration"><td>SCI orchestration</td><td>Control logic for SCI activation, variant selection, and trace enforcement.</td><td>Keeps SCI behavior deterministic.</td></tr>
-            <tr id="pending-selection"><td>Pending selection</td><td>Interim state after `SCI on` until A-H is selected.</td><td>Prevents accidental variant switching.</td></tr>
-            <tr id="trace-step-requirements"><td>Trace-step requirements</td><td>Mandatory SCI steps that must appear in answers.</td><td>Enables contract validation and reproducibility.</td></tr>
-            <tr id="recurse-behavior"><td>Recurse behavior</td><td>Temporary deepening path via `SCI recurse`.</td><td>Allows focused deep dives without losing main context.</td></tr>
-            <tr id="sci-variants-term"><td>SCI variants</td><td>A-H method profiles for different reasoning styles.</td><td>Matches reasoning structure to task type.</td></tr>
-            <tr id="self-debunking"><td>Self-Debunking</td><td>Required block that challenges answer weaknesses.</td><td>Reduces overconfidence and blind spots.</td></tr>
-            <tr id="qc-matrix-term"><td>QC matrix</td><td>Quality dimensions with target/actual scoring.</td><td>Makes response quality explicit and comparable.</td></tr>
-            <tr id="qc-footer"><td>QC footer</td><td>Output line that shows QC values (and deltas when applicable).</td><td>Provides fast per-answer quality inspection.</td></tr>
-            <tr id="verification-gates"><td>Verification gates</td><td>Rules for strong/risky claims requiring explicit verification route.</td><td>Protects against unsupported certainty.</td></tr>
-            <tr id="runtime-contract"><td>Runtime contract</td><td>Technical contract for allowed output structure.</td><td>Enforces deterministic behavior.</td></tr>
-            <tr id="drift"><td>Drift</td><td>Deviation from expected governance behavior over time.</td><td>Early warning for quality degradation.</td></tr>
-            <tr id="module-status"><td>Module status</td><td>Visible health/status of key wrapper modules.</td><td>Supports diagnostics and maintenance.</td></tr>
-            <tr id="contract-tests"><td>Contract tests</td><td>Tests for formal behavioral guarantees.</td><td>Protects critical interfaces and command logic.</td></tr>
-            <tr id="regression-tests"><td>Regression tests</td><td>Tests for previously fixed failure patterns.</td><td>Prevents reintroduction of old bugs.</td></tr>
-            <tr id="overlay"><td>Overlay</td><td>Additional mode layer above profile (for example Strict/Explore).</td><td>Adjusts behavior without full profile switch.</td></tr>
-            <tr id="strict"><td>Strict</td><td>Mode with stronger evidence and consistency discipline.</td><td>Useful for high-stakes precision output.</td></tr>
-            <tr id="explore"><td>Explore</td><td>Mode with higher tolerance for ideation and hypotheses.</td><td>Useful for brainstorming, not for hard claims.</td></tr>
-            <tr id="color-tags"><td>Color tags</td><td>[GREEN]/[YELLOW]/[RED] evidence confidence markers.</td><td>Signals confidence level at reading time.</td></tr>
-            <tr id="language-policy"><td>Language policy</td><td>Language behavior mode (`production`/`benchmark`).</td><td>Separates user operation from comparison experiments.</td></tr>
-            <tr id="cgi"><td>CGI</td><td>Cognitive Gain Indicator user-feedback signal.</td><td>Tracks perceived clarity/insight/efficiency gain.</td></tr>
-            <tr id="qc-overrides"><td>QC overrides</td><td>Temporary manual deviations from profile QC targets.</td><td>Allows controlled adaptation for special cases.</td></tr>
-            <tr id="compliance-prerequisites"><td>Compliance prerequisites</td><td>Conditions checked before output is accepted.</td><td>Prevents non-compliant responses.</td></tr>
-            <tr id="csc"><td>CSC</td><td>Comm-SCI-Control governance framework.</td><td>Defines rule-based human-LLM interaction discipline.</td></tr>
-            <tr id="control-layer-block"><td>Control-layer block</td><td>Explicit block output on hard contract violations.</td><td>Stops unsafe/non-conformant responses.</td></tr>
-            <tr id="timestamp"><td>Timestamp</td><td>Output time metadata in rendered response.</td><td>Important for audit timeline and traceability.</td></tr>
             <tr id="anchor"><td>Anchor</td><td>State snapshot refresh command (`Comm Anchor`).</td><td>Stabilizes long-session context.</td></tr>
-            <tr id="audit"><td>Audit</td><td>Compliance scan of prior responses.</td><td>Enables systematic quality assurance.</td></tr>
+            <tr id="anchor-snapshot"><td>Anchor snapshot</td><td>Compact state excerpt produced by `Comm Anchor`.</td><td>Supports clean chat handover while preserving context continuity.</td></tr>
+            <tr id="audit"><td>Audit</td><td>Compliance scan of prior responses.</td><td>Enables systematic quality assurance (quickly visible what in the LLM response is supported, uncertain, or non-compliant).</td></tr>
+            <tr id="cgi"><td>CGI</td><td>Cognitive Gain Indicator user-feedback signal.</td><td>Tracks perceived clarity/insight/efficiency gain.</td></tr>
+            <tr id="color-tags"><td>Color tags</td><td>🟢 [GREEN] / 🟡 [YELLOW] / 🔴 [RED] evidence confidence markers.</td><td>Signals confidence level at reading time.</td></tr>
+            <tr id="compliance-prerequisites"><td>Compliance prerequisites</td><td>Conditions checked before output is accepted.</td><td>Prevents non-compliant responses.</td></tr>
+            <tr id="constraints"><td>Constraints</td><td>Binding limits for structure, evidence handling, and style.</td><td>Prevents governance drift in long or complex responses.</td></tr>
+            <tr id="contract-tests"><td>Contract tests</td><td>Tests for formal behavioral guarantees.</td><td>Checks after changes that interfaces and rules still behave as agreed (no reintroduction of old failures).</td></tr>
+            <tr id="control-layer-block"><td>Control-layer block</td><td>Explicit block output on hard contract violations.</td><td>Stops unsafe/non-conformant responses.</td></tr>
+            <tr id="context-pressure-guard"><td>Context-Pressure-Guard</td><td>Threshold mechanism against drift under heavy context load.</td><td>Prioritizes core rules before relevant content gets diluted.</td></tr>
+            <tr id="csc"><td>CSC</td><td>Comm-SCI-Control governance framework.</td><td>Defines rule-based human-LLM interaction discipline.</td></tr>
+            <tr id="drift"><td>Drift</td><td>Deviation from expected governance behavior over time.</td><td>Early warning for quality degradation.</td></tr>
+            <tr id="explore"><td>Explore</td><td>Mode with higher tolerance for ideation and hypotheses.</td><td>Useful for brainstorming, not for hard claims.</td></tr>
+            <tr id="execution-pipeline"><td>Execution pipeline</td><td>Fixed runtime stage order from parse to render.</td><td>Reduces random drift and keeps behavior predictable.</td></tr>
+            <tr id="language-policy"><td>Language policy</td><td>Language behavior mode (`production`/`benchmark`).</td><td>Separates user operation from comparison experiments.</td></tr>
             <tr id="logs"><td>Logs</td><td>Persisted runtime and conversation artifacts.</td><td>Foundation for diagnosis and reproducibility.</td></tr>
             <tr id="manual-test"><td>Manual test</td><td>Guided panel-based manual verification routines.</td><td>Covers real operator flows beyond unit tests.</td></tr>
+            <tr id="module-status"><td>Module status</td><td>Visible health/status of key wrapper modules.</td><td>Supports diagnostics and maintenance.</td></tr>
+            <tr id="overlay"><td>Overlay</td><td>Additional mode layer above profile (for example Strict/Explore).</td><td>Adjusts behavior without full profile switch.</td></tr>
+            <tr id="pending-selection"><td>Pending selection</td><td>Interim state after `SCI on` until A-H is selected.</td><td>Prevents accidental variant switching.</td></tr>
+            <tr id="pressure"><td>Pressure</td><td>Context pressure from high token load, many objectives, or conflicting constraints.</td><td>Signals when to compress, re-anchor, or switch modes.</td></tr>
+            <tr id="provenance"><td>Provenance</td><td>Traceable origin of a claim down to source level.</td><td>Required for audit, source-conflict handling, and strong claims.</td></tr>
+            <tr id="qc-footer"><td>QC footer</td><td>Output line that shows QC values (and deltas when applicable).</td><td>Provides fast per-answer quality inspection.</td></tr>
+            <tr id="qc-matrix-term"><td>QC matrix</td><td>Quality dimensions with target/actual scoring.</td><td>Makes response quality explicit and comparable.</td></tr>
+            <tr id="qc-overrides"><td>QC overrides</td><td>Temporary manual deviations from profile QC targets.</td><td>Allows controlled adaptation for special cases.</td></tr>
+            <tr id="r-rag-rules"><td>R-RAG rules</td><td>Robust RAG rules for retrieval-grounded claims.</td><td>Blocks strong claims when source quality is insufficient.</td></tr>
+            <tr id="rag-governance"><td>RAG Governance</td><td>Rule set for source-grounded claims with quality classes.</td><td>Protects provenance clarity, source quality, and conflict handling.</td></tr>
+            <tr id="recurse-behavior"><td>Recurse behavior</td><td>Temporary deepening path via `SCI recurse`.</td><td>Allows focused deep dives without losing main context.</td></tr>
+            <tr id="regression-tests"><td>Regression tests</td><td>Tests for previously fixed failure patterns.</td><td>Prevents reintroduction of old bugs.</td></tr>
+            <tr id="runtime-contract"><td>Runtime contract</td><td>Technical contract for allowed output structure.</td><td>Enforces deterministic behavior.</td></tr>
+            <tr id="sci"><td>SCI</td><td>Structured answer mode with visible trace steps.</td><td>Improves transparency of reasoning output.</td></tr>
+            <tr id="sci-orchestration"><td>SCI orchestration</td><td>Control logic for SCI activation, variant selection, and trace enforcement.</td><td>Keeps SCI behavior deterministic.</td></tr>
+            <tr id="sci-variants-term"><td>SCI variants</td><td>A-H method profiles for different reasoning styles.</td><td>Matches reasoning structure to task type.</td></tr>
+            <tr id="self-debunking"><td>Self-Debunking</td><td>Required block that challenges answer weaknesses.</td><td>Reduces overconfidence and blind spots.</td></tr>
+            <tr id="strict"><td>Strict</td><td>Mode with stronger evidence and consistency discipline.</td><td>Useful for high-stakes precision output.</td></tr>
+            <tr id="token"><td>Token</td><td>Smallest processing unit in model context windows.</td><td>Defines effective context budget and influences output stability.</td></tr>
+            <tr id="timestamp"><td>Timestamp</td><td>Output time metadata in rendered response.</td><td>Important for audit timeline and traceability.</td></tr>
+            <tr id="trace-step-requirements"><td>Trace-step requirements</td><td>Mandatory SCI steps that must appear in answers.</td><td>Enables contract validation and reproducibility.</td></tr>
+            <tr id="uncertainty-labeling-u1-u8"><td>Uncertainty labeling U1-U8</td><td>Standardized uncertainty codes for data, method, and source-quality limits.</td><td>Makes uncertainty explicit instead of hiding it in prose.</td></tr>
+            <tr id="json"><td>JSON</td><td>Machine-readable format for Comm-SCI rules and runtime state.</td><td>Keeps governance configuration versioned and reproducible.</td></tr>
+            <tr id="verification-gates"><td>Verification gates</td><td>Rules for strong/risky claims requiring explicit verification route.</td><td>Protects against unsupported certainty.</td></tr>
           </tbody>
         </table>
       </section>
@@ -179,7 +190,7 @@
 
     <footer class="footer">
       <p>
-        Comm-SCI-Control Wrapper Glossary (EN). Back to:
+        Wrapper Glossary (EN). Back to:
         <a href="index.html">index.html</a> |
         <a href="https://vfi64.github.io/wrapper/">public wrapper website</a>
       </p>

@@ -1,7 +1,7 @@
-# Comm-SCI-Control Wrapper Handbook (EN)
+# Comm-SCI-Control-Private Handbook (EN)
 
-Version baseline: wrapper `1.0.0`  
-Runtime default ruleset: `JSON/Comm-SCI-v20.2.0.json`
+Version baseline: wrapper `1.0.x` (current: `1.0.11`)  
+Runtime default ruleset: `JSON/Comm-SCI-v20.2.2.json`
 
 ## 1. Purpose
 

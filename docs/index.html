@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Comm-SCI-Control Wrapper | Wrapper Runtime</title>
+    <title>Wrapper | Wrapper Runtime</title>
     <meta
       name="description"
-      content="Wrapper/runtime track for deterministic Comm-SCI governance execution, QA contracts, and bilingual documentation."
+      content="Private wrapper/runtime track for deterministic Comm-SCI governance execution, QA contracts, and bilingual documentation."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,13 +27,14 @@
       </a>
       <nav class="nav-links" aria-label="Main navigation">
         <a href="#value">Value</a>
-        <a href="why-wrapper.html">Why Wrapper</a>
+        <a href="why-wrapper.html">Why?</a>
         <a href="#fit">Fit</a>
         <a href="runtime-scenarios.html">Runtime</a>
         <a href="limits-wrapper.html">Limits</a>
         <a href="#usecases">Use cases</a>
         <a href="#pipeline">Pipeline</a>
         <a href="#terms">Terms</a>
+        <a href="#site-tree">Site tree</a>
         <a href="#install">Install</a>
         <a href="#screens">Screens</a>
         <a href="#docs">Docs</a>
@@ -51,18 +52,48 @@
 
     <main id="top">
       <section class="hero reveal">
-        <p class="eyebrow">Comm-SCI-Control Wrapper Runtime</p>
+        <p class="eyebrow">Wrapper Runtime</p>
         <h1>
           Deterministic governance execution for production wrappers.
           <span>Commands, contracts, and quality gates stay explicit and auditable.</span>
         </h1>
         <p class="hero-copy">
-          This wrapper project line focuses on robust wrapper operation for Comm-SCI:
+          This project line focuses on robust wrapper operation for Comm-SCI:
           strict command routing, SCI state handling, QC and verification enforcement,
           panel-driven operations, and bilingual project documentation.
           The core design is LLM-agnostic: the same governance layer can be applied
           across providers and models with explicit, comparable controls.
         </p>
+        <div class="hero-showcase reveal" aria-label="Intro wrapper screenshots">
+          <button
+            class="hero-shot"
+            type="button"
+            data-lightbox-image="images/01-Wrapper-20-2-2-Standard-Gemini-20-flash.png"
+            data-lightbox-alt="Wrapper output in Standard profile with governance markers"
+            data-lightbox-caption="Standard profile response with strict overlay and visible governance markers."
+          >
+            <img
+              src="images/01-Wrapper-20-2-2-Standard-Gemini-20-flash.png"
+              alt="Wrapper output in Standard profile with governance markers"
+              loading="lazy"
+            />
+            <span>Standard profile output</span>
+          </button>
+          <button
+            class="hero-shot"
+            type="button"
+            data-lightbox-image="images/02-Wrapper-20-2-2-Standard-Gemini-20-flash.png"
+            data-lightbox-alt="Wrapper panel and governance controls with active runtime modules"
+            data-lightbox-caption="Wrapper panel with active governance modules and control sections."
+          >
+            <img
+              src="images/02-Wrapper-20-2-2-Standard-Gemini-20-flash.png"
+              alt="Wrapper panel and governance controls with active runtime modules"
+              loading="lazy"
+            />
+            <span>Panel and controls</span>
+          </button>
+        </div>
         <div class="hero-actions">
           <a class="btn btn-solid" href="../README.md">Readme (EN)</a>
           <a class="btn btn-soft" href="HANDBOOK.md">Handbook (EN)</a>
@@ -72,15 +103,15 @@
         <div class="hero-metrics">
           <article class="metric-card reveal">
             <p class="metric-value" data-count="6" data-animate-from="0">6</p>
-            <p class="metric-label">Execution phases (P0-P5)</p>
+            <p class="metric-label"><a class="metric-link" href="#pipeline">Execution phases (P0-P5)</a></p>
           </article>
           <article class="metric-card reveal">
             <p class="metric-value" data-count="8" data-animate-from="0">8</p>
-            <p class="metric-label">SCI variants (A-H)</p>
+            <p class="metric-label"><a class="metric-link" href="glossary.html#sci-variants">SCI variants (A-H)</a></p>
           </article>
           <article class="metric-card reveal">
             <p class="metric-value" data-count="400" data-animate-from="350">400</p>
-            <p class="metric-label">Contract and regression tests</p>
+            <p class="metric-label"><a class="metric-link" href="glossary.html#contract-tests">Contract and regression tests</a></p>
           </article>
         </div>
       </section>
@@ -246,6 +277,41 @@
         </div>
       </section>
 
+      <section id="site-tree" class="section reveal">
+        <div class="section-head">
+          <p class="eyebrow">Orientation</p>
+          <h2>Website tree for quick navigation</h2>
+        </div>
+        <div class="doc-grid site-map-grid">
+          <article class="info-card reveal">
+            <h3>Core pages</h3>
+            <ul class="site-tree">
+              <li><a href="index.html">Home</a></li>
+              <li><a href="why-wrapper.html">Why Wrapper</a></li>
+              <li><a href="runtime-scenarios.html">Runtime Scenarios</a></li>
+              <li><a href="limits-wrapper.html">Limits</a></li>
+            </ul>
+          </article>
+          <article class="info-card reveal">
+            <h3>Install and operations</h3>
+            <ul class="site-tree">
+              <li><a href="install-beginner.html">Install Beginner</a></li>
+              <li><a href="install-pro.html">Install Professional</a></li>
+              <li><a href="INSTALL_SYNC.md">Install + Sync Runbook</a></li>
+              <li><a href="manual-test-checklist.md">Manual test checklist</a></li>
+            </ul>
+          </article>
+          <article class="info-card reveal">
+            <h3>Terminology and structure</h3>
+            <ul class="site-tree">
+              <li><a href="glossary.html">Glossary (EN)</a></li>
+              <li><a href="glossar.de.html">Glossar (DE)</a></li>
+              <li><a href="HANDBOOK.md">Handbook</a></li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
       <section id="install" class="section reveal">
         <div class="section-head">
           <p class="eyebrow">Installation on the website</p>
@@ -300,27 +366,69 @@
           <h2>Panel and wrapper UI snapshots</h2>
         </div>
         <div class="shot-grid">
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-1.png"
+            data-lightbox-alt="Wrapper UI screenshot 1"
+            data-lightbox-caption="Main dialog with deterministic response framing."
+          >
             <img src="images/wrapper-ui-1.png" alt="Wrapper UI screenshot 1" loading="lazy" />
             <figcaption>Main dialog with deterministic response framing.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-2.png"
+            data-lightbox-alt="Wrapper UI screenshot 2"
+            data-lightbox-caption="Panel controls for provider, model, and language settings."
+          >
             <img src="images/wrapper-ui-2.png" alt="Wrapper UI screenshot 2" loading="lazy" />
             <figcaption>Panel controls for provider, model, and language settings.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-3.png"
+            data-lightbox-alt="Wrapper UI screenshot 3"
+            data-lightbox-caption="Governance command sections and operational toggles."
+          >
             <img src="images/wrapper-ui-3.png" alt="Wrapper UI screenshot 3" loading="lazy" />
             <figcaption>Governance command sections and operational toggles.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-4.png"
+            data-lightbox-alt="Wrapper UI screenshot 4"
+            data-lightbox-caption="Comm status/control views for runtime verification."
+          >
             <img src="images/wrapper-ui-4.png" alt="Wrapper UI screenshot 4" loading="lazy" />
             <figcaption>Comm status/control views for runtime verification.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-5.png"
+            data-lightbox-alt="Wrapper UI screenshot 5"
+            data-lightbox-caption="Audit-oriented output with explicit structure markers."
+          >
             <img src="images/wrapper-ui-5.png" alt="Wrapper UI screenshot 5" loading="lazy" />
             <figcaption>Audit-oriented output with explicit structure markers.</figcaption>
           </figure>
-          <figure class="shot reveal">
+          <figure
+            class="shot reveal"
+            role="button"
+            tabindex="0"
+            data-lightbox-image="images/wrapper-ui-6.png"
+            data-lightbox-alt="Wrapper UI screenshot 6"
+            data-lightbox-caption="Panel diagnostics and manual test integration."
+          >
             <img src="images/wrapper-ui-6.png" alt="Wrapper UI screenshot 6" loading="lazy" />
             <figcaption>Panel diagnostics and manual test integration.</figcaption>
           </figure>
@@ -419,7 +527,8 @@
 
     <footer class="footer">
       <p>
-        Comm-SCI-Control wrapper docs. Last updated: March 6, 2026.
+        Wrapper docs. Last updated: March 6, 2026.
+        Glossary: <a href="glossary.html">EN</a> / <a href="glossar.de.html">DE</a> ·
         Public wrapper website: <a href="https://vfi64.github.io/wrapper/">vfi64.github.io/wrapper</a> ·
         Public ruleset website: <a href="https://vfi64.github.io/Comm-SCI-Control/">vfi64.github.io/Comm-SCI-Control</a>
       </p>

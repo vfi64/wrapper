@@ -2,8 +2,9 @@
 
 Deterministische Python-Runtime fuer Comm-SCI-Governance-Workflows.
 
-Aktuelle App-Version: **1.0.0**  
-Standardmaessig geladenes Regelwerk beim Start: **`JSON/Comm-SCI-v20.2.1.json`**
+Aktuelle Versionslinie der App: **1.0.x (aktuell: 1.0.11)**  
+Neueste Wrapper-Release-Seite: **https://github.com/vfi64/wrapper/releases/latest**  
+Standardmaessig geladenes Regelwerk beim Start: **`JSON/Comm-SCI-v20.2.2.json`**
 
 ## Positionierung
 
@@ -34,7 +35,7 @@ Vertiefungsseiten:
 
 ## Zweck dieses Repos
 
-Dieses Repository enthaelt die Wrapper-Entwicklungslinie der Python-Runtime, die Comm-SCI-Governance deterministisch ausfuehrt.
+Dieses Repository enthaelt die Entwicklungslinie der Python-Runtime, die Comm-SCI-Governance deterministisch ausfuehrt.
 Es ist die Implementierungsseite zum oeffentlichen Regelwerk.
 
 - Oeffentliches Regelwerk: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
