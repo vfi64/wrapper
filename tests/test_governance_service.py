@@ -66,6 +66,10 @@ def test_governance_service_normalize_output_contracts_order_and_fail_soft():
         calls.append(("ev", text))
         return text + "|ev"
 
+    def _cite(text):
+        calls.append(("cite", text))
+        return text + "|cite"
+
     def _sd(text, gov, profile, *, is_command=False, lang="en"):
         calls.append(("sd", text, profile, is_command, lang))
         return text + "|sd"
@@ -81,6 +85,7 @@ def test_governance_service_normalize_output_contracts_order_and_fail_soft():
     svc = GovernanceService(
         enforce_qc_footer_fn=_qc,
         normalize_evidence_tags_fn=_ev,
+        strip_empty_citation_placeholders_fn=_cite,
         enforce_self_debunking_fn=_sd,
         normalize_sci_trace_fn=_sci,
         ensure_qc_footer_present_fn=_ensure_qc,
@@ -94,8 +99,8 @@ def test_governance_service_normalize_output_contracts_order_and_fail_soft():
         is_command=False,
         lang="de",
     )
-    assert out == "x|qc|ev|sd|sci|ensure_qc"
-    assert [c[0] for c in calls] == ["qc", "ev", "sd", "sci", "ensure_qc"]
+    assert out == "x|qc|ev|cite|sd|sci|ensure_qc"
+    assert [c[0] for c in calls] == ["qc", "ev", "cite", "sd", "sci", "ensure_qc"]
 
     calls.clear()
     out2 = svc.normalize_output_contracts(
@@ -106,12 +111,13 @@ def test_governance_service_normalize_output_contracts_order_and_fail_soft():
         is_command=False,
         lang="de",
     )
-    assert out2 == "x|ev|sci"
-    assert [c[0] for c in calls] == ["ev", "sci"]
+    assert out2 == "x|ev|cite|sci"
+    assert [c[0] for c in calls] == ["ev", "cite", "sci"]
 
     svc2 = GovernanceService(
         enforce_qc_footer_fn=lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("x")),
         normalize_evidence_tags_fn=lambda s: s + "|ev",
+        strip_empty_citation_placeholders_fn=lambda s: s + "|cite",
         enforce_self_debunking_fn=lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("y")),
         normalize_sci_trace_fn=lambda s, _g: s + "|sci",
         ensure_qc_footer_present_fn=lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("z")),
@@ -124,12 +130,13 @@ def test_governance_service_normalize_output_contracts_order_and_fail_soft():
         is_command=False,
         lang="de",
     )
-    assert out3 == "x|ev|sci"
+    assert out3 == "x|ev|cite|sci"
 
 
 def test_governance_service_profile_switch_resets():
     st = types.SimpleNamespace(
         active_profile="Standard",
+        color="on",
         qc_overrides={"brevity": 1},
         sci_pending_turns=3,
         sci_active=True,
@@ -137,8 +144,13 @@ def test_governance_service_profile_switch_resets():
         sci_variant="B",
     )
     svc = GovernanceService()
-    svc.apply_profile_switch_resets(st, "Briefing")
+    svc.apply_profile_switch_resets(
+        st,
+        "Briefing",
+        ruleset_data={"profiles": {"Briefing": {"color_default": "off"}}},
+    )
     assert st.active_profile == "Briefing"
+    assert st.color == "off"
     assert st.qc_overrides == {}
     assert st.sci_pending_turns == 0
     assert st.sci_active is False
@@ -221,3 +233,32 @@ def test_governance_service_apply_legacy_command_variants():
     assert svc.apply_legacy_command(cmd="Dynamic one-shot on", state=st, ruleset_data=ruleset) is True
     assert st.dynamic_one_shot_active is True and st.dynamic_nudge == "one-shot"
     assert svc.apply_legacy_command(cmd="Unknown", state=st, ruleset_data=ruleset) is False
+
+
+def test_governance_service_apply_legacy_command_profile_switch_applies_color_default():
+    svc = GovernanceService()
+    ruleset = {
+        "profiles": {
+            "Standard": {"color_default": "on"},
+            "Sandbox": {"color_default": "off"},
+        },
+    }
+    st = types.SimpleNamespace(
+        active_profile="Standard",
+        color="on",
+        qc_overrides={"clarity": 2},
+        sci_pending_turns=1,
+        sci_active=True,
+        sci_pending=True,
+        sci_variant="B",
+    )
+
+    assert svc.apply_legacy_command(cmd="Profile Sandbox", state=st, ruleset_data=ruleset) is True
+    assert st.active_profile == "Sandbox"
+    assert st.color == "off"
+    assert st.sci_active is False
+    assert st.sci_pending is False
+    assert st.sci_variant == ""
+
+    assert svc.apply_legacy_command(cmd="Color on", state=st, ruleset_data=ruleset) is True
+    assert st.color == "on"

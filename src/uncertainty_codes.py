@@ -7,9 +7,19 @@ import re
 _U_CODE_RE = re.compile(r"\b(U[1-8])\b")
 _U_MARKED_RE = re.compile(r"(?i)data-u-code\s*=\s*(?:\"|')?(U[1-8])(?:\"|')?")
 _BLOCK_TAG_RE = re.compile(r"(?is)<(p|li)([^>]*)>(.*?)</\1>")
-_STATUS_KEY_RE = re.compile(r"(?i)\b(?:active profile|profile|overlay|sci|control layer|qc|cgi|color|comm)\s*:")
+_LEAF_DIV_RE = re.compile(r"(?is)<div([^>]*)>(.*?)</div>")
+_STATUS_KEY_RE = re.compile(
+    r"(?i)\b(?:active profile|profile|aktives profil|profil|overlay|sci|control layer|steuerungsebene|qc|cgi|color|farbe|comm)\s*:"
+)
 _TS_FOOTER_RE = re.compile(
     r"(?is)<div\b[^>]*class=(?:\"|')[^\"']*\bts-footer\b[^\"']*(?:\"|')[^>]*>.*?</div>"
+)
+_UNCERTAINTY_MARKER_SPAN_RE = re.compile(
+    r"(?is)<span\b[^>]*class=(?:\"|')[^\"']*\buncertainty-inline-marker\b[^\"']*(?:\"|')[^>]*>.*?</span>"
+)
+_BRACKETED_WRAP_RE = re.compile(
+    r"(?is)\[\s*(<span\b[^>]*class=(?:\"|')[^\"']*\buncertainty-inline-wrap\b[^\"']*(?:\"|')[^>]*>\s*\(\s*"
+    r"<span\b[^>]*class=(?:\"|')[^\"']*\buncertainty-inline-marker\b[^\"']*(?:\"|')[^>]*>\s*U[1-8]\s*</span>\s*\)\s*</span>)\s*\]"
 )
 _LEGEND_BLOCK_RE = re.compile(
     r"(?is)<details\b[^>]*class=(?:\"|')[^\"']*\buncertainty-legend\b[^\"']*(?:\"|')[^>]*>.*?</details>"
@@ -20,6 +30,7 @@ _CONTROL_LAYER_CLASS_BLOCK_RE = re.compile(
 _CONTROL_LAYER_LEGACY_BLOCK_RE = re.compile(
     r"(?is)<div\b[^>]*>\s*<b>\s*CONTROL\s+LAYER\s+(?:NOTE|ALERT|BLOCK)\s*</b>.*?</div>"
 )
+_CODE_BLOCK_RE = re.compile(r"(?is)<code\b[^>]*>.*?</code>")
 _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 _INLINE_CLOSING_TAG_RUN_RE = re.compile(
     r"(?is)(?:\s*</(?:span|strong|em|b|i|u|a|code|small|mark|sup|sub)\s*>)+"
@@ -202,6 +213,10 @@ _HIGH_COMPLEXITY_PROMPT_TERMS = [
     "rechtsordnung",
 ]
 
+_SCI_TRACE_CLASS_RE = re.compile(
+    r"(?is)\bclass\s*=\s*(?:\"|')[^\"']*\bsci-trace\b[^\"']*(?:\"|')"
+)
+
 _INLINE_SKIP_TERMS = (
     "qc-matrix",
     "selbst-debunking",
@@ -212,6 +227,9 @@ _INLINE_SKIP_TERMS = (
     "uncertainty markers",
     "control layer note",
     "active profile",
+    "profile:",
+    "profil:",
+    "aktives profil",
     "verification route",
 )
 _CONTROL_LAYER_ATTR_HINTS = (
@@ -221,6 +239,175 @@ _CONTROL_LAYER_ATTR_HINTS = (
     "control-layer-violation",
     "csc-details",
 )
+
+
+def _self_debunking_div_ranges(src: str) -> list[tuple[int, int]]:
+    """Return [start,end) ranges for top-level self-debunking <div> blocks."""
+    text = str(src or "")
+    if not text:
+        return []
+
+    tag_re = re.compile(r"(?is)<div\b[^>]*>|</div\s*>")
+    class_re = re.compile(
+        r"(?is)\bclass\s*=\s*(?:\"|')[^\"']*\bself-debunking\b[^\"']*(?:\"|')"
+    )
+
+    out: list[tuple[int, int]] = []
+    in_sd = False
+    depth = 0
+    start = -1
+
+    for m in tag_re.finditer(text):
+        tag = str(m.group(0) or "")
+        low = tag.lower()
+        is_open = low.startswith("<div")
+        if is_open:
+            if (not in_sd) and (class_re.search(tag) is not None):
+                in_sd = True
+                depth = 1
+                start = int(m.start())
+                continue
+            if in_sd:
+                depth += 1
+            continue
+
+        # closing </div>
+        if in_sd:
+            depth -= 1
+            if depth <= 0:
+                out.append((start, int(m.end())))
+                in_sd = False
+                depth = 0
+                start = -1
+
+    if in_sd and start >= 0:
+        out.append((start, len(text)))
+    return out
+
+
+def _sci_trace_div_ranges(src: str) -> list[tuple[int, int]]:
+    """Return [start,end) ranges for top-level sci-trace <div> blocks."""
+    text = str(src or "")
+    if not text:
+        return []
+
+    tag_re = re.compile(r"(?is)<div\b[^>]*>|</div\s*>")
+
+    out: list[tuple[int, int]] = []
+    in_sci = False
+    depth = 0
+    start = -1
+
+    for m in tag_re.finditer(text):
+        tag = str(m.group(0) or "")
+        low = tag.lower()
+        is_open = low.startswith("<div")
+        if is_open:
+            if (not in_sci) and (_SCI_TRACE_CLASS_RE.search(tag) is not None):
+                in_sci = True
+                depth = 1
+                start = int(m.start())
+                continue
+            if in_sci:
+                depth += 1
+            continue
+
+        if in_sci:
+            depth -= 1
+            if depth <= 0:
+                out.append((start, int(m.end())))
+                in_sci = False
+                depth = 0
+                start = -1
+
+    if in_sci and start >= 0:
+        out.append((start, len(text)))
+    return out
+
+
+def _uncertainty_auto_marker_div_ranges(src: str) -> list[tuple[int, int]]:
+    """Return [start,end) ranges for top-level uncertainty-auto-marker <div> blocks."""
+    text = str(src or "")
+    if not text:
+        return []
+
+    tag_re = re.compile(r"(?is)<div\b[^>]*>|</div\s*>")
+    class_re = re.compile(
+        r"(?is)\bclass\s*=\s*(?:\"|')[^\"']*\buncertainty-auto-marker\b[^\"']*(?:\"|')"
+    )
+
+    out: list[tuple[int, int]] = []
+    in_auto = False
+    depth = 0
+    start = -1
+
+    for m in tag_re.finditer(text):
+        tag = str(m.group(0) or "")
+        low = tag.lower()
+        is_open = low.startswith("<div")
+        if is_open:
+            if (not in_auto) and (class_re.search(tag) is not None):
+                in_auto = True
+                depth = 1
+                start = int(m.start())
+                continue
+            if in_auto:
+                depth += 1
+            continue
+
+        if in_auto:
+            depth -= 1
+            if depth <= 0:
+                out.append((start, int(m.end())))
+                in_auto = False
+                depth = 0
+                start = -1
+
+    if in_auto and start >= 0:
+        out.append((start, len(text)))
+    return out
+
+
+def _code_tag_ranges(src: str) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for m in _CODE_BLOCK_RE.finditer(str(src or "")):
+        out.append((int(m.start()), int(m.end())))
+    return out
+
+
+def _is_inside_ranges(start: int, end: int, ranges: list[tuple[int, int]]) -> bool:
+    s = int(start)
+    e = int(end)
+    for a, b in ranges:
+        if s >= int(a) and e <= int(b):
+            return True
+    return False
+
+
+def _overlaps_ranges(start: int, end: int, ranges: list[tuple[int, int]]) -> bool:
+    s = int(start)
+    e = int(end)
+    for a, b in ranges:
+        aa = int(a)
+        bb = int(b)
+        if s < bb and e > aa:
+            return True
+    return False
+
+
+def _find_marked_uncertainty_codes_outside_ranges(
+    src: str, ranges: list[tuple[int, int]]
+) -> list[str]:
+    seen = set()
+    out = []
+    for m in _U_MARKED_RE.finditer(str(src or "")):
+        if _is_inside_ranges(m.start(), m.end(), ranges):
+            continue
+        code = str(m.group(1) or "").strip().upper()
+        if code and code not in seen and code in _U_CODES:
+            seen.add(code)
+            out.append(code)
+    return out
 
 
 def _looks_like_status_scaffold_block(inner_html: str) -> bool:
@@ -239,7 +426,9 @@ def _looks_like_status_scaffold_block(inner_html: str) -> bool:
         return False
 
     # Fast path for dense one-line status composites.
-    if low.startswith(("profile:", "active profile:", "comm:")) and len(_STATUS_KEY_RE.findall(low)) >= 3:
+    if low.startswith(("profile:", "active profile:", "profil:", "aktives profil:", "comm:")) and len(
+        _STATUS_KEY_RE.findall(low)
+    ) >= 3:
         return True
 
     lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
@@ -249,7 +438,7 @@ def _looks_like_status_scaffold_block(inner_html: str) -> bool:
     keys = []
     for ln in lines:
         m = re.match(
-            r"(?i)^(active profile|profile|overlay|sci|control layer|qc|cgi|color|comm)\s*:\s*.+$",
+            r"(?i)^(active profile|profile|aktives profil|profil|overlay|sci|control layer|steuerungsebene|qc|cgi|color|farbe|comm)\s*:\s*.+$",
             ln,
         )
         if m is None:
@@ -257,8 +446,8 @@ def _looks_like_status_scaffold_block(inner_html: str) -> bool:
         keys.append(str(m.group(1) or "").strip().lower())
 
     uniq = set(keys)
-    has_profile = ("profile" in uniq) or ("active profile" in uniq)
-    has_meta = bool({"overlay", "sci", "control layer", "qc", "cgi", "color"} & uniq)
+    has_profile = ("profile" in uniq) or ("active profile" in uniq) or ("profil" in uniq) or ("aktives profil" in uniq)
+    has_meta = bool({"overlay", "sci", "control layer", "steuerungsebene", "qc", "cgi", "color", "farbe"} & uniq)
     return has_profile and has_meta
 
 
@@ -269,6 +458,44 @@ def _strip_control_layer_blocks_for_analysis(src: str) -> str:
     out = _CONTROL_LAYER_CLASS_BLOCK_RE.sub(" ", txt)
     out = _CONTROL_LAYER_LEGACY_BLOCK_RE.sub(" ", out)
     return out
+
+
+def _strip_self_debunking_blocks_for_analysis(src: str) -> str:
+    txt = str(src or "")
+    if not txt:
+        return txt
+    ranges = _self_debunking_div_ranges(txt)
+    if not ranges:
+        return txt
+    out = []
+    cursor = 0
+    for start, end in ranges:
+        s = max(0, int(start))
+        e = max(s, int(end))
+        out.append(txt[cursor:s])
+        out.append(" ")
+        cursor = e
+    out.append(txt[cursor:])
+    return "".join(out)
+
+
+def _strip_sci_trace_blocks_for_analysis(src: str) -> str:
+    txt = str(src or "")
+    if not txt:
+        return txt
+    ranges = _sci_trace_div_ranges(txt)
+    if not ranges:
+        return txt
+    out = []
+    cursor = 0
+    for start, end in ranges:
+        s = max(0, int(start))
+        e = max(s, int(end))
+        out.append(txt[cursor:s])
+        out.append(" ")
+        cursor = e
+    out.append(txt[cursor:])
+    return "".join(out)
 
 
 def _build_plain_text_index_map(html_text: str) -> tuple[str, list[int]]:
@@ -333,6 +560,9 @@ def _replace_first_plain_code_with_marker(inner_html: str, code: str, *, lang: s
         hs, he = _plain_to_html_span(pos_map, rep_ps, rep_pe)
         if hs < 0 or he <= hs:
             continue
+        hs = _advance_past_closing_tags(src, hs)
+        if hs >= he:
+            continue
 
         raw_token = src[hs:he]
         raw_plain = html.unescape(re.sub(r"(?is)<[^>]+>", "", str(raw_token or "")))
@@ -347,6 +577,70 @@ def _replace_first_plain_code_with_marker(inner_html: str, code: str, *, lang: s
         return src[:hs] + marker + src[he:], True
 
     return src, False
+
+
+def _replace_all_plain_u_codes_with_markers(inner_html: str, *, lang: str = "de") -> str:
+    src = str(inner_html or "")
+    if not src:
+        return src
+
+    out = _BRACKETED_WRAP_RE.sub(r"\1", src)
+
+    max_iters = 256
+    for _ in range(max_iters):
+        plain, pos_map = _build_plain_text_index_map(out)
+        if not plain or not pos_map:
+            break
+        marker_ranges = [(m.start(), m.end()) for m in _UNCERTAINTY_MARKER_SPAN_RE.finditer(out)]
+        replaced = False
+        for m in _U_CODE_RE.finditer(plain):
+            code = str(m.group(1) or "").strip().upper()
+            if code not in _U_CODES:
+                continue
+            ps, pe = int(m.start()), int(m.end())
+            hs_code, he_code = _plain_to_html_span(pos_map, ps, pe)
+            if hs_code < 0 or he_code <= hs_code:
+                continue
+            if _is_inside_ranges(hs_code, he_code, marker_ranges):
+                continue
+            prev_ch = plain[ps - 1] if ps > 0 else ""
+            next_ch = plain[pe] if pe < len(plain) else ""
+            if prev_ch == "-" or next_ch == "-":
+                # Keep range notations like U1-U8 untouched.
+                continue
+
+            rep_ps, rep_pe = ps, pe
+            if ps > 0 and pe < len(plain):
+                if plain[ps - 1] == "(" and plain[pe] == ")":
+                    rep_ps, rep_pe = ps - 1, pe + 1
+                elif plain[ps - 1] == "[" and plain[pe] == "]":
+                    rep_ps, rep_pe = ps - 1, pe + 1
+
+            hs, he = _plain_to_html_span(pos_map, rep_ps, rep_pe)
+            if hs < 0 or he <= hs:
+                continue
+            hs = _advance_past_closing_tags(out, hs)
+            if hs >= he:
+                continue
+            if _overlaps_ranges(hs, he, marker_ranges):
+                continue
+
+            raw_token = out[hs:he]
+            raw_plain = html.unescape(re.sub(r"(?is)<[^>]+>", "", str(raw_token or "")))
+            raw_norm = re.sub(r"\s+", "", raw_plain).upper()
+            exp_norm = re.sub(r"\s+", "", plain[rep_ps:rep_pe]).upper()
+            if raw_norm != exp_norm:
+                continue
+
+            marker = build_uncertainty_inline_marker_html(code, lang=lang)
+            if not marker:
+                continue
+            out = out[:hs] + marker + out[he:]
+            replaced = True
+            break
+        if not replaced:
+            break
+    return out
 
 
 def _advance_past_closing_tags(html_text: str, pos: int) -> int:
@@ -505,6 +799,316 @@ def _remove_legend_blocks(src: str) -> str:
     return out
 
 
+def _strip_uncertainty_template_phrases_html(src: str) -> str:
+    """Collapse leaked template phrases like 'Uncertainty: (U5) - Model limitation. Needed: ...'
+    to the canonical inline marker only.
+    """
+    out = str(src or "")
+    if not out:
+        return out
+    def _name_variants(term: str) -> list[str]:
+        t = str(term or "").strip()
+        if not t:
+            return []
+        out_v = {t}
+        # Accept both ASCII transliteration and umlaut spellings in weak-model leaks.
+        out_v.add(t.replace("ae", "ä").replace("oe", "ö").replace("ue", "ü").replace("ss", "ß"))
+        out_v.add(t.replace("Ae", "Ä").replace("Oe", "Ö").replace("Ue", "Ü"))
+        out_v.add(t.replace("Ä", "Ae").replace("Ö", "Oe").replace("Ü", "Ue").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
+        return [v for v in out_v if v]
+    u_name_terms = []
+    for _meta in _U_CODES.values():
+        for _k in ("en_name", "de_name"):
+            _v = str((_meta or {}).get(_k) or "").strip()
+            for _vv in _name_variants(_v):
+                if _vv and _vv not in u_name_terms:
+                    u_name_terms.append(_vv)
+    # Legacy phrase variants observed in provider outputs.
+    for _legacy in ("Model limitation",):
+        if _legacy not in u_name_terms:
+            u_name_terms.append(_legacy)
+    u_name_rx = "|".join(re.escape(x) for x in u_name_terms) if u_name_terms else r"(?:Data\s+gap|Model\s+limitation)"
+    marker_span_rx = (
+        r"<span\b[^>]*class=(?:\"|')[^\"']*\buncertainty-inline-wrap\b[^\"']*(?:\"|')[^>]*>"
+        r"[\s\S]*?</span>"
+    )
+    marker_rx = (
+        rf"(?:{marker_span_rx}"
+        r"|\(\s*U[1-8]\s*\)"
+        rf"|\(\s*{marker_span_rx}\s*\))"
+    )
+    needed_rx = r"(?:Needed|Ben(?:ö|oe)tigt)\s*:"
+    # Inline leak body seen in weak-model outputs:
+    # "<marker> – Datenlücke. Benötigt: ... ." also inside running text (not only block tail).
+    needed_tail_rx = rf"{needed_rx}\s*[^<\n]{{0,220}}?(?:[.!?])"
+    out = re.sub(
+        rf"(?is)(?:Uncertainty|Unsicherheit)\s*:\s*(?P<marker>{marker_rx})\s*"
+        rf"(?:&ndash;|&mdash;|–|—|-)\s*(?:{u_name_rx})\s*\.\s*{needed_tail_rx}",
+        r"\g<marker>",
+        out,
+    )
+    out = re.sub(
+        rf"(?is)(?:Uncertainty|Unsicherheit)\s*:\s*(?P<marker>{marker_rx})",
+        r"\g<marker>",
+        out,
+    )
+    # Also strip leaks without explicit 'Uncertainty:' prefix:
+    # "(U1) - Data gap. Needed: ..." / "<marker> – Strukturelle Grenze. Benoetigt: ..."
+    out = re.sub(
+        rf"(?is)(?P<marker>{marker_rx})\s*(?:&ndash;|&mdash;|–|—|-)\s*(?:{u_name_rx})\s*\.\s*{needed_tail_rx}",
+        r"\g<marker>",
+        out,
+    )
+    # Repair dangling clause fragments immediately before uncertainty markers,
+    # e.g. "... wurde, (U1)" after model-side truncation.
+    signal_dot_marker_span_rx = (
+        r"<span\b[^>]*class=(?:\"|')[^\"']*\bsignal-dot-marker\b[^\"']*(?:\"|')[^>]*>"
+        r"[\s\S]*?</span>"
+    )
+    out = re.sub(
+        rf"(?is)\b(?:wurde|wurden|wird|werden|war|waren|ist|sind)\b\s*,\s*"
+        rf"(?P<dots>(?:{signal_dot_marker_span_rx}\s*)*)(?P<marker>{marker_rx})",
+        r"ist als unsicher einzuordnen. \g<dots>\g<marker>",
+        out,
+    )
+    out = re.sub(
+        rf"(?is)\b(?:was|were|is|are|be|been)\b\s*,\s*"
+        rf"(?P<dots>(?:{signal_dot_marker_span_rx}\s*)*)(?P<marker>{marker_rx})",
+        r"is uncertain. \g<dots>\g<marker>",
+        out,
+    )
+    out = re.sub(r"(?is)\s{2,}", " ", out)
+    return out
+
+
+def _collapse_orphan_uncertainty_marker_paragraph_before_self_debunking(src: str) -> str:
+    """Avoid marker-only U paragraphs directly in front of Self-Debunking blocks.
+
+    Weak-model outputs occasionally emit a standalone ``<p>(U5)</p>`` right before
+    the self-debunking box. Keep the marker but merge/unwrap that paragraph so the
+    transition into Self-Debunking remains structurally stable and readable.
+    """
+    out = str(src or "")
+    if not out:
+        return out
+
+    wrapped_marker_rx = (
+        r"<span\b[^>]*class=(?:\"|')[^\"']*\buncertainty-inline-wrap\b[^\"']*(?:\"|')[^>]*>"
+        r"[\s\S]*?</span>"
+    )
+    signal_dot_marker_span_rx = (
+        r"<span\b[^>]*class=(?:\"|')[^\"']*\bsignal-dot-marker\b[^\"']*(?:\"|')[^>]*>"
+        r"[\s\S]*?</span>"
+    )
+    plain_marker_rx = r"\(\s*U[1-8]\s*\)"
+    marker_seq_rx = (
+        rf"(?:(?:{signal_dot_marker_span_rx}\s*)*(?:{wrapped_marker_rx}|{plain_marker_rx})\s*)+"
+    )
+    sd_open_rx = r"<div\b[^>]*class=(?:\"|')[^\"']*\bself-debunking\b[^\"']*(?:\"|')[^>]*>"
+
+    # Preferred repair: attach marker sequence to the end of the preceding paragraph.
+    out = re.sub(
+        rf"(?is)</p>\s*<p\b[^>]*>\s*(?P<markers>{marker_seq_rx})\s*</p>\s*(?={sd_open_rx})",
+        lambda m: " " + str(m.group("markers") or "").strip() + "</p>\n",
+        out,
+    )
+    # Fallback: if no preceding paragraph exists, unwrap the marker paragraph.
+    out = re.sub(
+        rf"(?is)<p\b[^>]*>\s*(?P<markers>{marker_seq_rx})\s*</p>\s*(?={sd_open_rx})",
+        lambda m: str(m.group("markers") or "").strip() + "\n",
+        out,
+    )
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out
+
+
+def _control_layer_ranges(src: str) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    txt = str(src or "")
+    if not txt:
+        return out
+    for m in _CONTROL_LAYER_CLASS_BLOCK_RE.finditer(txt):
+        out.append((int(m.start()), int(m.end())))
+    for m in _CONTROL_LAYER_LEGACY_BLOCK_RE.finditer(txt):
+        out.append((int(m.start()), int(m.end())))
+    return out
+
+
+def _replace_all_plain_u_codes_global(src: str, *, lang: str = "de") -> str:
+    out = str(src or "")
+    if not out:
+        return out
+
+    max_iters = 512
+    for _ in range(max_iters):
+        plain, pos_map = _build_plain_text_index_map(out)
+        if not plain or not pos_map:
+            break
+
+        sd_ranges = _self_debunking_div_ranges(out)
+        ctl_ranges = _control_layer_ranges(out)
+        auto_ranges = _uncertainty_auto_marker_div_ranges(out)
+        code_ranges = _code_tag_ranges(out)
+        marker_ranges = [(m.start(), m.end()) for m in _UNCERTAINTY_MARKER_SPAN_RE.finditer(out)]
+        skip_ranges = list(sd_ranges) + list(ctl_ranges) + list(auto_ranges) + list(code_ranges) + list(marker_ranges)
+
+        replaced = False
+        for m in _U_CODE_RE.finditer(plain):
+            code = str(m.group(1) or "").strip().upper()
+            if code not in _U_CODES:
+                continue
+            ps, pe = int(m.start()), int(m.end())
+            hs_code, he_code = _plain_to_html_span(pos_map, ps, pe)
+            if hs_code < 0 or he_code <= hs_code:
+                continue
+            if _is_inside_ranges(hs_code, he_code, skip_ranges):
+                continue
+
+            prev_ch = plain[ps - 1] if ps > 0 else ""
+            next_ch = plain[pe] if pe < len(plain) else ""
+            if prev_ch == "-" or next_ch == "-":
+                continue
+
+            rep_ps, rep_pe = ps, pe
+            if ps > 0 and pe < len(plain):
+                if plain[ps - 1] == "(" and plain[pe] == ")":
+                    rep_ps, rep_pe = ps - 1, pe + 1
+                elif plain[ps - 1] == "[" and plain[pe] == "]":
+                    rep_ps, rep_pe = ps - 1, pe + 1
+
+            hs, he = _plain_to_html_span(pos_map, rep_ps, rep_pe)
+            if hs < 0 or he <= hs:
+                continue
+            hs = _advance_past_closing_tags(out, hs)
+            if hs >= he:
+                continue
+            if _overlaps_ranges(hs, he, skip_ranges):
+                continue
+
+            raw_token = out[hs:he]
+            raw_plain = html.unescape(re.sub(r"(?is)<[^>]+>", "", str(raw_token or "")))
+            raw_norm = re.sub(r"\s+", "", raw_plain).upper()
+            exp_norm = re.sub(r"\s+", "", plain[rep_ps:rep_pe]).upper()
+            if raw_norm != exp_norm:
+                continue
+
+            marker = build_uncertainty_inline_marker_html(code, lang=lang)
+            if not marker:
+                continue
+            out = out[:hs] + marker + out[he:]
+            replaced = True
+            break
+
+        if not replaced:
+            break
+    return out
+
+
+def canonicalize_explicit_uncertainty_codes_html(text: str, *, lang: str = "de") -> str:
+    src = str(text or "")
+    if not src:
+        return src
+
+    def _should_skip_block(attrs: str, inner: str) -> bool:
+        attrs_low = str(attrs or "").lower()
+        if any(h in attrs_low for h in _CONTROL_LAYER_ATTR_HINTS):
+            return True
+        if "uncertainty-legend" in attrs_low or "uncertainty-auto-marker" in attrs_low:
+            return True
+        if _looks_like_status_scaffold_block(inner):
+            return True
+        norm = _normalize_text(inner)
+        if not norm:
+            return True
+        if ("control layer note" in norm) or ("control layer alert" in norm) or ("control layer block" in norm):
+            return True
+        return False
+
+    out = src
+    sd_ranges = _self_debunking_div_ranges(out)
+
+    def _repl_p_li(m: re.Match) -> str:
+        start, end = int(m.start()), int(m.end())
+        if _is_inside_ranges(start, end, sd_ranges):
+            return m.group(0)
+        tag = str(m.group(1) or "")
+        attrs = str(m.group(2) or "")
+        inner = str(m.group(3) or "")
+        if _should_skip_block(attrs, inner):
+            return m.group(0)
+        inner2 = _replace_all_plain_u_codes_with_markers(inner, lang=lang)
+        if inner2 == inner:
+            return m.group(0)
+        return f"<{tag}{attrs}>{inner2}</{tag}>"
+
+    out = _BLOCK_TAG_RE.sub(_repl_p_li, out)
+
+    sd_ranges = _self_debunking_div_ranges(out)
+
+    def _repl_leaf_div(m: re.Match) -> str:
+        start, end = int(m.start()), int(m.end())
+        if _is_inside_ranges(start, end, sd_ranges):
+            return m.group(0)
+        attrs = str(m.group(1) or "")
+        inner = str(m.group(2) or "")
+        if re.search(r"(?is)<\s*(?:div|p|li|ol|ul|table|blockquote)\b", inner):
+            return m.group(0)
+        if _should_skip_block(attrs, inner):
+            return m.group(0)
+        inner2 = _replace_all_plain_u_codes_with_markers(inner, lang=lang)
+        if inner2 == inner:
+            return m.group(0)
+        return f"<div{attrs}>{inner2}</div>"
+
+    out = _LEAF_DIV_RE.sub(_repl_leaf_div, out)
+    # Global fallback pass for nested structures (e.g., SCI Trace with nested <div> blocks).
+    out = _replace_all_plain_u_codes_global(out, lang=lang)
+    return out
+
+
+def ensure_uncertainty_marker_tooltips_html(text: str, *, lang: str = "de") -> str:
+    src = str(text or "")
+    if not src:
+        return src
+
+    marker_re = re.compile(
+        r"(?is)<span(?P<attrs1>[^>]*)class=(?:\"|')(?P<class>[^\"']*\buncertainty-inline-marker\b[^\"']*)(?:\"|')"
+        r"(?P<attrs2>[^>]*)>(?P<body>.*?)</span>"
+    )
+
+    def _repl(m: re.Match) -> str:
+        attrs1 = str(m.group("attrs1") or "")
+        klass = str(m.group("class") or "")
+        attrs2 = str(m.group("attrs2") or "")
+        body = str(m.group("body") or "")
+        attrs = attrs1 + attrs2
+
+        has_data_title = re.search(r"(?i)\bdata-u-title\s*=", attrs) is not None
+        has_title = re.search(r"(?i)\btitle\s*=", attrs) is not None
+        if has_data_title and has_title:
+            return m.group(0)
+
+        m_code = re.search(r"(?i)\bdata-u-code\s*=\s*(?:\"|')?(U[1-8])(?:\"|')?", attrs)
+        code = str(m_code.group(1) or "").strip().upper() if m_code else ""
+        if code not in _U_CODES:
+            body_plain = html.unescape(re.sub(r"(?is)<[^>]+>", "", body)).strip().upper()
+            if re.fullmatch(r"U[1-8]", body_plain or ""):
+                code = body_plain
+        if code not in _U_CODES:
+            return m.group(0)
+
+        name, desc = _code_meta(code, lang=lang)
+        tip = html.escape(f"{code} - {name}: {desc}", quote=True)
+        open_tag = f"<span{attrs1}class='{klass}'{attrs2}"
+        if not has_data_title:
+            open_tag += f" data-u-title='{tip}'"
+        if not has_title:
+            open_tag += f" title='{tip}'"
+        return f"{open_tag}>{body}</span>"
+
+    return marker_re.sub(_repl, src)
+
+
 def find_uncertainty_codes(text: str) -> list[str]:
     seen = set()
     out = []
@@ -558,6 +1162,10 @@ def infer_uncertainty_codes(text: str, *, user_text: str = "") -> list[str]:
     # Last-resort fallback: uncertainty wording but no mapped code yet.
     if not out and _contains_any(merged, ["unsicher", "uncertain", "complex", "komplex", "offene frage"]):
         _add("U6")
+    # RED/critical signal fallback: if a red marker leaks into content without an explicit U-code,
+    # infer U1 so the verification-route contract can be satisfied deterministically.
+    if not out and _contains_any(merged, ["🔴", "[red]", " red claim", "kritische aussage", "critical claim"]):
+        _add("U1")
 
     return out
 
@@ -595,13 +1203,14 @@ def inject_inline_uncertainty_markers_html(
     src = str(text or "")
     if not src:
         return src
-    if "data-u-code=" in src:
-        return src
 
     inferred = [str(c or "").strip().upper() for c in (codes or infer_uncertainty_codes(src, user_text=user_text))]
     target_codes = []
     seen = set()
-    existing_marked = set(find_marked_uncertainty_codes(src))
+    sd_ranges = _self_debunking_div_ranges(src)
+    sci_ranges = _sci_trace_div_ranges(src)
+    skip_ranges = sorted([*sd_ranges, *sci_ranges], key=lambda x: int(x[0]))
+    existing_marked = set(_find_marked_uncertainty_codes_outside_ranges(src, skip_ranges))
     for c in inferred:
         if c in _U_CODES and c not in seen and c not in existing_marked:
             seen.add(c)
@@ -611,6 +1220,9 @@ def inject_inline_uncertainty_markers_html(
 
     candidates = []
     for m in _BLOCK_TAG_RE.finditer(src):
+        if _is_inside_ranges(m.start(), m.end(), skip_ranges):
+            # Do not inject uncertainty markers into Self-Debunking/SCI Trace internals.
+            continue
         tag = str(m.group(1) or "")
         attrs = str(m.group(2) or "")
         inner = str(m.group(3) or "")
@@ -743,17 +1355,26 @@ def ensure_uncertainty_annotations_html(text: str, *, lang: str = "de", user_tex
         return src
 
     analysis_src = _strip_control_layer_blocks_for_analysis(src)
+    analysis_src = _strip_self_debunking_blocks_for_analysis(analysis_src)
+    analysis_src = _strip_sci_trace_blocks_for_analysis(analysis_src)
     codes = find_uncertainty_codes(analysis_src)
     if codes:
         src = inject_inline_uncertainty_markers_html(src, codes=codes, lang=lang, user_text=user_text)
-        codes = find_uncertainty_codes(_strip_control_layer_blocks_for_analysis(src))
+        recalc_src = _strip_self_debunking_blocks_for_analysis(_strip_control_layer_blocks_for_analysis(src))
+        codes = find_uncertainty_codes(recalc_src)
     else:
         inferred = infer_uncertainty_codes(analysis_src, user_text=user_text)
         src = inject_inline_uncertainty_markers_html(src, codes=inferred, lang=lang, user_text=user_text)
-        codes = find_uncertainty_codes(_strip_control_layer_blocks_for_analysis(src))
+        recalc_src = _strip_self_debunking_blocks_for_analysis(_strip_control_layer_blocks_for_analysis(src))
+        codes = find_uncertainty_codes(recalc_src)
         if (not codes) and inferred and ("uncertainty-auto-marker" not in src):
             src = src + "\n" + build_uncertainty_auto_marker_html(inferred, lang=lang)
             codes = list(inferred)
+
+    src = canonicalize_explicit_uncertainty_codes_html(src, lang=lang)
+    src = ensure_uncertainty_marker_tooltips_html(src, lang=lang)
+    src = _strip_uncertainty_template_phrases_html(src)
+    src = _collapse_orphan_uncertainty_marker_paragraph_before_self_debunking(src)
 
     if not codes:
         return _remove_legend_blocks(src)

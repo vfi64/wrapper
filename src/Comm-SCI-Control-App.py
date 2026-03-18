@@ -52,7 +52,7 @@ except Exception:
 
 try:
     from intents import intent_from_command as _intent_from_command, ProcessModelResponse as _ProcessModelResponse, ComplianceViolation as _ComplianceViolation  # type: ignore
-    from state import state_from_runtime as _state_from_runtime, apply_state_to_runtime as _state_apply_to_runtime, init_state_from_ruleset as _state_init_from_ruleset  # type: ignore
+    from state import state_from_runtime as _state_from_runtime, apply_state_to_runtime as _state_apply_to_runtime, init_state_from_ruleset as _state_init_from_ruleset, resolve_profile_color_default as _state_resolve_profile_color_default  # type: ignore
     from transitions import apply_intent as _apply_intent  # type: ignore
 except Exception:
     _intent_from_command = None  # type: ignore
@@ -61,6 +61,7 @@ except Exception:
     _state_from_runtime = None  # type: ignore
     _state_apply_to_runtime = None  # type: ignore
     _state_init_from_ruleset = None  # type: ignore
+    _state_resolve_profile_color_default = None  # type: ignore
     _apply_intent = None  # type: ignore
 
 try:
@@ -134,14 +135,231 @@ except Exception:
     _manual_test_monitor_seam_mod = None  # type: ignore
 
 try:
+    import manual_test_monitor_runtime as _manual_test_monitor_runtime_mod  # type: ignore
+except Exception:
+    _manual_test_monitor_runtime_mod = None  # type: ignore
+
+try:
+    import manual_test_runtime_seam as _manual_test_runtime_seam_mod  # type: ignore
+except Exception:
+    _manual_test_runtime_seam_mod = None  # type: ignore
+
+try:
     import uncertainty_codes as _uncertainty_codes_mod  # type: ignore
 except Exception:
     _uncertainty_codes_mod = None  # type: ignore
+if _uncertainty_codes_mod is None:
+    try:
+        _uc_path = Path(__file__).resolve().parent / "uncertainty_codes.py"
+        if _uc_path.exists():
+            _uc_spec = importlib.util.spec_from_file_location("uncertainty_codes", _uc_path)  # type: ignore[attr-defined]
+            if _uc_spec is not None and _uc_spec.loader is not None:
+                _uc_mod = importlib.util.module_from_spec(_uc_spec)  # type: ignore[attr-defined]
+                _uc_spec.loader.exec_module(_uc_mod)  # type: ignore[attr-defined]
+                _uncertainty_codes_mod = _uc_mod  # type: ignore
+    except Exception:
+        _uncertainty_codes_mod = None  # type: ignore
 
 try:
     import help_i18n as _help_i18n_mod  # type: ignore
 except Exception:
     _help_i18n_mod = None  # type: ignore
+
+try:
+    import self_debunking_formatter as _sd_formatter  # type: ignore
+except Exception:
+    _sd_formatter = None  # type: ignore
+if _sd_formatter is None:
+    try:
+        _sd_path = Path(__file__).resolve().parent / "self_debunking_formatter.py"
+        if _sd_path.exists():
+            _sd_spec = importlib.util.spec_from_file_location("self_debunking_formatter", _sd_path)  # type: ignore[attr-defined]
+            if _sd_spec is not None and _sd_spec.loader is not None:
+                _sd_mod = importlib.util.module_from_spec(_sd_spec)  # type: ignore[attr-defined]
+                _sd_spec.loader.exec_module(_sd_mod)  # type: ignore[attr-defined]
+                _sd_formatter = _sd_mod  # type: ignore
+    except Exception:
+        _sd_formatter = None  # type: ignore
+
+try:
+    import color_marker_policy as _color_marker_policy  # type: ignore
+except Exception:
+    _color_marker_policy = None  # type: ignore
+
+def _load_optional_module_with_file_fallback(import_name: str, rel_path: str, spec_name: str):
+    """Try package import first, then deterministic local file fallback."""
+    try:
+        return importlib.import_module(import_name)
+    except Exception:
+        pass
+    try:
+        mod_path = Path(__file__).resolve().parent / rel_path
+        if mod_path.exists():
+            spec = importlib.util.spec_from_file_location(spec_name, mod_path)  # type: ignore[attr-defined]
+            if spec is not None and spec.loader is not None:
+                mod = importlib.util.module_from_spec(spec)  # type: ignore[attr-defined]
+                spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+                return mod
+    except Exception:
+        pass
+    return None
+
+
+_output_uncertainty_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.uncertainty",
+    "output/renderers/uncertainty.py",
+    "output_uncertainty_renderer",
+)  # type: ignore
+_output_header_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.header",
+    "output/renderers/header.py",
+    "output_header_renderer",
+)  # type: ignore
+_output_footer_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.footer_qc",
+    "output/renderers/footer_qc.py",
+    "output_footer_renderer",
+)  # type: ignore
+_output_sci_trace_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.sci_trace",
+    "output/renderers/sci_trace.py",
+    "output_sci_trace_renderer",
+)  # type: ignore
+_output_csc_warning_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.csc_warning",
+    "output/renderers/csc_warning.py",
+    "output_csc_warning_renderer",
+)  # type: ignore
+_output_control_layer_note_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.control_layer_note",
+    "output/renderers/control_layer_note.py",
+    "output_control_layer_note_renderer",
+)  # type: ignore
+_output_cgi_line_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.cgi_line",
+    "output/renderers/cgi_line.py",
+    "output_cgi_line_renderer",
+)  # type: ignore
+_output_color_markers_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.color_markers",
+    "output/renderers/color_markers.py",
+    "output_color_markers_renderer",
+)  # type: ignore
+_output_image_embed_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.image_embed",
+    "output/renderers/image_embed.py",
+    "output_image_embed_renderer",
+)  # type: ignore
+_output_strict_gate_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.strict_gate",
+    "output/renderers/strict_gate.py",
+    "output_strict_gate_renderer",
+)  # type: ignore
+_output_render_quality_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.render_quality",
+    "output/renderers/render_quality.py",
+    "output_render_quality_renderer",
+)  # type: ignore
+_output_verification_route_policy_renderer = _load_optional_module_with_file_fallback(
+    "output.renderers.verification_route_policy",
+    "output/renderers/verification_route_policy.py",
+    "output_verification_route_policy_renderer",
+)  # type: ignore
+_output_rules_registry = _load_optional_module_with_file_fallback(
+    "output.rules_registry",
+    "output/rules_registry.py",
+    "output_rules_registry",
+)  # type: ignore
+_output_state_snapshot = _load_optional_module_with_file_fallback(
+    "output.state_snapshot",
+    "output/state_snapshot.py",
+    "output_state_snapshot",
+)  # type: ignore
+_output_resolver = _load_optional_module_with_file_fallback(
+    "output.resolver",
+    "output/resolver.py",
+    "output_resolver",
+)  # type: ignore
+_output_dispatcher = _load_optional_module_with_file_fallback(
+    "output.dispatcher",
+    "output/dispatcher.py",
+    "output_dispatcher",
+)  # type: ignore
+_output_routing_runtime = _load_optional_module_with_file_fallback(
+    "output.routing_runtime",
+    "output/routing_runtime.py",
+    "output_routing_runtime",
+)  # type: ignore
+_output_pipeline = _load_optional_module_with_file_fallback(
+    "output.pipeline",
+    "output/pipeline.py",
+    "output_pipeline",
+)  # type: ignore
+_output_self_debunking_runtime_seam = _load_optional_module_with_file_fallback(
+    "output.self_debunking_runtime_seam",
+    "output/self_debunking_runtime_seam.py",
+    "output_self_debunking_runtime_seam",
+)  # type: ignore
+_output_post_render_qc_stage = _load_optional_module_with_file_fallback(
+    "output.post_render_qc_stage",
+    "output/post_render_qc_stage.py",
+    "output_post_render_qc_stage",
+)  # type: ignore
+_output_final_html_runtime_stage = _load_optional_module_with_file_fallback(
+    "output.final_html_runtime_stage",
+    "output/final_html_runtime_stage.py",
+    "output_final_html_runtime_stage",
+)  # type: ignore
+_output_render_body_runtime_stage = _load_optional_module_with_file_fallback(
+    "output.render_body_runtime_stage",
+    "output/render_body_runtime_stage.py",
+    "output_render_body_runtime_stage",
+)  # type: ignore
+_output_route_render_runtime_stage = _load_optional_module_with_file_fallback(
+    "output.route_render_runtime_stage",
+    "output/route_render_runtime_stage.py",
+    "output_route_render_runtime_stage",
+)  # type: ignore
+_output_csc_mid_runtime_stage = _load_optional_module_with_file_fallback(
+    "output.csc_mid_runtime_stage",
+    "output/csc_mid_runtime_stage.py",
+    "output_csc_mid_runtime_stage",
+)  # type: ignore
+_output_command_response_catalog = _load_optional_module_with_file_fallback(
+    "output.commands.response_catalog",
+    "output/commands/response_catalog.py",
+    "output_command_response_catalog",
+)  # type: ignore
+_ui_history_replay_runtime = _load_optional_module_with_file_fallback(
+    "ui_history_replay_runtime",
+    "ui_history_replay_runtime.py",
+    "ui_history_replay_runtime",
+)  # type: ignore
+_chat_log_loader_runtime = _load_optional_module_with_file_fallback(
+    "chat_log_loader_runtime",
+    "chat_log_loader_runtime.py",
+    "chat_log_loader_runtime",
+)  # type: ignore
+_chat_log_access_runtime = _load_optional_module_with_file_fallback(
+    "chat_log_access_runtime",
+    "chat_log_access_runtime.py",
+    "chat_log_access_runtime",
+)  # type: ignore
+_panel_action_runtime_routes_mod = _load_optional_module_with_file_fallback(
+    "panel_action_runtime_routes",
+    "panel_action_runtime_routes.py",
+    "panel_action_runtime_routes",
+)  # type: ignore
+_panel_action_gate_runtime_mod = _load_optional_module_with_file_fallback(
+    "panel_action_gate_runtime",
+    "panel_action_gate_runtime.py",
+    "panel_action_gate_runtime",
+)  # type: ignore
+_panel_action_orchestrator_runtime_mod = _load_optional_module_with_file_fallback(
+    "panel_action_orchestrator_runtime",
+    "panel_action_orchestrator_runtime.py",
+    "panel_action_orchestrator_runtime",
+)  # type: ignore
 
 try:
     from qc_bridge import QCBridge as _QCBridge  # type: ignore
@@ -671,6 +889,30 @@ def _load_panel_asset_text_s7(fallback_text: str):
     print('[S7] panel.html external asset enabled (static self-test passed; runtime self-test pending).')
     return txt, {"source": "external", "reason": "static_selftest_passed", "static_ok": True, "report": report}
 
+
+_PANEL_MANUAL_TEST_SHARED_MARKER = "/* __PANEL_MANUAL_TEST_RUNNER_SHARED__ */"
+_PANEL_MANUAL_TEST_SHARED_FILE = "panel_manual_test_runner.js"
+
+
+def _load_panel_manual_test_shared_js(fallback_text: str = "") -> str:
+    try:
+        txt = _load_ui_asset_text(_PANEL_MANUAL_TEST_SHARED_FILE, fallback_text)
+        return str(txt or "")
+    except Exception:
+        return str(fallback_text or "")
+
+
+def _inject_panel_manual_test_shared_js(panel_html: str, shared_js: str) -> str:
+    txt = str(panel_html or "")
+    if not txt:
+        return txt
+    if _PANEL_MANUAL_TEST_SHARED_MARKER not in txt:
+        return txt
+    payload = str(shared_js or "").strip("\n")
+    if not payload:
+        return txt.replace(_PANEL_MANUAL_TEST_SHARED_MARKER, "")
+    return txt.replace(_PANEL_MANUAL_TEST_SHARED_MARKER, payload)
+
 # ----------------------------
 # STUFE 0: Golden Run Checklist (manual, non-network)
 # ----------------------------
@@ -726,12 +968,14 @@ def _safe_sha256(s: str) -> str:
         return ""
 
 # Default ruleset location preference (latest first):
-#   1) ./JSON/Comm-SCI-v20.2.2.json
-#   2) ./JSON/Comm-SCI-v20.2.1.json
-#   3) ./JSON/Comm-SCI-v20.2.0.json
-#   4) ./JSON/Comm-SCI-v20.1.0.json
-#   5) legacy fallbacks (v20.0.3 / v20.0.2)
+#   1) ./JSON/Comm-SCI-v20.2.5.json
+#   2) ./JSON/Comm-SCI-v20.2.2.json
+#   3) ./JSON/Comm-SCI-v20.2.1.json
+#   4) ./JSON/Comm-SCI-v20.2.0.json
+#   5) ./JSON/Comm-SCI-v20.1.0.json
+#   6) legacy fallbacks (v20.0.3 / v20.0.2)
 _DEFAULT_RULESET_CANDIDATES = [
+    'Comm-SCI-v20.2.5.json',
     'Comm-SCI-v20.2.2.json',
     'Comm-SCI-v20.2.1.json',
     'Comm-SCI-v20.2.0.json',
@@ -753,7 +997,7 @@ if not DEFAULT_JSON:
             break
 if not DEFAULT_JSON:
     # Final fallback path (may still fail later with clear file-not-found log).
-    DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.2.2.json')
+    DEFAULT_JSON = os.path.join(JSON_DIR, 'Comm-SCI-v20.2.5.json')
 
 # Config/keys location: ./Config/
 CONFIG_FILENAME = 'Comm-SCI-Config.json'
@@ -954,8 +1198,15 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
         gd = (getattr(gov_obj, 'data', {}) or {}).get('global_defaults', {}) or {}
         # user_feedback_triplet: e.g., "3,3,3"
         uft = (gd.get('user_feedback_triplet') or {}) if isinstance(gd, dict) else {}
-        if isinstance(uft, dict) and bool(uft.get('enabled', False)):
-            uft_pat = str(uft.get('regex') or uft.get('pattern') or '').strip() or r'^\s*([0-3])\s*,\s*([0-3])\s*,\s*([0-3])\s*$'
+        # Keep CGI triplets usable even when the optional config block is absent
+        # (e.g. operational v20.2.x files without explicit global_defaults.user_feedback_triplet).
+        uft_enabled = True
+        if isinstance(uft, dict) and ('enabled' in uft):
+            uft_enabled = bool(uft.get('enabled', False))
+        if uft_enabled:
+            uft_pat = r'^\s*([0-3])\s*,\s*([0-3])\s*,\s*([0-3])\s*$'
+            if isinstance(uft, dict):
+                uft_pat = str(uft.get('regex') or uft.get('pattern') or '').strip() or uft_pat
             if re.fullmatch(uft_pat, txt):
                 return {"kind": "chat", "query_text": txt, "is_user_feedback_triplet": True}
 
@@ -1003,12 +1254,9 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
                                     valid = True
                                 break
                     if not valid:
-                        err_html = (
-                            '<div class="csc-warning" style="background:#fee; border-color:#c00; color:#a00;">'
-                            '<b>CONTROL LAYER BLOCK:</b><br>'
-                            + 'Invalid numeric code: ' + html.escape(txt)
-                            + '<br>Valid format: INDEX-OPTION (e.g., 1-2).'
-                            + '</div>'
+                        err_html = _render_control_layer_block_html(
+                            f"Invalid numeric code: {txt}",
+                            suffix_html="<br>Valid format: INDEX-OPTION (e.g., 1-2).",
                         )
                         return {"kind": "error", "html": err_html}
                     # Valid numeric code → treat as chat (the model decides how to use it)
@@ -1034,11 +1282,7 @@ def route_input(raw_txt: str, state, api_instance, gov_manager=None) -> dict:
             gate_error = None
 
         if gate_error:
-            err_html = (
-                '<div class="csc-warning" style="background:#fee; border-color:#c00; color:#a00;">'
-                '<b>CONTROL LAYER BLOCK:</b><br>' + html.escape(str(gate_error)) +
-                '</div>'
-            )
+            err_html = _render_control_layer_block_html(str(gate_error))
             return {"kind": "error", "html": err_html}
 
     return {"kind": "chat", "query_text": txt}
@@ -1519,8 +1763,23 @@ class GovernanceManager:
             out = dict(data)
 
             # Map operational contracts to legacy/global_defaults access paths.
-            if "global_defaults" not in out and isinstance(out.get("contracts"), dict):
-                out["global_defaults"] = out.get("contracts") or {}
+            # Keep existing global_defaults values and only fill missing keys from
+            # contracts. Required for v20.2.x where global_defaults exists but
+            # selected contract blocks (for example self_debunking_contract) are
+            # placed under contracts.output_contract.
+            contracts = out.get("contracts")
+            if isinstance(contracts, dict):
+                gd = out.get("global_defaults")
+                if not isinstance(gd, dict):
+                    gd = {}
+                for k, v in contracts.items():
+                    if k not in gd:
+                        gd[k] = v
+                    elif isinstance(gd.get(k), dict) and isinstance(v, dict):
+                        for sk, sv in v.items():
+                            if sk not in gd[k]:
+                                gd[k][sk] = sv
+                out["global_defaults"] = gd
 
             # Bridge self-debunking module fields expected by legacy runtime helpers.
             # Operational v20 keeps the normative contract at:
@@ -2198,9 +2457,66 @@ def enforce_qc_footer_deltas(text: str, gov_mgr_or_expected, profile_name: str =
         return 0
 
     # ----------------------------
-    # Case 1: canonical QC-Matrix present -> normalize values + deltas in-place (existing behavior).
+    # Case 1: canonical QC-Matrix present.
+    # - normalize existing value/delta pairs
+    # - if the line is missing deltas or uses localized labels, rebuild canonical EN footer.
     # ----------------------------
     if 'QC-Matrix:' in text:
+        matrix_line_re = re.compile(
+            r'(?im)^(?P<indent>\s*)QC-Matrix\s*:\s*(?P<body>.*?)(?P<nl>\r?\n|$)',
+            re.UNICODE,
+        )
+        matrix_matches = list(matrix_line_re.finditer(text))
+        m_matrix = matrix_matches[-1] if matrix_matches else None
+        if m_matrix:
+            body = (m_matrix.group('body') or '').strip()
+            items = [p.strip() for p in re.split(r'[·;\|]+', body) if p.strip()]
+            vals = {}
+            deltas = {}
+            saw_non_en_label = False
+            en_labels = {disp for _, disp in canon_order}
+
+            for it in items:
+                m_it = re.match(
+                    r'^\s*([A-Za-zÄÖÜäöüß]+)\s*(?:=|:)?\s*(\d+(?:[\.,]\d+)?)\s*(?:\(\s*(?:Δ|∆|delta)\s*([+\-−]?\d+)\s*\))?\s*$',
+                    it,
+                    re.UNICODE,
+                )
+                if not m_it:
+                    continue
+                lbl = (m_it.group(1) or '').strip()
+                num = (m_it.group(2) or '').strip()
+                d_raw = m_it.group(3)
+
+                key = label_map.get(lbl.lower())
+                if not key:
+                    continue
+                iv = _to_int_rating(num)
+                if iv is None:
+                    continue
+                vals[key] = iv
+                if lbl not in en_labels:
+                    saw_non_en_label = True
+                if d_raw is not None:
+                    try:
+                        deltas[key] = int(str(d_raw).replace('−', '-'))
+                    except Exception:
+                        pass
+
+            has_all_vals = all(k in vals for k, _ in canon_order)
+            has_all_deltas = has_all_vals and all(k in deltas for k, _ in canon_order)
+            if has_all_vals and ((not has_all_deltas) or saw_non_en_label):
+                parts = []
+                for k, disp in canon_order:
+                    iv = int(vals.get(k))
+                    d = _expected_delta(iv, expected_norm.get(k))
+                    if d is None:
+                        d = int(deltas.get(k, 0))
+                    sign = '+' if d > 0 else ''
+                    parts.append(f"{disp} {iv} (Δ{sign}{d})")
+                rebuilt = f"{m_matrix.group('indent') or ''}QC-Matrix: " + " · ".join(parts) + (m_matrix.group('nl') or '')
+                return text[:m_matrix.start()] + rebuilt + text[m_matrix.end():]
+
         entry_re = re.compile(
             r'(?P<label>[A-Za-zÄÖÜäöüß]+)\s*'
             r'(?P<value>\d+(?:[\.,]\d+)?)\s*'
@@ -2353,95 +2669,14 @@ def format_sci_menu(text: str) -> str:
     """
     if not text:
         return text
+    return text
 
 
 def inject_minimal_self_debunking(text: str, *, title: str = "Self-Debunking", lang: str = "en") -> str:
-    """Deterministically inject a minimal compliant Self-Debunking block (2 points).
-
-    This is a last-resort guard used only when the ruleset requires Self-Debunking but
-    the model output omitted it (and a single repair pass didn't fix it).
-    The injected content avoids new factual claims; it only states generic limitations
-    and next checks.
-    """
-    if not text:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return text
-    if title in text:
-        return text
-
-    block = ""
-    lang_norm = (lang or "en").lower().strip()
-    if lang_norm.startswith("de"):
-        block = (
-            f"\n\n{title}:\n\n"
-            "1. **Schwäche**: Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen.\n"
-            "   **Warum relevant**: Vereinfachungen können Randfälle oder alternative Deutungen verdecken.\n"
-            "   **Prüfen/Widerlegen (nächster Schritt)**: Die zentralen Annahmen explizit machen und gegen Primärquellen/Definitionen prüfen.\n\n"
-            "2. **Schwäche**: Die Antwort kann wichtige Gegenpositionen oder Unsicherheitsgrenzen auslassen.\n"
-            "   **Warum relevant**: Fehlende Einschränkungen können die Gültigkeit überdehnen oder Sicherheit vortäuschen.\n"
-            "   **Prüfen/Widerlegen (nächster Schritt)**: Mindestens ein starkes Gegenbeispiel ergänzen und prüfen, ob die Kernaussagen bestehen bleiben.\n"
-        )
-    else:
-        block = (
-            f"\n\n{title}:\n\n"
-            "1. **Weakness**: The answer may rely on simplified framing or implicit assumptions.\n"
-            "   **Why it matters**: Simplifications can hide edge-cases or alternative interpretations.\n"
-            "   **What would verify/falsify (next check)**: Identify key assumptions and test them against primary sources or formal definitions.\n\n"
-            "2. **Weakness**: The answer may omit important counter-perspectives or uncertainty boundaries.\n"
-            "   **Why it matters**: Missing caveats can overstate confidence or applicability.\n"
-            "   **What would verify/falsify (next check)**: Add at least one strong counter-example and check whether conclusions still hold.\n"
-        )
-    # Place block BEFORE QC-Matrix if present, else append.
-    m = re.search(r"(?im)^\s*QC-Matrix:\s*.*$", text)
-    if not m:
-        return text.rstrip() + block
-    insert_at = m.start()
-    return text[:insert_at].rstrip() + block + "\n\n" + text[insert_at:].lstrip()
-
-    # Quick pre-check: only attempt if the response likely contains an SCI menu or option run.
-    # (This keeps accidental reformatting extremely unlikely.)
-    menu_hint = re.search(r"\bSCI\b", text, re.IGNORECASE)
-    if not menu_hint:
-        return text
-
-    # Find option markers like "a)" "b:" "c -" "d –"
-    opt_pat = re.compile(r"(?im)(?:^|\s)([a-hA-H])\s*[\)\.:\-–]\s*")
-    hits = list(opt_pat.finditer(text))
-    if len(hits) < 3:
-        return text  # not a menu (or too little signal)
-
-    # Build segments from first option onwards, keep header prefix as-is
-    first = hits[0].start(1)
-    prefix = text[:first].rstrip()
-
-    items = []
-    for i, h in enumerate(hits):
-        letter = h.group(1).lower()
-        start = h.end()
-        end = hits[i + 1].start(1) if i + 1 < len(hits) else len(text)
-        body = text[start:end].strip()
-
-        # If body begins with separator artifacts, clean lightly
-        body = re.sub(r"^[·\|\-–\s]+", "", body).strip()
-        # Collapse excessive internal whitespace
-        body = re.sub(r"[ \t]{2,}", " ", body)
-
-        # Keep empty bodies (rare) but still show the option line
-        items.append((letter, body))
-
-    # Render as markdown-like list; HTML_CHAT already formats lists nicely.
-    rendered_lines = []
-    if prefix:
-        rendered_lines.append(prefix)
-    rendered_lines.append("")  # blank line before list for readability
-
-    for letter, body in items:
-        if body:
-            rendered_lines.append(f"- {letter}) {body}")
-        else:
-            rendered_lines.append(f"- {letter})")
-
-    return "\n".join(rendered_lines)
-
+    return _sd_formatter.inject_minimal_self_debunking(text, title=title, lang=lang)
 
 def normalize_evidence_tags(text: str) -> str:
     """Normalize Evidence-Linker provenance formatting without inventing new information.
@@ -2479,6 +2714,28 @@ def normalize_evidence_tags(text: str) -> str:
     out = re.sub(r"(?im)\s+[·•]\s*(?=\-?(?:TRAIN|WEB|DOC)\b)", " ", out)
     out = re.sub(r"(?im)\s+\-\s*(TRAIN|WEB|DOC)\b", "", out)
     return out
+
+
+def strip_empty_citation_placeholders(text: str) -> str:
+    """Remove empty citation placeholders like ``[cite: ]`` from model output.
+
+    Keep non-empty citation markers unchanged (e.g. ``[cite: 12]`` / ``[cite: doi:...]``).
+    The cleanup is deterministic and skips fenced code blocks.
+    """
+    if not text:
+        return text
+
+    try:
+        parts = str(text).split("```")
+        pat = re.compile(r"\[\s*cite\s*:\s*\]", re.IGNORECASE)
+        for i in range(0, len(parts), 2):
+            segment = pat.sub("", parts[i])
+            segment = re.sub(r"[ \t]{2,}", " ", segment)
+            segment = re.sub(r"[ \t]+([,.;:!?])", r"\1", segment)
+            parts[i] = segment
+        return "```".join(parts)
+    except Exception:
+        return text
 
 
 def normalize_known_markdown_control_headings(text: str) -> str:
@@ -2576,6 +2833,18 @@ def strip_verification_route_display_lines(text: str) -> str:
     This function is display-only and deterministic.
     """
     try:
+        if _output_verification_route_policy_renderer is not None and hasattr(
+            _output_verification_route_policy_renderer,
+            "strip_verification_route_display_lines",
+        ):
+            out = _output_verification_route_policy_renderer.strip_verification_route_display_lines(  # type: ignore[attr-defined]
+                text
+            )
+            if out is not None:
+                return str(out)
+    except Exception:
+        pass
+    try:
         if not text:
             return text
         out_lines = []
@@ -2644,24 +2913,24 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
             r"(?i)^\s*(?:[-*•]\s*)?\[(?:output language|answer length|qc overrides|qc behavior|sci trace detail)\]"
         )
         status_line_pat = re.compile(
-            r"(?i)^\s*(?:active profile|profile|overlay|sci|comm|control layer|qc|cgi|color)\s*:\s*.+$"
+            r"(?i)^\s*(?:active profile|profile|aktives profil|profil|overlay|sci|comm|control layer|steuerungsebene|qc|cgi|color|farbe)\s*:\s*.+$"
         )
         profile_only_pat = re.compile(
-            r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
+            r"(?i)^\s*(?:profile|profil)\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
         )
         profile_plain_pat = re.compile(
-            r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
+            r"(?i)^\s*(?:profile|profil)\s+(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
         )
         profile_title_pat = re.compile(
-            r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
+            r"(?i)^\s*(?:profile|profil)\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
         )
         profile_with_tail_pat = re.compile(
-            r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s+(?P<tail>.+?)\s*$"
+            r"(?i)^\s*(?:profile|profil)\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s+(?P<tail>.+?)\s*$"
         )
         question_like_pat = re.compile(
             r"(?i)^(?:was|wie|warum|wieso|wer|wo|wann|welche?|what|why|how|who|where|when|which|is|are|can|could|should|do|does)\b"
         )
-        compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
+        compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|profil|overlay|sci|color|farbe)\s*:\s*.+$")
 
         def _is_prompt_echo_line(sline: str) -> bool:
             t = (sline or "").strip()
@@ -2765,12 +3034,12 @@ def strip_internal_scaffolding_status_lines(text: str) -> str:
                         continue
                 i += 1
                 continue
-            starts_status = low.startswith("profile:")
+            starts_status = low.startswith(("profile:", "profil:"))
             starts_comm = low.startswith("comm:")
             has_sep = any(ch in s for ch in ("·", "•", "|"))
             token_count = sum(
                 1
-                for t in ("overlay", "sci", "color", "control layer", "qc", "cgi")
+                for t in ("overlay", "sci", "color", "farbe", "control layer", "steuerungsebene", "qc", "cgi")
                 if t in low
             )
             has_active_profile = "active profile" in low
@@ -2800,42 +3069,73 @@ def strip_sci_trace_line_when_inactive(
     """Remove leaked SCI Trace lines/sections when SCI is inactive.
 
     This is display cleanup only and intentionally conservative:
-    - Runs only when SCI is effectively OFF (no active variant, not pending).
+    - Runs when no SCI variant is actively selected.
+      A pending selection without a chosen variant is treated as "no active variant"
+      for leaked-trace cleanup only (state machine remains pending until timeout).
     - Keeps code fences untouched.
     """
     try:
         if not text:
             return text
-        if bool(sci_active) or bool((sci_variant or "").strip()) or bool(sci_pending):
+        variant = str(sci_variant or "").strip().lower()
+        variant_is_set = bool(variant) and variant not in {"off", "none"}
+        # SCI Trace is only allowed when SCI is truly active with a concrete variant.
+        if bool(sci_active) and variant_is_set:
             return text
 
         src = str(text)
 
-        # First remove section-style SCI Trace blocks (including numbered heading variants
-        # like "4. SCI Trace (Variante A: Standard)") up to Self-Debunking/QC/Final Answer or end.
-        src = re.sub(
-            r"(?is)(?:^|\n)\s*(?:#+\s*)?(?:\d+[\.\)]\s*)?SCI\s*Trace(?:\s*\([^\n]*\))?\s*:?\s*\n.*?"
-            r"(?=\n\s*(?:#+\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking|QC(?:-Matrix)?\s*:|Final\s+Answer)\b|\Z)",
-            "\n",
-            src,
-        )
+        def _normalize_probe(line: str) -> str:
+            p = re.sub(r"<[^>]+>", "", str(line or ""))
+            p = p.strip()
+            # Strip leaked markdown emphasis wrappers around headings (e.g. **SCI Trace:**).
+            prev = None
+            while p != prev:
+                prev = p
+                p = re.sub(r"^\s*(?:\*{1,2}|_{1,2})\s*", "", p)
+                p = re.sub(r"\s*(?:\*{1,2}|_{1,2})\s*$", "", p)
+                p = p.strip()
+            return p
+
+        def _is_boundary(line: str) -> bool:
+            p = _normalize_probe(line)
+            return bool(
+                re.match(
+                    r"(?i)^(?:#+\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking|QC(?:-Matrix)?|Final\s+Answer)\b",
+                    p,
+                )
+            )
 
         out_lines = []
         in_code = False
+        in_trace_block = False
         for ln in src.splitlines():
             s = (ln or "").strip()
             if s.startswith("```"):
                 in_code = not in_code
-                out_lines.append(ln)
+                if not in_trace_block:
+                    out_lines.append(ln)
                 continue
             if in_code:
-                out_lines.append(ln)
+                if not in_trace_block:
+                    out_lines.append(ln)
                 continue
 
-            if re.match(
-                r"(?im)^\s*(?:#+\s*)?(?:\d+[\.\)]\s*)?SCI\s*Trace(?:\s*\([^\n]*\))?\s*:?\s*.*$",
-                s,
-            ):
+            if in_trace_block:
+                if _is_boundary(ln):
+                    in_trace_block = False
+                    out_lines.append(ln)
+                continue
+
+            probe = _normalize_probe(s)
+            m = re.match(
+                r"(?i)^(?:#+\s*)?(?:\d+[\.\)]\s*)?SCI\s*Trace(?:\s*\([^\n]*\))?\s*:?\s*(.*)$",
+                probe,
+            )
+            if m:
+                tail = str(m.group(1) or "").strip()
+                if not tail:
+                    in_trace_block = True
                 continue
             out_lines.append(ln)
 
@@ -2918,21 +3218,21 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
                 return True
 
             status_line_pat = re.compile(
-                r"(?i)^\s*(?:active profile|profile|overlay|sci|comm|control layer|qc|cgi|color)\s*:\s*.+$"
+                r"(?i)^\s*(?:active profile|profile|aktives profil|profil|overlay|sci|comm|control layer|steuerungsebene|qc|cgi|color|farbe)\s*:\s*.+$"
             )
             profile_only_pat = re.compile(
-                r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
+                r"(?i)^\s*(?:profile|profil)\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
             )
             profile_plain_pat = re.compile(
-                r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
+                r"(?i)^\s*(?:profile|profil)\s+(?:standard|briefing|sandbox|sparring|expert)\s*\.?\s*$"
             )
             profile_title_pat = re.compile(
-                r"(?i)^\s*profile\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
+                r"(?i)^\s*(?:profile|profil)\s+(?:standard|briefing|sandbox|sparring|expert)\s*:\s*$"
             )
             profile_with_tail_pat = re.compile(
-                r"(?i)^\s*profile\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s+(?P<tail>.+?)\s*$"
+                r"(?i)^\s*(?:profile|profil)\s*:\s*(?:standard|briefing|sandbox|sparring|expert)\s+(?P<tail>.+?)\s*$"
             )
-            compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|overlay|sci)\s*:\s*.+$")
+            compact_keys_pat = re.compile(r"(?i)^\s*(?:profile|profil|overlay|sci|color|farbe)\s*:\s*.+$")
             question_like_pat = re.compile(
                 r"(?i)^(?:was|wie|warum|wieso|wer|wo|wann|welche?|what|why|how|who|where|when|which|is|are|can|could|should|do|does)\b"
             )
@@ -2976,12 +3276,12 @@ def strip_internal_scaffolding_status_html(html_text: str) -> str:
                 if key_hits >= 2 and all(status_line_pat.match(ln or "") for ln in lines):
                     return True
 
-            starts_status = low.startswith("profile:")
+            starts_status = low.startswith(("profile:", "profil:"))
             starts_comm = low.startswith("comm:")
             has_sep = any(ch in txt for ch in ("·", "•", "|"))
             token_count = sum(
                 1
-                for t in ("overlay", "sci", "color", "control layer", "qc", "cgi")
+                for t in ("overlay", "sci", "color", "farbe", "control layer", "steuerungsebene", "qc", "cgi")
                 if t in low
             )
             has_active_profile = "active profile" in low
@@ -3021,37 +3321,20 @@ def strip_exact_status_header_line(text: str, header_line: str) -> str:
 
 
 def sanitize_self_debunking_markdown_in_html(html_text: str) -> str:
-    """Normalize leaked markdown emphasis inside already-rendered Self-Debunking HTML blocks.
-
-    Deterministic scope:
-    - only runs if a self-debunking block exists
-    - converts `**label**` / `__label__` to `<strong>label</strong>`
-    - formatting only (no semantic rewrites)
-    """
-    try:
-        if not html_text:
-            return html_text
-        if re.search(r"(?is)class=(?:\"|')[^\"']*self-debunking[^\"']*(?:\"|')", html_text) is None:
-            return html_text
-        out = re.sub(r"\*\*([^*\n][^*\n]*?)\*\*", r"<strong>\1</strong>", html_text)
-        out = re.sub(r"__([^_\n][^_\n]*?)__", r"<strong>\1</strong>", out)
-        # Remove orphan markdown bullet artifacts like "*<br>" inside full Self-Debunking blocks.
-        sd_block_re = re.compile(
-            r'(?is)<div[^>]*class=(?:"|\')[^"\']*self-debunking[^"\']*(?:"|\')[^>]*>.*?</div>(?=\s*<(?:p|div)\b|\s*\Z)'
-        )
-
-        def _clean_sd_block(m: re.Match) -> str:
-            block = str(m.group(0) or "")
-            block = re.sub(r"(?im)\s*\*\s*(?=<br\s*/?>)", "", block)
-            block = re.sub(r"(?im)(^|>\s*)\*\s*(?=(?:<strong>|[A-Za-zÄÖÜäöü]))", r"\1", block)
-            block = re.sub(r"(?im)\n[ \t]*\*[ \t]*(?=\n)", "\n", block)
-            return block
-
-        out = sd_block_re.sub(_clean_sd_block, out)
-        return out
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return html_text
+    return _sd_formatter.sanitize_self_debunking_markdown_in_html(html_text)
 
+
+def ensure_self_debunking_box_html(html_text: str, *, lang: str = "en") -> str:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
+        return html_text
+    fn = getattr(_sd_formatter, "ensure_self_debunking_box_html", None)
+    if callable(fn):
+        return fn(html_text, lang=lang)
+    return html_text
 
 def qc_override_runtime_violations(text: str, overrides: dict | None) -> list[str]:
     """Deterministic best-effort checks for active QC overrides against runtime output."""
@@ -3196,606 +3479,135 @@ def qc_override_runtime_violations(text: str, overrides: dict | None) -> list[st
 
 
 def normalize_self_debunking_language(text: str, lang: str) -> str:
-    """Translate Self-Debunking label tokens into the target language (currently DE),
-    without changing the required header 'Self-Debunking' or adding new factual claims.
-
-    This is a deterministic post-processing step for models that keep English label words
-    (e.g., 'Weakness', 'Why it matters', 'What would verify/falsify (next check)') even
-    when answer_language=de.
-    """
-    try:
-        if not text or not lang:
-            return text
-        if not str(lang).lower().startswith("de"):
-            return text
-
-        # Isolate the Self-Debunking block up to the QC footer (or end of text).
-        # We keep the section header unchanged but translate common label tokens inside.
-        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
-        if not m:
-            return text
-
-        block = m.group(1)
-        tail_marker = m.group(2)  # either QC footer marker or end
-
-        # Translate label phrases (keep punctuation/colon style flexible).
-        repl = [
-            (r"(?i)\bWeakness\b\s*:", "Schwäche:"),
-            (r"(?i)\bWhy\s+it\s+matters\b\s*:", "Warum das wichtig ist:"),
-            (r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\s*:",
-             "Was würde verifizieren/falsifizieren (nächster Check):"),
-            (r"(?i)\bWhat\s+would\s+verify\s+or\s+falsify\s*\(next\s+check\)\s*:",
-             "Was würde verifizieren oder falsifizieren (nächster Check):"),
-            (r"(?i)\bNext\s+check\b\s*:", "Nächster Check:"),
-        ]
-        for pat, rep in repl:
-            block = re.sub(pat, rep, block)
-
-        # Reassemble
-        start, end = m.span(1)
-        return text[:start] + block + text[end:]
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return text
-
+    return _sd_formatter.normalize_self_debunking_language(text, lang)
 
 def bold_self_debunking_labels(text: str, lang: str) -> str:
-    """Bold the label token before the first colon inside Self-Debunking points.
-
-    Deterministic post-processing. Formatting only.
-    """
-    try:
-        if not text:
-            return text
-        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
-        if not m:
-            return text
-        block = m.group(1)
-
-        # 1) Numbered point heads: "1. Weakness:" -> "1. **Weakness**:"
-        def _bold_head(m2):
-            lead = m2.group(1)
-            label = (m2.group(2) or "").strip()
-            if not label:
-                return m2.group(0)
-            if label.startswith("**") and label.endswith("**"):
-                return m2.group(0)
-            return f"{lead}**{label}**:"
-        block = re.sub(r"(?m)^(\s*\d+\.\s*)([^\n:<]{1,80}?)(\s*):", lambda m2: _bold_head(m2), block)
-
-        # 2) Field labels (possibly indented): "Why it matters:" -> "**Why it matters**:"
-        labels = [
-            "Weakness", "Schwäche",
-            "Why it matters", "Warum relevant", "Warum das wichtig ist",
-            "What would verify/falsify (next check)", "What would verify or falsify (next check)",
-            "Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)",
-            "Next check", "Nächster Check",
-            "Prüfen/Widerlegen (nächster Schritt)",
-        ]
-        for lab in labels:
-            block = re.sub(
-                rf"(?m)^(\s*)(?!\*\*){re.escape(lab)}\s*:(?!\*)",
-                rf"\1**{lab}**:",
-                block
-            )
-
-        start, end = m.span(1)
-        return text[:start] + block + text[end:]
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return text
-
+    return _sd_formatter.bold_self_debunking_labels(text, lang)
 
 def normalize_self_debunking_field_linebreaks(text: str, *, lang: str = "en") -> str:
-    """Ensure secondary Self-Debunking field labels start on a new line (no extra numbering).
-
-    This keeps formatting stable when weaker models place
-    "Warum das wichtig ist:" / "What would verify..." inline behind the Weakness sentence.
-    """
-    try:
-        if not text:
-            return text
-        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
-        if not m:
-            return text
-        block = m.group(1)
-
-        labels = [
-            "Why it matters", "Warum relevant", "Warum das wichtig ist",
-            "What would verify/falsify (next check)", "What would verify or falsify (next check)",
-            "Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)",
-            "Next check", "Nächster Check", "Nächste Prüfung",
-            "Prüfen/Widerlegen (nächster Schritt)",
-        ]
-        labels_rx = "|".join(re.escape(x) for x in labels)
-        # Insert a line break before secondary field labels if they leak inline.
-        block = re.sub(
-            rf"(?i)([^\n])\s+(?=(?:\*\*|__)?(?:{labels_rx})(?:\*\*|__)?\s*:)",
-            r"\1\n   ",
-            block,
-        )
-
-        start, end = m.span(1)
-        return text[:start] + block + text[end:]
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return text
-
+    return _sd_formatter.normalize_self_debunking_field_linebreaks(text, lang=lang)
 
 def normalize_self_debunking_numbering_text(text: str, *, lang: str = "en") -> str:
-    """Ensure stable numbered Self-Debunking points in plain text before HTML rendering."""
-    try:
-        if not text:
-            return text
-        m = re.search(r"(?is)(\b(?:Self-Debunking|Selbst[- ]?Debunking)\b.*?)(\n\s*QC\-Matrix:|\Z)", text)
-        if not m:
-            return text
-
-        block = m.group(1)
-        lines = block.splitlines()
-        if not lines:
-            return text
-
-        out = []
-        n = 0
-        # Keep title line unchanged
-        out.append(lines[0])
-        for ln in lines[1:]:
-            s = (ln or "").strip()
-            # Remove orphan marker lines that cause visible double numbering.
-            if re.fullmatch(r"\d+\.", s or ""):
-                continue
-
-            # Strip leaked list prefixes in front of known Self-Debunking labels.
-            # Weakness/Schwäche lines get renumbered deterministically below.
-            ln = re.sub(
-                r"(?im)^\s*\d+\.\s*(?=(?:\*\*|__)?(?:Weakness|Schwäche|Why it matters|Warum relevant|Warum das wichtig ist|What would verify/falsify \(next check\)|What would verify or falsify \(next check\)|Was würde verifizieren/falsifizieren \(nächster Check\)|Was würde verifizieren oder falsifizieren \(nächster Check\)|Next check|Nächster Check|Prüfen/Widerlegen \(nächster Schritt\))(?:\*\*|__)?\s*:)",
-                "",
-                ln,
-                count=1,
-            )
-
-            if lang.lower().startswith("de"):
-                ln = re.sub(r"(?i)\bWeakness\b\s*:", "Schwäche:", ln)
-                ln = re.sub(r"(?i)\bWhy\s+it\s+matters\b\s*:", "Warum das wichtig ist:", ln)
-                ln = re.sub(
-                    r"(?i)\bWhat\s+would\s+verify\s*/\s*falsify\s*\(next\s+check\)\s*:",
-                    "Was würde verifizieren/falsifizieren (nächster Check):",
-                    ln,
-                )
-
-            # Number only the Weakness/Schwäche lead lines.
-            if re.match(
-                r"(?im)^\s*(?:\d+\.\s*)?(?:\*\*|__)?(?:Weakness|Schwäche)(?:\*\*|__)?\s*:",
-                ln or "",
-            ):
-                n += 1
-                ln = re.sub(r"(?im)^\s*\d+\.\s*", "", ln, count=1)
-                ln = f"{n}. {ln.lstrip()}"
-            out.append(ln)
-
-        start, end = m.span(1)
-        return text[:start] + "\n".join(out) + text[end:]
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return text
-
+    return _sd_formatter.normalize_self_debunking_numbering_text(text, lang=lang)
 
 def normalize_inline_self_debunking_header(text: str) -> str:
-    """Ensure Self-Debunking header starts on its own line for deterministic boxing."""
-    try:
-        if not text:
-            return text
-        out = str(text)
-        # If title leaks inline after a sentence, split into a new block.
-        out = re.sub(
-            r"([^\n])\s+((?:SCI\s*Trace\s*:\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:)",
-            r"\1\n\n\2",
-            out,
-            flags=re.IGNORECASE,
-        )
-        # If title line has immediate inline body, push the body to the next line.
-        out = re.sub(
-            r"(?im)^(\s*(?:SCI\s*Trace\s*:\s*)?(?:Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:)\s+(?=\S)",
-            r"\1\n",
-            out,
-        )
-        return out
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return text
-
+    return _sd_formatter.normalize_inline_self_debunking_header(text)
 
 def dedupe_self_debunking_sections(text: str) -> str:
-    """Keep exactly one Self-Debunking section when duplicates leak from weaker models.
-
-    Rules (deterministic):
-    - Detect section headers:
-      - "Self-Debunking:" / "Selbst-Debunking:"
-      - "SCI Trace: Self-Debunking:" / "SCI Trace: Selbst-Debunking:"
-    - If multiple are present, keep the last *pure* Self-Debunking section.
-      If none is pure, keep the last detected section.
-    - Section ends at next SD header, QC-Matrix header, or end of text.
-    """
-    try:
-        if not text:
-            return text
-
-        lines = str(text).splitlines()
-        if not lines:
-            return text
-
-        re_sd_header = re.compile(
-            r"(?i)^\s*(?:(?P<sci>SCI\s*Trace)\s*:\s*)?(?P<sd>Self[- ]?Debunking|Selbst[- ]?Debunking)\s*:\s*$"
-        )
-        re_qc = re.compile(r"(?i)^\s*QC(?:-Matrix)?\s*:")
-
-        starts = []
-        for i, ln in enumerate(lines):
-            m = re_sd_header.match((ln or "").strip())
-            if m:
-                starts.append((i, bool(m.group("sci"))))
-
-        if len(starts) <= 1:
-            return text
-
-        # Build section ranges [start, end)
-        ranges = []
-        for idx, (start_i, is_sci_prefixed) in enumerate(starts):
-            end_i = len(lines)
-            for j in range(start_i + 1, len(lines)):
-                s = (lines[j] or "").strip()
-                if re_sd_header.match(s) or re_qc.match(s):
-                    end_i = j
-                    break
-            ranges.append((start_i, end_i, is_sci_prefixed))
-
-        # Keep last pure SD section if available; else last section.
-        keep = None
-        for r in ranges:
-            if not r[2]:
-                keep = r
-        if keep is None:
-            keep = ranges[-1]
-
-        # Remove all non-kept SD ranges.
-        remove_mask = [False] * len(lines)
-        for r in ranges:
-            if r is keep:
-                continue
-            for k in range(r[0], r[1]):
-                remove_mask[k] = True
-
-        out_lines = [ln for i, ln in enumerate(lines) if not remove_mask[i]]
-        return "\n".join(out_lines)
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return text
-
+    return _sd_formatter.dedupe_self_debunking_sections(text)
 
 def html_number_self_debunking(html_text: str, *, lang: str = "en") -> str:
-    """Best-effort: add stable 1./2./3. numbering to Self-Debunking in rendered HTML.
-
-    Safety goals:
-    - Never inject numbering inside existing <ol> lists.
-    - Remove orphan list-marker lines like "1." that can appear after Markdown conversion.
-    - Keep exactly one numeric prefix on each Weakness/Schwäche line.
-    """
-    try:
-        if not html_text:
-            return html_text
-        # Normalize compact one-line HTML so line-wise processing can see block rows.
-        html_text = str(html_text).replace("><", ">\n<")
-        if re.search(r"(?i)Self-Debunking|Selbst[- ]?Debunking", html_text) is None:
-            return html_text
-
-        def _normalize_block(body: str) -> str:
-            if '<ol' in body.lower():
-                # Keep ordered lists intact, but clean known leak artifacts:
-                # - orphan marker rows like "<p>1.</p>"
-                # - accidental numbering on non-Weakness field labels
-                cleaned = body
-                cleaned = re.sub(r"(?is)<p>\s*\d+\.\s*</p>", "", cleaned)
-                cleaned = re.sub(r"(?is)<li>\s*\d+\.\s*</li>", "", cleaned)
-                non_weak_labels = (
-                    "Why it matters",
-                    "Warum relevant",
-                    "Warum es wichtig ist",
-                    "Warum das wichtig ist",
-                    "What would verify/falsify (next check)",
-                    "What would verify or falsify (next check)",
-                    "Was würde verifizieren/falsifizieren (nächster Check)",
-                    "Was würde verifizieren oder falsifizieren (nächster Check)",
-                    "Next check",
-                    "Nächster Check",
-                    "Nächste Prüfung",
-                    "Prüfen/Widerlegen (nächster Schritt)",
-                )
-                labels_rx = "|".join(re.escape(x) for x in non_weak_labels)
-                cleaned = re.sub(
-                    rf"(?is)(<li[^>]*>\s*)(\d+\.\s*)(?=(?:<strong>\s*)?(?:{labels_rx})\s*:)",
-                    r"\1",
-                    cleaned,
-                )
-                # Keep secondary field labels on a new visual line inside list items.
-                secondary_labels = (
-                    "Why it matters", "Warum relevant", "Warum es wichtig ist", "Warum das wichtig ist",
-                    "What would verify/falsify (next check)", "What would verify or falsify (next check)",
-                    "Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)",
-                    "Next check", "Nächster Check", "Nächste Prüfung",
-                    "Prüfen/Widerlegen (nächster Schritt)",
-                )
-                sec_rx = "|".join(re.escape(x) for x in secondary_labels)
-                # Self-Debunking boxes should not show CGI color bullets or isolated markdown debris.
-                cleaned = re.sub(r"(?is)<span[^>]*>\s*[🟢🟡🔴]\s*</span>", "", cleaned)
-                cleaned = re.sub(r"(?is)<(p|li)[^>]*>\s*[🟢🟡🔴]\s*</\1>", "", cleaned)
-                cleaned = re.sub(r"(?is)<(p|li)[^>]*>\s*(?:\*+\s*:?\s*|:\s*)</\1>", "", cleaned)
-                cleaned = re.sub(r"(?is)<em>\s*\*?\s*(Schwäche|Weakness)\s*\*?\s*</em>\s*\*?", r"\1", cleaned)
-                cleaned = re.sub(r"(?is)>\s*\*\s*(?=<br)", ">", cleaned)
-                cleaned = re.sub(
-                    rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:?)",
-                    r"\1<br>",
-                    cleaned,
-                    flags=re.IGNORECASE,
-                )
-                # Canonicalize + bold secondary labels even when models emit lowercase variants.
-                canonical_sec = [
-                    ("Why it matters", "Why it matters"),
-                    ("Warum relevant", "Warum relevant"),
-                    ("Warum es wichtig ist", "Warum das wichtig ist"),
-                    ("Warum das wichtig ist", "Warum das wichtig ist"),
-                    ("What would verify/falsify (next check)", "What would verify/falsify (next check)"),
-                    ("What would verify or falsify (next check)", "What would verify or falsify (next check)"),
-                    ("Was würde verifizieren/falsifizieren (nächster Check)", "Was würde verifizieren/falsifizieren (nächster Check)"),
-                    ("Was würde verifizieren oder falsifizieren (nächster Check)", "Was würde verifizieren oder falsifizieren (nächster Check)"),
-                    ("Next check", "Next check"),
-                    ("Nächster Check", "Nächster Check"),
-                    ("Nächste Prüfung", "Nächste Prüfung"),
-                    ("Prüfen/Widerlegen (nächster Schritt)", "Prüfen/Widerlegen (nächster Schritt)"),
-                ]
-                sec_canon_map = {str(_pat).lower(): _canon for _pat, _canon in canonical_sec}
-                for _pat, _canon in canonical_sec:
-                    cleaned = re.sub(
-                        rf"(?is)(?<!\()(?:(?:<strong>\s*)?{re.escape(_pat)}(?:\s*</strong>)?)\s*:?\s*",
-                        f"<strong>{_canon}</strong>: ",
-                        cleaned,
-                        flags=re.IGNORECASE,
-                    )
-                cleaned = re.sub(r"(?is)</strong>:\s+<", "</strong>:<", cleaned)
-                # Some weak models/HTML conversions split a single logical <li> item into
-                # "<li>...Weakness...</li><p>Why...</p><p>What would...</p>" inside the same <ol>.
-                # Normalize those sibling <p> rows as well (bold + canonical colon).
-                for _pat, _canon in canonical_sec:
-                    cleaned = re.sub(
-                        rf"(?is)(<p[^>]*>\s*)(?:<strong>\s*)?{re.escape(_pat)}(?:\s*</strong>)?\s*:?\s*",
-                        rf"\1<strong>{_canon}</strong>: ",
-                        cleaned,
-                        flags=re.IGNORECASE,
-                    )
-                # Handle fragmented primary items from weak markdown conversion:
-                # "<li>*Schwäche</li><p>*:</p><p>🟡</p><p>Text...</p>" -> one canonical <li>.
-                split_primary_li = re.compile(
-                    rf"(?is)<li[^>]*>\s*(?:<strong>\s*)?\*?\s*(Schwäche|Weakness)\s*\*?(?:\s*</strong>)?\s*</li>"
-                    rf"(?:\s*<p[^>]*>\s*(?:\*+\s*:?\s*|:\s*)</p>)*"
-                    rf"(?:\s*<p[^>]*>\s*[🟢🟡🔴]\s*</p>)*"
-                    rf"\s*<p[^>]*>\s*(?!\s*(?:<strong>\s*)?(?:{sec_rx})\b)(.*?)\s*</p>"
-                )
-
-                def _merge_split_primary_li(mm: re.Match) -> str:
-                    _label = (mm.group(1) or "").strip()
-                    _txt = (mm.group(2) or "").strip()
-                    if not _txt:
-                        return mm.group(0)
-                    return f"<li><strong>{_label}</strong>: {_txt}</li>"
-
-                cleaned = split_primary_li.sub(_merge_split_primary_li, cleaned)
-                # Merge sibling secondary rows back into the preceding item:
-                #   </li><li>Warum ...</li><p>Text</p>  ->  <br><strong>Warum ...</strong>: Text</li>
-                #   </li><p><strong>Nächster Check</strong>:</p><p>Text</p> -> same
-                split_secondary_rows = re.compile(
-                    rf"(?is)</li>\s*<(?:li|p)[^>]*>\s*(?:<strong>\s*)?(?P<label>{sec_rx})(?:\s*</strong>)?\s*:?\s*</(?:li|p)>"
-                    rf"(?:\s*<p[^>]*>\s*(?:\*+\s*:?\s*|:\s*)</p>)*"
-                    rf"(?:\s*<p[^>]*>\s*[🟢🟡🔴]\s*</p>)*"
-                    rf"\s*<p[^>]*>\s*(?P<txt>.*?)\s*</p>"
-                )
-
-                def _merge_split_secondary_rows(mm: re.Match) -> str:
-                    _lab_raw = re.sub(r"(?is)<[^>]+>", "", mm.group("label") or "").strip()
-                    _lab = sec_canon_map.get(_lab_raw.lower(), _lab_raw)
-                    _txt = (mm.group("txt") or "").strip()
-                    if not _lab or not _txt:
-                        return mm.group(0)
-                    return f"<br><strong>{_lab}</strong>: {_txt}</li>"
-
-                for _ in range(8):
-                    _new = split_secondary_rows.sub(_merge_split_secondary_rows, cleaned)
-                    if _new == cleaned:
-                        break
-                    cleaned = _new
-                # If a secondary label became a separate <li>, merge it into the previous weakness item.
-                split_secondary_li = re.compile(
-                    rf"(?is)</li>\s*<li([^>]*)>\s*((?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:.*?)(?=</li>)</li>"
-                )
-
-                def _merge_split_secondary_li(mm: re.Match) -> str:
-                    _inner = (mm.group(2) or "").strip()
-                    if not _inner:
-                        return mm.group(0)
-                    return f"<br>{_inner}</li>"
-
-                for _ in range(8):
-                    _new = split_secondary_li.sub(_merge_split_secondary_li, cleaned)
-                    if _new == cleaned:
-                        break
-                    cleaned = _new
-                cleaned = re.sub(r"(?is)(<strong>[^<]+</strong>:)\s*</strong>", r"\1", cleaned)
-                cleaned = re.sub(r"(?is)<(p|li)[^>]*>\s*\*\s*</\1>", "", cleaned)
-                # If a logical list item was split into "</li><p>Why...</p><p>Next check...</p>",
-                # merge those secondary paragraphs back into the preceding <li> using <br>.
-                split_li_paras = re.compile(
-                    rf"(?is)</li>((?:\s*<p[^>]*>\s*(?:<strong>\s*)?(?:{sec_rx})(?:\s*</strong>)?\s*:.*?</p>)+)"
-                )
-
-                def _merge_split_li_paras(mm: re.Match) -> str:
-                    paras_blob = mm.group(1) or ""
-                    parts = []
-                    for pm in re.finditer(r"(?is)<p[^>]*>\s*(.*?)\s*</p>", paras_blob):
-                        inner = (pm.group(1) or "").strip()
-                        if inner:
-                            parts.append(inner)
-                    if not parts:
-                        return mm.group(0)
-                    return "".join(f"<br>{p}" for p in parts) + "</li>"
-
-                cleaned = split_li_paras.sub(_merge_split_li_paras, cleaned)
-                return cleaned
-
-            # Drop standalone marker lines ("1.", "2.") that cause visible double numbering.
-            # Also normalize common markdown-leak patterns from weak model output where
-            # labels appear as "*Schwäche*" and nested <strong> tags.
-            body = re.sub(
-                r"(?is)<strong>\s*<em>\s*\*?\s*(Schwäche|Weakness)\s*\*?\s*</em>\s*\*?\s*:\s*</strong>",
-                r"<strong>\1</strong>:",
-                body,
-            )
-            body = re.sub(
-                r"(?is)<strong>\s*<strong>\s*([^<]+?)\s*</strong>\s*:\s*</strong>",
-                r"<strong>\1</strong>:",
-                body,
-            )
-            body = re.sub(r"(?is)<em>\s*\*?\s*(Schwäche|Weakness)\s*\*?\s*</em>\s*\*?", r"\1", body)
-            body = re.sub(r"(?im)^\s*(?:<[^>]+>\s*)*\*\s*(?:</[^>]+>\s*)*$", "", body)
-            body = re.sub(r"(?is)>\s*\*\s*(?=<br\s*/?>|</(?:p|div|li)>)", ">", body)
-            body = re.sub(
-                r'(?im)^\s*<div[^>]*>\s*\d+\.\s*</div>\s*$',
-                '',
-                body,
-            )
-            body = re.sub(
-                r'(?im)^\s*\d+\.\s*(?:<br\s*/?>\s*)?$',
-                '',
-                body,
-            )
-
-            n = 0
-            out_lines = []
-            for ln in body.splitlines():
-                # Localize the three canonical labels inside the block.
-                if lang.lower().startswith('de'):
-                    ln = ln.replace('Weakness:', 'Schwäche:')
-                    ln = ln.replace('Why it matters:', 'Warum das wichtig ist:')
-                    ln = ln.replace('What would verify/falsify (next check):', 'Was würde verifizieren/falsifizieren (nächster Check):')
-                    ln = ln.replace('<strong>Weakness</strong>:', '<strong>Schwäche</strong>:')
-                    ln = ln.replace('<strong>Why it matters</strong>:', '<strong>Warum das wichtig ist</strong>:')
-                    ln = ln.replace(
-                        '<strong>What would verify/falsify (next check)</strong>:',
-                        '<strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:'
-                    )
-                else:
-                    ln = ln.replace('Schwäche:', 'Weakness:')
-                    ln = ln.replace('Warum das wichtig ist:', 'Why it matters:')
-                    ln = ln.replace('Was würde verifizieren/falsifizieren (nächster Check):', 'What would verify/falsify (next check):')
-
-                ln = re.sub(r"(?is)<em>\s*\*?\s*(Schwäche|Weakness)\s*\*?\s*</em>\s*\*?", r"\1", ln)
-                ln = re.sub(r"(?i)\*+\s*(Schwäche|Weakness)\s*\*+\s*:", r"\1:", ln)
-                ln = re.sub(r"(?is)<strong>\s*<strong>\s*", "<strong>", ln)
-                ln = re.sub(r"(?is)</strong>\s*</strong>", "</strong>", ln)
-                ln = re.sub(r"(?is)(<strong>[^<]+</strong>:)\s*</strong>", r"\1", ln)
-
-                # Bold known labels (formatting only).
-                for lab in (
-                    'Weakness', 'Schwäche',
-                    'Why it matters', 'Warum relevant', 'Warum es wichtig ist', 'Warum das wichtig ist',
-                    'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
-                    'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
-                    'Next check', 'Nächster Check',
-                ):
-                    ln = re.sub(
-                        rf"(?i)\b{re.escape(lab)}\s*:",
-                        rf"<strong>{lab}</strong>:",
-                        ln,
-                    )
-
-                # Force secondary field labels onto a new visual line if they leaked inline after
-                # the Weakness sentence (common with weaker models / compact HTML rendering).
-                secondary_labels = (
-                    'Why it matters', 'Warum relevant', 'Warum es wichtig ist', 'Warum das wichtig ist',
-                    'What would verify/falsify (next check)', 'What would verify or falsify (next check)',
-                    'Was würde verifizieren/falsifizieren (nächster Check)', 'Was würde verifizieren oder falsifizieren (nächster Check)',
-                    'Next check', 'Nächster Check', 'Nächste Prüfung',
-                    'Prüfen/Widerlegen (nächster Schritt)',
-                )
-                _sec_rx = "|".join(re.escape(x) for x in secondary_labels)
-                ln = re.sub(
-                    rf"(?is)([^>\n])\s+(?=(?:<strong>\s*)?(?:{_sec_rx})(?:\s*</strong>)?\s*:?)",
-                    r"\1<br>",
-                    ln,
-                    flags=re.IGNORECASE,
-                )
-
-                # Count/number only Weakness lines.
-                plain = re.sub(r'<[^>]+>', '', ln).strip()
-                plain_norm = re.sub(r"\*+", "", plain).strip()
-                # Non-Weakness field labels must not carry list numbering.
-                if re.match(
-                    r"(?i)^(?:\d+\.\s*)(Why it matters|Warum relevant|Warum es wichtig ist|Warum das wichtig ist|What would verify/falsify \(next check\)|What would verify or falsify \(next check\)|Was würde verifizieren/falsifizieren \(nächster Check\)|Was würde verifizieren oder falsifizieren \(nächster Check\)|Next check|Nächster Check|Nächste Prüfung|Prüfen/Widerlegen \(nächster Schritt\))\s*:",
-                    plain_norm,
-                ):
-                    ln = re.sub(r'(?i)(<div[^>]*>\s*)\d+\.\s*', r'\1', ln, count=1)
-                    ln = re.sub(r'(?i)^\s*\d+\.\s*', '', ln, count=1)
-                    plain = re.sub(r'<[^>]+>', '', ln).strip()
-                    plain_norm = re.sub(r"\*+", "", plain).strip()
-                if re.match(r'(?i)^(?:\d+\.\s*)?(Weakness|Schwäche)\b\s*:', plain_norm):
-                    n += 1
-                    # Remove any existing numeric prefix immediately after opening div/start.
-                    ln = re.sub(r'(?i)(<div[^>]*>\s*)\d+\.\s*', r'\1', ln, count=1)
-                    ln = re.sub(r'(?i)^\s*\d+\.\s*', '', ln, count=1)
-                    if '<div' in ln:
-                        ln = re.sub(r'(<div[^>]*>\s*)', lambda m: f"{m.group(1)}{n}. ", ln, count=1)
-                    else:
-                        ln = f'{n}. ' + ln
-
-                out_lines.append(ln)
-
-            return '\n'.join([x for x in out_lines if x is not None])
-
-        # Primary path: normalize explicit self-debunking boxes.
-        block_re = re.compile(
-            r'(?is)(<div[^>]*class=(?:"|\')[^"\']*self-debunking[^"\']*(?:"|\')[^>]*>)(.*?)(</div>)'
-        )
-
-        def _block_sub(mb: re.Match) -> str:
-            return mb.group(1) + _normalize_block(mb.group(2)) + mb.group(3)
-
-        out_text = block_re.sub(_block_sub, html_text)
-
-        # Fallback path: line-wise region between Self-Debunking header and QC footer.
-        lines = out_text.splitlines()
-        out = []
-        in_sd = False
-        chunk = []
-
-        def _flush_chunk() -> None:
-            nonlocal chunk
-            if chunk:
-                out.extend(_normalize_block('\n'.join(chunk)).splitlines())
-                chunk = []
-
-        for ln in lines:
-            plain = re.sub(r'<[^>]+>', '', ln)
-            if (not in_sd) and re.search(r'(?i)Self-Debunking|Selbst[- ]?Debunking', plain):
-                in_sd = True
-                out.append(ln)
-                continue
-            if in_sd and re.search(r'(?im)^\s*QC(?:-Matrix)?\s*:', plain):
-                _flush_chunk()
-                in_sd = False
-                out.append(ln)
-                continue
-            if in_sd:
-                chunk.append(ln)
-            else:
-                out.append(ln)
-
-        _flush_chunk()
-        return '\n'.join(out)
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return html_text
+    return _sd_formatter.html_number_self_debunking(html_text, lang=lang)
 
+
+def apply_self_debunking_text_postprocess_seam(
+    text: str,
+    *,
+    gov_mgr,
+    profile_name: str,
+    is_command: bool,
+    lang: str = "de",
+) -> str:
+    """Central seam for deterministic Self-Debunking text postprocessing (fail-soft)."""
+    seam_mod = _output_self_debunking_runtime_seam
+    if seam_mod is not None and hasattr(seam_mod, "apply_self_debunking_text_postprocess"):
+        try:
+            return str(
+                seam_mod.apply_self_debunking_text_postprocess(  # type: ignore[attr-defined]
+                    text,
+                    output_pipeline_mod=_output_pipeline,
+                    normalize_inline_header_fn=normalize_inline_self_debunking_header,
+                    enforce_contract_fn=(
+                        lambda txt: enforce_self_debunking_contract(
+                            txt,
+                            gov_mgr,
+                            profile_name,
+                            is_command=bool(is_command),
+                            lang=lang,
+                        )
+                    ),
+                    normalize_numbering_fn=(lambda txt: normalize_self_debunking_numbering_text(txt, lang=lang)),
+                    dedupe_sections_fn=dedupe_self_debunking_sections,
+                )
+                or (text or "")
+            )
+        except Exception:
+            pass
+    out = str(text or "")
+    try:
+        out = normalize_inline_self_debunking_header(out)
+        out = enforce_self_debunking_contract(
+            out, gov_mgr, profile_name, is_command=bool(is_command), lang=lang
+        )
+        out = normalize_self_debunking_numbering_text(out, lang=lang)
+        out = dedupe_self_debunking_sections(out)
+    except Exception:
+        pass
+    return out
+
+
+def apply_post_render_normalization_seam(
+    html_body: str,
+    *,
+    answer_lang: str = "de",
+    color: str = "off",
+) -> str:
+    """Central seam for deterministic post-render normalization (fail-soft)."""
+    seam_mod = _output_self_debunking_runtime_seam
+    if seam_mod is not None and hasattr(seam_mod, "apply_post_render_normalization"):
+        try:
+            return str(
+                seam_mod.apply_post_render_normalization(  # type: ignore[attr-defined]
+                    html_body,
+                    answer_lang=answer_lang,
+                    color=str(color or "off"),
+                    output_pipeline_mod=_output_pipeline,
+                    ensure_self_debunking_box_html_fn=ensure_self_debunking_box_html,
+                    sanitize_self_debunking_markdown_in_html_fn=sanitize_self_debunking_markdown_in_html,
+                    normalize_hash_subheadings_in_html_fn=normalize_hash_subheadings_in_html,
+                    strip_internal_scaffolding_status_html_fn=strip_internal_scaffolding_status_html,
+                    html_number_self_debunking_fn=html_number_self_debunking,
+                    strip_color_markers_for_color_off_html_fn=strip_color_markers_for_color_off_html,
+                )
+                or (html_body or "")
+            )
+        except Exception:
+            pass
+    out = str(html_body or "")
+    try:
+        out = ensure_self_debunking_box_html(out, lang=answer_lang)
+        out = sanitize_self_debunking_markdown_in_html(out)
+        out = normalize_hash_subheadings_in_html(out)
+        out = strip_internal_scaffolding_status_html(out)
+        out = html_number_self_debunking(out, lang=answer_lang)
+        out = sanitize_self_debunking_markdown_in_html(out)
+        out = ensure_self_debunking_box_html(out, lang=answer_lang)
+        if str(color or "off").strip().lower() != "on":
+            out = strip_color_markers_for_color_off_html(out)
+    except Exception:
+        pass
+    return out
 
 def normalize_hash_subheadings_in_html(html_text: str) -> str:
     """Final safety net: convert leaked ##/###/#### headings in rendered HTML to bold lines."""
@@ -3837,6 +3649,22 @@ def normalize_hash_subheadings_in_html(html_text: str) -> str:
         return html_text
 
 
+def normalize_markdown_list_spacing(text: str) -> str:
+    """Ensure markdown list markers start a fresh paragraph even with irregular marker spacing."""
+    try:
+        if not text:
+            return text
+        out = str(text)
+        out = re.sub(
+            r'(?<!\n)\n((?:[*+\-]|•|\d+\.)\s+)',
+            r'\n\n\1',
+            out,
+        )
+        return out
+    except Exception:
+        return text
+
+
 def _repair_violation_is_format_only(vio: str) -> bool:
     """True for cosmetic/ordering-only repair violations (banner can stay hidden)."""
     try:
@@ -3871,228 +3699,22 @@ def _should_show_repair_pass_banner(violations: list[str] | None) -> bool:
 
 
 def detect_self_debunking_numbered_html(html_text: str) -> bool:
-    """Audit helper: detect numbered Self-Debunking points in rendered HTML."""
-    try:
-        if not html_text:
-            return False
-        raw = str(html_text)
-        if re.search(r"(?i)self[- ]?debunking|selbst[- ]?debunking", raw) is None:
-            return False
-        plain = re.sub(r"<[^>]+>", "\n", raw)
-        m = re.search(
-            r"(?is)(Self[- ]?Debunking|Selbst[- ]?Debunking).*?(?:\n\s*QC(?:-Matrix)?\s*:|\Z)",
-            plain,
-        )
-        block = m.group(0) if m else plain
-        if re.search(r"(?im)^\s*\d+\.\s*(Schwäche|Weakness)\b", block):
-            return True
-        # HTML <ol>/<li> numbering is visual and may not appear as text prefixes.
-        if re.search(
-            r"(?is)<ol[^>]*>.*?<li[^>]*>.*?(?:<strong>\s*)?(Schwäche|Weakness)(?:\s*</strong>)?\s*:.*?</li>",
-            raw,
-        ):
-            return True
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return False
-    except Exception:
-        return False
-
+    return _sd_formatter.detect_self_debunking_numbered_html(html_text)
 
 def enforce_self_debunking_contract(text: str, gov_mgr, profile_name: str, *, is_command: bool = False, lang: str = "en") -> str:
-    """Deterministically enforce the Self-Debunking contract (2–3 numbered points) when required.
-
-    Note: is_command disables enforcement for command-only responses.
-
-    - If missing: inject a minimal compliant block (no new factual claims).
-    - If too many points: keep the first 3.
-    - If too few points: add generic points to reach the minimum.
-    - Ensure placement BEFORE the QC footer.
-    """
-    try:
-        # Commands must NEVER trigger Self-Debunking enforcement/injection.
-        if is_command:
-            return text
-        if not text or not gov_mgr or not getattr(gov_mgr, 'loaded', False):
-            return text
-
-        gd = (gov_mgr.data.get('global_defaults', {}) or {})
-        oc = (gd.get('output_contract', {}) or {})
-        contract = (oc.get('self_debunking_contract', {}) or {})
-        if not contract.get('enabled', False):
-            return text
-
-        module = (gd.get('self_debunking', {}) or {})
-        if not module.get('enabled', False):
-            return text
-
-        exceptions = set(module.get('exceptions') or [])
-        if (profile_name or '') in exceptions:
-            return text
-
-        title = (contract.get('required_block_title') or (module.get('block', {}) or {}).get('title') or 'Self-Debunking').strip() or 'Self-Debunking'
-
-        min_p = int(contract.get('required_min_points', 2) or 2)
-        max_p = int(contract.get('required_max_points', 3) or 3)
-        min_p = 2 if min_p < 2 else min_p
-        max_p = 3 if max_p > 6 else max_p  # safety cap
-
-        def _finalize_sd(t: str) -> str:
-            # Apply language normalization first (for DE) then bold labels (formatting only).
-            t2 = normalize_self_debunking_language(t, lang)
-            t2 = normalize_self_debunking_field_linebreaks(t2, lang=lang)
-            t2 = bold_self_debunking_labels(t2, lang)
-            t2 = normalize_self_debunking_numbering_text(t2, lang=lang)
-            return t2
-
-        # Locate QC footer (insertion anchor)
-        qc_m = re.search(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$", text)
-        qc_pos = qc_m.start() if qc_m else None
-
-        # Locate Self-Debunking title line
-        title_re = re.compile(rf"(?im)^\s*(?:#+\s*)?\*{{0,2}}{re.escape(title)}\*{{0,2}}\s*:?\s*$")
-        m = title_re.search(text)
-        if not m:
-            # Missing entirely -> inject minimal
-            out = inject_minimal_self_debunking(text, title=title, lang=lang)
-            return _finalize_sd(out)
-        # If title occurs after QC, remove that trailing block and inject at the correct place.
-        if qc_pos is not None and m.start() > qc_pos:
-            trimmed = text[:m.start()].rstrip()
-            out = inject_minimal_self_debunking(trimmed, title=title, lang=lang)
-            return _finalize_sd(out)
-
-        # Extract the block region: from title line to QC footer (or end)
-        end = qc_pos if qc_pos is not None else len(text)
-        before = text[:m.end()]
-        block = text[m.end():end]
-        after = text[end:] if end < len(text) else ""
-
-        # Split numbered points (keep their multi-line bodies)
-        # We detect lines starting with "<n>." or "<n>)".
-        point_iter = list(re.finditer(r"(?m)^\s*(\d+)\s*[\.)]\s+", block))
-        points = []
-        for i, pm in enumerate(point_iter):
-            p_start = pm.start()
-            p_end = point_iter[i + 1].start() if i + 1 < len(point_iter) else len(block)
-            points.append(block[p_start:p_end].rstrip())
-
-        # If there are no numbered points at all, attempt to convert common unnumbered formats
-        # (e.g., repeated 'Weakness:' blocks) into a numbered list without inventing new facts.
-        if not points:
-            # Try to extract unnumbered points from repeated label blocks inside this Self-Debunking section.
-            extracted = []
-            try:
-                # Accept both plain labels and already-bolded markdown/HTML labels.
-                # This avoids a failure mode where an earlier pass bolded labels (e.g. "**Schwäche**:")
-                # and this extractor would no longer recognize unnumbered point starts.
-                label_iter = list(
-                    re.finditer(
-                        r"(?im)^\s*(?:\*\*|<strong>)?\s*(Weakness|Schwäche)\b\s*(?:\*\*|</strong>)?\s*:\s*",
-                        block,
-                    )
-                )
-                if label_iter:
-                    for i, lm in enumerate(label_iter):
-                        p_start = lm.start()
-                        p_end = label_iter[i + 1].start() if i + 1 < len(label_iter) else len(block)
-                        chunk = block[p_start:p_end].strip()
-                        if chunk:
-                            extracted.append(chunk)
-            except Exception:
-                extracted = []
-
-            if extracted:
-                # Trim to contract max and normalize to 1..k numbering.
-                extracted = extracted[:max_p]
-                normalized = []
-                for i, chunk in enumerate(extracted, 1):
-                    lines = chunk.splitlines()
-                    if not lines:
-                        continue
-                    # Ensure the first line contains the label (Weakness/Schwäche) as in the model output.
-                    first = lines[0].strip()
-                    rest = [ln.rstrip() for ln in lines[1:]]
-                    body = first
-                    if rest:
-                        body += "\n" + "\n".join("   " + ln.lstrip() for ln in rest if ln.strip() != "")
-                    normalized.append(f"{i}. {body.strip()}")
-                if normalized:
-                    new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
-                    out = before.rstrip() + new_block + after.lstrip()
-                    return _finalize_sd(out)
-
-            # If the model used bullet points, convert the first 2–3 bullets into numbered points
-            # without inventing content.
-            try:
-                bullet_lines = [ln.rstrip() for ln in block.splitlines()]
-                bullets = []
-                for ln in bullet_lines:
-                    m_b = re.match(r"^\s*(?:[-*+]|•)\s+(.+?)\s*$", ln)
-                    if m_b:
-                        b = m_b.group(1).strip()
-                        if b:
-                            bullets.append(b)
-                if bullets:
-                    bullets = bullets[:max_p]
-                    normalized = [f"{i}. {b}" for i, b in enumerate(bullets, 1)]
-                    new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
-                    out = before.rstrip() + new_block + after.lstrip()
-                    return _finalize_sd(out)
-            except Exception:
-                pass
-
-            # Fallback: remove the broken/empty block and inject a minimal compliant numbered block.
-            try:
-                base = text[:m.start()].rstrip() + "\n\n" + text[end:].lstrip()
-            except Exception:
-                base = before.rstrip() + "\n\n" + after.lstrip()
-            injected = inject_minimal_self_debunking(base, title=title, lang=lang)
-            return _finalize_sd(injected)
-        # Normalize number of points to the contract window.
-        if len(points) > max_p:
-            points = points[:max_p]
-        while len(points) < min_p:
-            n = len(points) + 1
-            if str(lang).lower().startswith("de"):
-                points.append(
-                    f"{n}. Schwäche: Die Antwort könnte wichtige Einschränkungen oder Randbedingungen auslassen.\n"
-                    f"   Warum das wichtig ist: Fehlende Vorbehalte können Sicherheit oder Gültigkeit überzeichnen.\n"
-                    f"   Was würde verifizieren/falsifizieren (nächster Check): Formuliere ein konkretes Gegenbeispiel und prüfe, ob die Schlussfolgerung dann noch gilt."
-                )
-            else:
-                points.append(
-                    f"{n}. Weakness: The answer may omit important limitations or boundary conditions.\n"
-                    f"   **Why it matters**: Missing caveats can overstate confidence or applicability.\n"
-                    f"   **What would verify/falsify (next check)**: Identify a concrete counterexample and test whether the conclusion still holds."
-                )
-        # Re-number points sequentially (1..k)
-        normalized = []
-        for i, p in enumerate(points, 1):
-            # Keep continuation lines inside the numbered item for stable Markdown rendering.
-            lines = [ln.rstrip() for ln in str(p).splitlines()]
-            if not lines:
-                continue
-            first = re.sub(r"^\s*\d+\s*[\.)]\s+", f"{i}. ", lines[0].strip(), count=1)
-            rest = []
-            for ln in lines[1:]:
-                if ln.strip():
-                    rest.append("   " + ln.lstrip())
-            item = first if not rest else (first + "\n" + "\n".join(rest))
-            normalized.append(item.strip())
-
-        new_block = "\n\n" + "\n\n".join(normalized).rstrip() + "\n\n"
-
-        # Reassemble
-        out = before.rstrip() + new_block + after.lstrip()
-        out = normalize_self_debunking_language(out, lang)
-        out = normalize_self_debunking_field_linebreaks(out, lang=lang)
-        out = bold_self_debunking_labels(out, lang)
-        return out
-
-    except Exception:
+    """Delegates to centralized Self-Debunking formatter module."""
+    if _sd_formatter is None:
         return text
-
-
-# === ROUTE CONTEXT / CONTRACTS (Stage 1) =====================================
+    return _sd_formatter.enforce_self_debunking_contract(
+        text,
+        gov_mgr,
+        profile_name,
+        is_command=is_command,
+        lang=lang,
+    )
 
 def _build_route_ctx(api, user_raw: str, is_command: bool) -> dict:
     """Build a minimal, stable route context dict (pure, deterministic).
@@ -4105,14 +3727,14 @@ def _build_route_ctx(api, user_raw: str, is_command: bool) -> dict:
         ui_lang = (getattr(gs, 'ui_lang', None) or 'en')
         answer_lang = (getattr(gs, 'answer_lang', None) or ui_lang or 'en')
         color = (getattr(gs, 'color', None) or 'off')
-        sci_variant = (getattr(gs, 'sci_variant', None) or 'A')
+        sci_variant = (getattr(gs, 'sci_variant', None) or '')
         sci_pending = bool(getattr(gs, 'sci_pending', False))
         comm_active = bool(getattr(gs, 'comm_active', False))
     except Exception:
         ui_lang = 'en'
         answer_lang = 'en'
         color = 'off'
-        sci_variant = 'A'
+        sci_variant = ''
         sci_pending = False
         comm_active = False
 
@@ -4223,6 +3845,619 @@ def _format_response_timestamp(dt_obj=None) -> str:
         return datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 
 
+def _render_ts_footer_html(timestamp: str) -> str:
+    """Render deterministic timestamp footer via modular renderer when available."""
+    try:
+        if _output_footer_renderer is not None and hasattr(_output_footer_renderer, "render_ts_footer_html"):
+            return _output_footer_renderer.render_ts_footer_html(str(timestamp or ""))
+    except Exception:
+        pass
+    return f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>'
+
+
+def ensure_qc_footer_html_consistency_html_stage(
+    *,
+    final_html_body: str,
+    raw_for_render: str,
+    profile_name: str,
+    gov_mgr,
+    overrides: dict | None,
+    qc_footer_for_profile_fn,
+    ensure_qc_footer_present_fn,
+    enforce_qc_footer_deltas_fn,
+    ensure_qc_footer_is_last_fn,
+    qc_probe_is_complete_fn=None,
+) -> str:
+    """Delegate QC footer HTML guard to the modular footer renderer (fail-soft)."""
+    out_html = str(final_html_body or "")
+    stage_mod = _output_post_render_qc_stage
+    if stage_mod is not None and hasattr(stage_mod, "ensure_qc_footer_html_consistency_html_stage"):
+        try:
+            return str(
+                stage_mod.ensure_qc_footer_html_consistency_html_stage(  # type: ignore[attr-defined]
+                    final_html_body=out_html,
+                    raw_for_render=str(raw_for_render or ""),
+                    profile_name=str(profile_name or "Standard"),
+                    gov_mgr=gov_mgr,
+                    overrides=(overrides if isinstance(overrides, dict) else {}),
+                    qc_footer_for_profile_fn=qc_footer_for_profile_fn,
+                    ensure_qc_footer_present_fn=ensure_qc_footer_present_fn,
+                    enforce_qc_footer_deltas_fn=enforce_qc_footer_deltas_fn,
+                    ensure_qc_footer_is_last_fn=ensure_qc_footer_is_last_fn,
+                    qc_probe_is_complete_fn=qc_probe_is_complete_fn,
+                    footer_renderer_mod=_output_footer_renderer,
+                )
+                or out_html
+            )
+        except Exception:
+            pass
+    try:
+        fn = (
+            getattr(_output_footer_renderer, "ensure_qc_footer_html_consistency", None)
+            if _output_footer_renderer is not None
+            else None
+        )
+        if callable(fn):
+            return fn(
+                final_html_body=out_html,
+                raw_for_render=str(raw_for_render or ""),
+                profile_name=str(profile_name or "Standard"),
+                gov_mgr=gov_mgr,
+                overrides=(overrides if isinstance(overrides, dict) else {}),
+                qc_footer_for_profile_fn=qc_footer_for_profile_fn,
+                ensure_qc_footer_present_fn=ensure_qc_footer_present_fn,
+                enforce_qc_footer_deltas_fn=enforce_qc_footer_deltas_fn,
+                ensure_qc_footer_is_last_fn=ensure_qc_footer_is_last_fn,
+                qc_probe_is_complete_fn=qc_probe_is_complete_fn,
+            )
+    except Exception:
+        pass
+    return out_html
+
+
+def annotate_qc_matrix_tooltips_html(html_text: str, *, lang: str = "de") -> str:
+    """Delegate QC matrix tooltip annotation to the modular footer renderer (fail-soft)."""
+    src = str(html_text or "")
+    if not src:
+        return src
+    try:
+        fn = (
+            getattr(_output_footer_renderer, "annotate_qc_matrix_tooltips_html", None)
+            if _output_footer_renderer is not None
+            else None
+        )
+        if callable(fn):
+            return fn(src, lang=str(lang or "de"))
+    except Exception:
+        pass
+    return src
+
+
+def finalize_qc_footer_html_stage(
+    *,
+    final_html_body: str,
+    raw_for_render: str,
+    profile_name: str,
+    gov_mgr,
+    overrides: dict | None,
+    qc_footer_for_profile_fn,
+    ensure_qc_footer_present_fn,
+    enforce_qc_footer_deltas_fn,
+    ensure_qc_footer_is_last_fn,
+    qc_probe_is_complete_fn=None,
+    lang: str = "de",
+) -> str:
+    """Run QC footer HTML finalization via one central guard path (fail-soft)."""
+    out_html = str(final_html_body or "")
+    stage_mod = _output_post_render_qc_stage
+    # Keep legacy-local fallback behavior when footer renderer is unavailable,
+    # because tests and runtime monkeypatch paths depend on the local guard call chain.
+    if (
+        _output_footer_renderer is not None
+        and stage_mod is not None
+        and hasattr(stage_mod, "finalize_qc_footer_html_stage")
+    ):
+        try:
+            return str(
+                stage_mod.finalize_qc_footer_html_stage(  # type: ignore[attr-defined]
+                    final_html_body=out_html,
+                    raw_for_render=str(raw_for_render or ""),
+                    profile_name=str(profile_name or "Standard"),
+                    gov_mgr=gov_mgr,
+                    overrides=(overrides if isinstance(overrides, dict) else {}),
+                    qc_footer_for_profile_fn=qc_footer_for_profile_fn,
+                    ensure_qc_footer_present_fn=ensure_qc_footer_present_fn,
+                    enforce_qc_footer_deltas_fn=enforce_qc_footer_deltas_fn,
+                    ensure_qc_footer_is_last_fn=ensure_qc_footer_is_last_fn,
+                    qc_probe_is_complete_fn=qc_probe_is_complete_fn,
+                    lang=str(lang or "de"),
+                    footer_renderer_mod=_output_footer_renderer,
+                    annotate_qc_matrix_tooltips_html_fn=annotate_qc_matrix_tooltips_html,
+                )
+                or out_html
+            )
+        except Exception:
+            pass
+    try:
+        # Legacy fallback remains isolated here, while the active path is always:
+        # ensure_qc_footer_html_consistency -> annotate_qc_matrix_tooltips_html.
+        guarded = ensure_qc_footer_html_consistency_html_stage(
+            final_html_body=out_html,
+            raw_for_render=str(raw_for_render or ""),
+            profile_name=str(profile_name or "Standard"),
+            gov_mgr=gov_mgr,
+            overrides=(overrides if isinstance(overrides, dict) else {}),
+            qc_footer_for_profile_fn=qc_footer_for_profile_fn,
+            ensure_qc_footer_present_fn=ensure_qc_footer_present_fn,
+            enforce_qc_footer_deltas_fn=enforce_qc_footer_deltas_fn,
+            ensure_qc_footer_is_last_fn=ensure_qc_footer_is_last_fn,
+            qc_probe_is_complete_fn=qc_probe_is_complete_fn,
+        )
+        return annotate_qc_matrix_tooltips_html(str(guarded or ""), lang=str(lang or "de"))
+    except Exception:
+        return out_html
+
+
+def render_final_html_body_stage(
+    *,
+    raw_for_render: str,
+    color_mode: str = "off",
+    answer_lang: str = "de",
+    ui_lang_fallback: str = "en",
+):
+    """Render final chat body HTML via runtime stage (fail-soft)."""
+    out_raw = str(raw_for_render or "")
+    color = str(color_mode or "off")
+    stage_mod = _output_render_body_runtime_stage
+    if stage_mod is not None and hasattr(stage_mod, "render_final_html_body_stage"):
+        try:
+            out = stage_mod.render_final_html_body_stage(  # type: ignore[attr-defined]
+                raw_for_render=out_raw,
+                color_mode=color,
+                answer_lang=str(answer_lang or "de"),
+                ui_lang_fallback=str(ui_lang_fallback or "en"),
+                rendering_pipeline_v192_mod=_rendering_pipeline_v192,
+                auto_embed_image_urls_fn=auto_embed_image_urls,
+                apply_color_spans_fn=apply_color_spans,
+                strip_color_markers_for_color_off_text_fn=strip_color_markers_for_color_off_text,
+                normalize_markdown_list_spacing_fn=normalize_markdown_list_spacing,
+                normalize_known_markdown_control_headings_fn=normalize_known_markdown_control_headings,
+                markdown_mod=markdown,
+                sanitize_html_fn=sanitize_html,
+                html_number_self_debunking_fn=html_number_self_debunking,
+                apply_post_render_normalization_seam_fn=apply_post_render_normalization_seam,
+            )
+            if isinstance(out, tuple) and len(out) == 2:
+                return str(out[0] or ""), str(out[1] or "")
+        except Exception:
+            pass
+
+    # Local fallback keeps behavior deterministic if runtime stage is unavailable.
+    _lang_seed = str(answer_lang or ui_lang_fallback or "en")
+    _ans_lang = "de" if _lang_seed.lower().startswith("de") else "en"
+    try:
+        out_raw = auto_embed_image_urls(out_raw)
+    except Exception:
+        pass
+    try:
+        if color == "on":
+            out_raw = apply_color_spans(out_raw, enabled=True)
+        else:
+            out_raw = strip_color_markers_for_color_off_text(out_raw)
+    except Exception:
+        pass
+    try:
+        out_raw = normalize_markdown_list_spacing(out_raw)
+    except Exception:
+        pass
+    out_raw = re.sub(r"(?<!\n)\nQC-Matrix:", r"\n\nQC-Matrix:", out_raw)
+    try:
+        out_raw = normalize_known_markdown_control_headings(out_raw or "")
+    except Exception:
+        pass
+
+    final_html_body = ""
+    if _rendering_pipeline_v192 is not None:
+        try:
+            rctx = _rendering_pipeline_v192.RenderContext(
+                ui_lang=_ans_lang,
+                color=color,
+                is_command=False,
+                comm_active=True,
+                strict=True,
+            )
+            final_html_body = _rendering_pipeline_v192.render_llm_text_to_html(out_raw or "", rctx)
+        except Exception:
+            final_html_body = ""
+    if not final_html_body:
+        try:
+            final_html_body = markdown.markdown(out_raw, extensions=["extra", "codehilite"])
+        except Exception:
+            try:
+                final_html_body = markdown.markdown(out_raw, extensions=["fenced_code", "tables"])
+            except Exception:
+                final_html_body = out_raw
+        try:
+            final_html_body = sanitize_html(final_html_body)
+        except Exception:
+            pass
+        try:
+            final_html_body = html_number_self_debunking(final_html_body, lang=_ans_lang)
+        except Exception:
+            pass
+    try:
+        final_html_body = apply_post_render_normalization_seam(
+            str(final_html_body or ""),
+            answer_lang=_ans_lang,
+            color=color,
+        )
+    except Exception:
+        pass
+    return str(out_raw or ""), str(final_html_body or "")
+
+
+def render_command_html_stage(
+    *,
+    raw_response: str,
+    color_mode: str = "off",
+    ui_lang: str = "en",
+    comm_active: bool = False,
+):
+    """Render command path HTML via runtime stage (fail-soft)."""
+    raw = str(raw_response or "")
+    color = str(color_mode or "off")
+    ui = str(ui_lang or "en")
+    stage_mod = _output_route_render_runtime_stage
+    if stage_mod is not None and hasattr(stage_mod, "render_command_html_stage"):
+        try:
+            out = stage_mod.render_command_html_stage(  # type: ignore[attr-defined]
+                raw_response=raw,
+                color_mode=color,
+                ui_lang=ui,
+                comm_active=bool(comm_active),
+                rendering_pipeline_v192_mod=_rendering_pipeline_v192,
+                unwrap_accidental_full_text_codefence_fn=unwrap_accidental_full_text_codefence,
+                normalize_known_markdown_control_headings_fn=normalize_known_markdown_control_headings,
+                apply_color_spans_fn=apply_color_spans,
+                strip_color_markers_for_color_off_text_fn=strip_color_markers_for_color_off_text,
+                strip_color_markers_for_color_off_html_fn=strip_color_markers_for_color_off_html,
+                markdown_mod=markdown,
+                sanitize_html_fn=sanitize_html,
+            )
+            if isinstance(out, tuple) and len(out) >= 1:
+                return str(out[0] or ""), None
+        except Exception:
+            pass
+
+    # Local fallback keeps behavior deterministic if runtime stage is unavailable.
+    raw = unwrap_accidental_full_text_codefence(raw or "")
+    raw = normalize_known_markdown_control_headings(raw or "")
+    if _rendering_pipeline_v192 is not None:
+        try:
+            rctx = _rendering_pipeline_v192.RenderContext(
+                ui_lang=ui,
+                color=color,
+                is_command=True,
+                comm_active=bool(comm_active),
+                strict=False,
+            )
+            out_html = _rendering_pipeline_v192.render_llm_text_to_html(raw or "", rctx)
+            if color != "on":
+                out_html = strip_color_markers_for_color_off_html(out_html)
+            return out_html, None
+        except Exception:
+            pass
+
+    if color == "on":
+        raw = apply_color_spans(raw, enabled=True)
+    else:
+        raw = strip_color_markers_for_color_off_text(raw)
+    _h = markdown.markdown(raw, extensions=["extra", "codehilite"])
+    _h = strip_color_markers_for_color_off_html(_h) if color != "on" else _h
+    return sanitize_html(_h), None
+
+
+def render_comm_inactive_html_stage(
+    *,
+    raw_response: str,
+    color_mode: str = "off",
+    ui_lang: str = "en",
+):
+    """Render comm-inactive path HTML via runtime stage (fail-soft)."""
+    raw = str(raw_response or "")
+    color = str(color_mode or "off")
+    ui = str(ui_lang or "en")
+    stage_mod = _output_route_render_runtime_stage
+    if stage_mod is not None and hasattr(stage_mod, "render_comm_inactive_html_stage"):
+        try:
+            out = stage_mod.render_comm_inactive_html_stage(  # type: ignore[attr-defined]
+                raw_response=raw,
+                color_mode=color,
+                ui_lang=ui,
+                rendering_pipeline_v192_mod=_rendering_pipeline_v192,
+                unwrap_accidental_full_text_codefence_fn=unwrap_accidental_full_text_codefence,
+                normalize_known_markdown_control_headings_fn=normalize_known_markdown_control_headings,
+                strip_governance_scaffolding_when_comm_inactive_fn=strip_governance_scaffolding_when_comm_inactive,
+                apply_color_spans_fn=apply_color_spans,
+                strip_color_markers_for_color_off_text_fn=strip_color_markers_for_color_off_text,
+                strip_color_markers_for_color_off_html_fn=strip_color_markers_for_color_off_html,
+                markdown_mod=markdown,
+                sanitize_html_fn=sanitize_html,
+                build_render_normalization_summary_fn=_build_render_normalization_summary,
+                looks_like_rendered_html_runtime_fn=_looks_like_rendered_html_runtime,
+                html_escape_fn=html.escape,
+            )
+            if isinstance(out, tuple) and len(out) == 2:
+                return str(out[0] or ""), out[1]
+        except Exception:
+            pass
+
+    # Local fallback keeps behavior deterministic if runtime stage is unavailable.
+    html_out = ""
+    try:
+        raw = unwrap_accidental_full_text_codefence(raw or "")
+        raw = normalize_known_markdown_control_headings(raw or "")
+        try:
+            raw = strip_governance_scaffolding_when_comm_inactive(raw or "")
+        except Exception:
+            pass
+        if _rendering_pipeline_v192 is not None:
+            try:
+                rctx = _rendering_pipeline_v192.RenderContext(
+                    ui_lang=ui,
+                    color=color,
+                    is_command=False,
+                    comm_active=False,
+                    strict=False,
+                )
+                html_out = _rendering_pipeline_v192.render_llm_text_to_html(raw or "", rctx)
+            except Exception:
+                html_out = ""
+
+        if not html_out:
+            _raw = raw
+            if color == "on":
+                _raw = apply_color_spans(_raw, enabled=True)
+            else:
+                _raw = strip_color_markers_for_color_off_text(_raw)
+            _h = markdown.markdown(_raw, extensions=["extra", "codehilite"])
+            if color != "on":
+                _h = strip_color_markers_for_color_off_html(_h)
+            html_out = sanitize_html(_h)
+    except Exception:
+        try:
+            html_out = "<pre>" + html.escape(str(raw or "")) + "</pre>"
+        except Exception:
+            html_out = "<pre></pre>"
+    try:
+        if color != "on":
+            html_out = strip_color_markers_for_color_off_html(html_out)
+    except Exception:
+        pass
+
+    try:
+        _norm_summary = _build_render_normalization_summary(
+            str(raw or ""),
+            str(html_out or ""),
+        )
+        render_ok = _looks_like_rendered_html_runtime(str(html_out or ""))
+        _norm_summary["render_ok"] = bool(render_ok)
+        _norm_summary["render_fallback"] = (not bool(render_ok))
+        meta = {"normalization": _norm_summary}
+    except Exception:
+        meta = {"normalization": {"render_ok": True, "render_fallback": False}}
+    return html_out, meta
+
+
+def finalize_render_end_html_stage(
+    *,
+    alert_html: str,
+    final_html_body: str,
+    raw_for_render: str,
+    raw_original: str,
+    raw_response: str,
+    csc_meta,
+    answer_lang: str = "de",
+):
+    """Finalize late render-end HTML assembly via runtime stage (fail-soft)."""
+    out_alert = str(alert_html or "")
+    out_body = str(final_html_body or "")
+    stage_mod = _output_final_html_runtime_stage
+    if stage_mod is not None and hasattr(stage_mod, "finalize_render_end_html_stage"):
+        try:
+            out = stage_mod.finalize_render_end_html_stage(  # type: ignore[attr-defined]
+                alert_html=out_alert,
+                final_html_body=out_body,
+                raw_for_render=str(raw_for_render or ""),
+                raw_original=str(raw_original or ""),
+                raw_response=str(raw_response or ""),
+                csc_meta=csc_meta,
+                answer_lang=str(answer_lang or "de"),
+                build_render_normalization_summary_fn=_build_render_normalization_summary,
+                looks_like_rendered_html_runtime_fn=_looks_like_rendered_html_runtime,
+                detect_probable_truncation_fn=_detect_probable_truncation,
+                control_layer_alert_html_fn=_control_layer_alert_html,
+                format_response_timestamp_fn=_format_response_timestamp,
+                render_ts_footer_html_fn=_render_ts_footer_html,
+            )
+            if isinstance(out, tuple) and len(out) == 2:
+                return str(out[0] or ""), out[1]
+        except Exception:
+            pass
+
+    # Local fallback keeps behavior deterministic if runtime stage is unavailable.
+    try:
+        _norm_summary = _build_render_normalization_summary(
+            str(raw_for_render or ""),
+            str(out_body or ""),
+        )
+        if csc_meta is None:
+            csc_meta = {}
+        if isinstance(csc_meta, dict):
+            csc_meta["normalization"] = _norm_summary
+    except Exception:
+        pass
+
+    render_ok = _looks_like_rendered_html_runtime(out_body or "")
+    try:
+        _raw_probe = (raw_original or raw_response or "")
+        _trunc, _trunc_msg = _detect_probable_truncation(_raw_probe, out_body or "")
+        if _trunc and _trunc_msg:
+            out_alert = _control_layer_alert_html(
+                _trunc_msg + " Bitte gegenprüfen oder Antwort neu generieren.",
+                title="CONTROL LAYER NOTE",
+                severity="warn",
+                lang=str(answer_lang or "de"),
+            ) + (out_alert or "")
+            try:
+                if csc_meta is None:
+                    csc_meta = {}
+                if isinstance(csc_meta, dict):
+                    csc_meta["probable_truncation"] = True
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        if csc_meta is None:
+            csc_meta = {}
+        if isinstance(csc_meta, dict):
+            ns = csc_meta.get("normalization")
+            if isinstance(ns, dict):
+                ns["render_ok"] = bool(render_ok)
+                ns["render_fallback"] = (not bool(render_ok))
+    except Exception:
+        pass
+
+    timestamp = _format_response_timestamp()
+    if render_ok:
+        # Keep regular answers clean; raw output is only shown for render fallback.
+        return out_alert + out_body + _render_ts_footer_html(str(timestamp)), csc_meta
+
+    try:
+        _raw = (raw_original or raw_response or "")
+        _raw_esc = html.escape(str(_raw))
+        fallback_note = '<div class="note-box"><b>Render fallback</b>: showing raw model output.</div>'
+        return out_alert + fallback_note + '<pre class="raw-output-pre">' + _raw_esc + '</pre>' + _render_ts_footer_html(str(timestamp)), csc_meta
+    except Exception:
+        return out_alert + _render_ts_footer_html(str(timestamp)), csc_meta
+
+
+def _render_control_layer_block_html(message: str, *, suffix_html: str = "") -> str:
+    """Render CONTROL LAYER BLOCK warning with modular fallback."""
+    try:
+        if _output_csc_warning_renderer is not None and hasattr(_output_csc_warning_renderer, "render_control_layer_block_html"):
+            return _output_csc_warning_renderer.render_control_layer_block_html(
+                str(message or ""),
+                suffix_html=str(suffix_html or ""),
+            )
+    except Exception:
+        pass
+    return (
+        '<div class="csc-warning" style="background:#fee; border-color:#c00; color:#a00;">'
+        "<b>CONTROL LAYER BLOCK:</b><br>"
+        + html.escape(str(message or ""))
+        + str(suffix_html or "")
+        + "</div>"
+    )
+
+
+def _render_strict_block_warning_html(vio_lines_html: str) -> str:
+    """Render strict-block warning details with modular fallback."""
+    try:
+        if _output_csc_warning_renderer is not None and hasattr(_output_csc_warning_renderer, "render_strict_block_html"):
+            return _output_csc_warning_renderer.render_strict_block_html(str(vio_lines_html or ""))
+    except Exception:
+        pass
+    return (
+        "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
+        "<summary>⛔ STRICT BLOCK (hard violations)</summary>"
+        "<div class='csc-details'>"
+        "<p>The model response was blocked by the wrapper because hard rule violations remained after repair/enforcement.</p>"
+        "<ul>"
+        + str(vio_lines_html or "")
+        + "</ul>"
+        "<p><i>(Content withheld by wrapper)</i></p>"
+        "</div></details>"
+    )
+
+
+def _render_strict_warn_banner_html(vio_lines_html: str) -> str:
+    """Render strict-warn banner with modular fallback."""
+    try:
+        if _output_csc_warning_renderer is not None and hasattr(_output_csc_warning_renderer, "render_strict_warn_banner_html"):
+            return _output_csc_warning_renderer.render_strict_warn_banner_html(str(vio_lines_html or ""))
+    except Exception:
+        pass
+    return (
+        "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
+        "<summary>⚠️ RULE VIOLATION DETECTED (strict_warn)</summary>"
+        "<div class='csc-details'>"
+        "<p>The following response still contains hard rule violations after repair/enforcement:</p>"
+        "<ul>"
+        + str(vio_lines_html or "")
+        + "</ul>"
+        "</div></details><hr>"
+    )
+
+
+def _render_cross_version_guard_html(active_version: str) -> str:
+    """Render deterministic Cross-Version Guard alert with modular fallback."""
+    try:
+        if _output_csc_warning_renderer is not None and hasattr(_output_csc_warning_renderer, "render_cross_version_guard_html"):
+            return _output_csc_warning_renderer.render_cross_version_guard_html(str(active_version or ""))
+    except Exception:
+        pass
+    return (
+        "<div class='csc-warning' style='background:#fff7ed; border:1px solid #fb923c; padding:10px; "
+        "border-radius:10px; margin:8px 0; color:#9a3412;'>"
+        "<b>CONTROL LAYER ALERT</b><br><b>Cross-Version Guard</b>: "
+        f"Ignored foreign version token(s) in user input. Active: {html.escape(str(active_version or ''))}."
+        "</div>"
+    )
+
+
+def _render_repair_pass_banner_html(
+    *,
+    hard_violations: list[str] | tuple[str, ...],
+    tooltip_text: str = "",
+    include_violation_list: bool = True,
+) -> str:
+    """Render deterministic repair-pass note with modular fallback."""
+    try:
+        if _output_control_layer_note_renderer is not None and hasattr(_output_control_layer_note_renderer, "render_repair_pass_banner_html"):
+            return _output_control_layer_note_renderer.render_repair_pass_banner_html(
+                violations=[str(v) for v in list(hard_violations or [])],
+                tooltip_text=str(tooltip_text or ""),
+                include_violation_list=bool(include_violation_list),
+            )
+    except Exception:
+        pass
+
+    note_tip_attr = ""
+    try:
+        note_tip = html.escape(str(tooltip_text or ""), quote=True)
+        if note_tip:
+            note_tip_attr = f" data-u-title='{note_tip}' style='cursor:help;'"
+    except Exception:
+        note_tip_attr = ""
+
+    base = (
+        "<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
+        "border-radius:10px; margin:8px 0; color:#92400e;'>"
+        f"<b{note_tip_attr}>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
+    )
+    if bool(include_violation_list):
+        items = "".join(
+            f"<li class='control-layer-violation'>{html.escape(str(v))}</li>"
+            for v in list(hard_violations or [])
+        )
+        if items:
+            return base + f"<ul class='control-layer-violations' style='margin:6px 0 0 18px; padding:0;'>{items}</ul></div>"
+    return base + "</div>"
+
+
 def _csc_score_tooltip_text(*, lang: str = "de", f_score: int = 0, token_count: int = 0) -> str:
     if _tooltip_lang(lang) == "en":
         return (
@@ -4291,57 +4526,21 @@ def annotate_signal_dot_tooltips_html(html_text: str, *, lang: str = "de") -> st
     src = str(html_text or "")
     if not src:
         return src
-
-    protected: list[str] = []
-
-    def _protect_existing_marker(m: re.Match) -> str:
-        attrs = f"{m.group('attrs1') or ''}{m.group('attrs2') or ''}"
-        body = str(m.group("body") or "")
-        block = m.group(0)
-        if re.search(r"(?i)\b(?:data-u-title|title)\s*=", attrs) is None:
-            im = re.search(r"[🟢🟡🔴]", body)
-            icon = str(im.group(0) if im else "")
-            tip = _signal_dot_tooltip_text(icon, lang=lang)
-            if tip:
-                esc = html.escape(tip)
-                if re.search(r"(?i)\bstyle\s*=", block):
-                    block = re.sub(
-                        r"(?is)<span\b",
-                        f"<span data-u-title='{esc}' title='{esc}'",
-                        block,
-                        count=1,
-                    )
-                else:
-                    block = re.sub(
-                        r"(?is)<span\b",
-                        f"<span data-u-title='{esc}' title='{esc}' style='cursor:help;'",
-                        block,
-                        count=1,
-                    )
-        token = f"__SIGNAL_DOT_MARKER_PROTECT_{len(protected)}__"
-        protected.append(block)
-        return token
-
-    stage = _SIGNAL_DOT_MARKER_SPAN_RE.sub(_protect_existing_marker, src)
-
-    def _repl(m: re.Match) -> str:
-        body = str(m.group("body") or "")
-        icon = re.sub(r"\s+", "", body)
-        tip = _signal_dot_tooltip_text(icon, lang=lang)
-        if not tip:
-            return m.group(0)
-        esc = html.escape(tip)
-        return (
-            "<span class='signal-dot-marker' "
-            f"data-u-title='{esc}' title='{esc}' style='cursor:help;'>"
-            f"{m.group(0)}"
-            "</span>"
+    try:
+        fn = (
+            getattr(_output_color_markers_renderer, "annotate_signal_dot_tooltips_html", None)
+            if _output_color_markers_renderer is not None
+            else None
         )
-
-    stage = _SIGNAL_DOT_SPAN_RE.sub(_repl, stage)
-    for idx, block in enumerate(protected):
-        stage = stage.replace(f"__SIGNAL_DOT_MARKER_PROTECT_{idx}__", block)
-    return stage
+        if callable(fn):
+            return fn(
+                src,
+                lang=str(lang or "de"),
+                signal_dot_tooltip_text_fn=_signal_dot_tooltip_text,
+            )
+    except Exception:
+        pass
+    return src
 
 
 def _fallback_signal_dot_icon_for_text(text: str) -> str:
@@ -4370,131 +4569,248 @@ def inject_fallback_signal_dots_html(html_text: str, *, lang: str = "de") -> str
     src = str(html_text or "")
     if not src:
         return src
-    if "signal-dot-marker" in src:
-        return src
-
-    out = []
-    cursor = 0
-    for m in _SIGNAL_DOT_BLOCK_RE.finditer(src):
-        start, end = m.span()
-        tag = str(m.group("tag") or "")
-        attrs = str(m.group("attrs") or "")
-        body = str(m.group("body") or "")
-        out.append(src[cursor:start])
-
-        plain = html.unescape(re.sub(r"(?is)<[^>]+>", " ", body))
-        plain = re.sub(r"\s+", " ", plain).strip()
-        low = plain.lower()
-
-        skip = False
-        if not plain or len(plain) < 24:
-            skip = True
-        elif _SIGNAL_DOT_STATUS_PREFIX_RE.match(plain):
-            skip = True
-        elif low.startswith("qc-matrix:") or low.startswith("verification route"):
-            skip = True
-        elif "response at " in low or "selbst-debunking" in low or "self-debunking" in low:
-            skip = True
-        elif "uncertainty-auto-marker" in attrs:
-            skip = True
-
-        if skip:
-            out.append(src[start:end])
-        else:
-            icon = _fallback_signal_dot_icon_for_text(plain)
-            tip = _signal_dot_tooltip_text(icon, lang=lang)
-            esc_tip = html.escape(tip) if tip else ""
-            color = _SIGNAL_DOT_COLOR.get(icon, "#5f6368")
-            dot_html = (
-                "<span class='signal-dot-marker' "
-                f"data-u-title='{esc_tip}' title='{esc_tip}' style='cursor:help;'>"
-                f"<span style=\"color:{color}; font-weight:600;\">{icon}</span>"
-                "</span> "
+    try:
+        fn = (
+            getattr(_output_color_markers_renderer, "inject_fallback_signal_dots_html", None)
+            if _output_color_markers_renderer is not None
+            else None
+        )
+        if callable(fn):
+            def _infer_uncertainty_codes_local(text_in: str):
+                try:
+                    if _uncertainty_codes_mod is not None and hasattr(_uncertainty_codes_mod, "infer_uncertainty_codes"):
+                        return list(_uncertainty_codes_mod.infer_uncertainty_codes(text_in, user_text="") or [])
+                except Exception:
+                    pass
+                return []
+            return fn(
+                src,
+                lang=str(lang or "de"),
+                infer_uncertainty_codes_fn=_infer_uncertainty_codes_local,
+                signal_dot_tooltip_text_fn=_signal_dot_tooltip_text,
             )
-            marked_body = re.sub(r"^(\s*)", r"\1" + dot_html, body, count=1)
-            out.append(f"<{tag}{attrs}>{marked_body}</{tag}>")
-        cursor = end
-    out.append(src[cursor:])
-    return "".join(out)
+    except Exception:
+        pass
+    return src
 
 
 def limit_signal_dot_marker_density_html(html_text: str, *, max_per_block: int = 1) -> str:
     """Keep at most N signal-dot markers per content block to avoid visual marker overload."""
     src = str(html_text or "")
-    cap = max(1, int(max_per_block or 1))
-    if not src or "signal-dot-marker" not in src:
+    if not src:
         return src
-
-    out = []
-    cursor = 0
-    for m in _SIGNAL_DOT_BLOCK_RE.finditer(src):
-        start, end = m.span()
-        tag = str(m.group("tag") or "")
-        attrs = str(m.group("attrs") or "")
-        body = str(m.group("body") or "")
-        out.append(src[cursor:start])
-
-        if "signal-dot-marker" not in body:
-            out.append(src[start:end])
-            cursor = end
-            continue
-
-        kept = 0
-
-        def _trim(mm: re.Match) -> str:
-            nonlocal kept
-            kept += 1
-            if kept <= cap:
-                return mm.group(0)
-            return ""
-
-        cleaned = _SIGNAL_DOT_MARKER_RE.sub(_trim, body)
-        out.append(f"<{tag}{attrs}>{cleaned}</{tag}>")
-        cursor = end
-    out.append(src[cursor:])
-    return "".join(out)
+    try:
+        fn = (
+            getattr(_output_color_markers_renderer, "limit_signal_dot_marker_density_html", None)
+            if _output_color_markers_renderer is not None
+            else None
+        )
+        if callable(fn):
+            return fn(src, max_per_block=int(max_per_block or 1))
+    except Exception:
+        pass
+    return src
 
 
 def strip_signal_dots_from_heading_only_blocks_html(html_text: str) -> str:
     """Remove signal-dot markers from pure heading blocks (<p>/<li> with only <strong>/<hN>)."""
     src = str(html_text or "")
-    if not src or "signal-dot-marker" not in src:
+    if not src:
         return src
-
-    def _is_heading_only(inner_html: str) -> bool:
-        content = re.sub(r"(?is)^\s*(?:<br\s*/?>|\s|&nbsp;)+", "", str(inner_html or ""))
-        content = re.sub(r"(?is)(?:<br\s*/?>|\s|&nbsp;)+\s*$", "", content)
-        if not content:
-            return False
-        if re.fullmatch(r"(?is)<strong\b[^>]*>.*?</strong>", content):
-            return True
-        if re.fullmatch(r"(?is)<h[1-6]\b[^>]*>.*?</h[1-6]>", content):
-            return True
-        return False
-
-    out = []
-    cursor = 0
-    for m in _SIGNAL_DOT_BLOCK_RE.finditer(src):
-        start, end = m.span()
-        block = str(m.group(0) or "")
-        out.append(src[cursor:start])
-        if "signal-dot-marker" not in block:
-            out.append(block)
-        else:
-            block_wo_markers = _SIGNAL_DOT_MARKER_RE.sub("", block)
-            mm = re.match(r"(?is)<(?P<tag>p|li)\b[^>]*>(?P<body>.*?)</(?P=tag)>", block_wo_markers)
-            body = str(mm.group("body") if mm else "")
-            if _is_heading_only(body):
-                out.append(block_wo_markers)
-            else:
-                out.append(block)
-        cursor = end
-    out.append(src[cursor:])
-    return "".join(out)
+    try:
+        fn = (
+            getattr(_output_color_markers_renderer, "strip_signal_dots_from_heading_only_blocks_html", None)
+            if _output_color_markers_renderer is not None
+            else None
+        )
+        if callable(fn):
+            return fn(src)
+    except Exception:
+        pass
+    return src
 
 
+def auto_embed_image_urls(text: str) -> str:
+    """Embed plain image URLs with inline <img> tags (fail-soft, code-fence aware)."""
+    src = str(text or "")
+    try:
+        fn = (
+            getattr(_output_image_embed_renderer, "auto_embed_image_urls", None)
+            if _output_image_embed_renderer is not None
+            else None
+        )
+        if callable(fn):
+            return str(fn(src) or "")
+    except Exception:
+        pass
+
+    try:
+        mod = importlib.import_module("output.renderers.image_embed")
+        fn2 = getattr(mod, "auto_embed_image_urls", None)
+        if callable(fn2):
+            return str(fn2(src) or "")
+    except Exception:
+        pass
+    return src
+
+
+def evaluate_strict_enforcement(
+    *,
+    raw_for_render: str,
+    user_raw: str,
+    profile_name: str,
+    override_violations,
+    settings,
+    validator_obj,
+    runtime_state,
+    append_system_message_fn=None,
+):
+    """Evaluate strict gate via extracted renderer with fail-soft local fallback."""
+    src = str(raw_for_render or "")
+    ens = settings if isinstance(settings, dict) else {}
+    override_list = [str(x) for x in list(override_violations or [])]
+    policy = str((ens or {}).get("policy") or "audit_only")
+    enabled = bool((ens or {}).get("enabled", True))
+    def _default_out():
+        return {"blocked": False, "blocked_html": "", "strict_banner_html": "", "meta": None}
+    if (not enabled) or policy not in ("strict_warn", "strict_block"):
+        return _default_out()
+    def _validate_local(text_in: str):
+        if validator_obj is None or not hasattr(validator_obj, "validate"):
+            return [], []
+        return validator_obj.validate(
+            text_in,
+            state=runtime_state,
+            profile=str(profile_name or "Standard"),
+            expect_menu=False,
+            expect_trace=False,
+            is_command=False,
+            user_prompt=str(user_raw or ""),
+            raw_response=text_in,
+        )
+    classify_fn = (
+        getattr(_compliance_scan, "classify_violation_messages_best_effort", None)
+        if _compliance_scan is not None
+        else None
+    )
+    try:
+        fn = (
+            getattr(_output_strict_gate_renderer, "evaluate_strict_enforcement", None)
+            if _output_strict_gate_renderer is not None
+            else None
+        )
+        if callable(fn):
+            out = fn(
+                raw_for_render=src,
+                user_raw=str(user_raw or ""),
+                profile_name=str(profile_name or "Standard"),
+                override_violations=override_list,
+                settings=ens,
+                validate_fn=_validate_local,
+                classify_violation_messages_best_effort_fn=classify_fn,
+                runtime_state=runtime_state,
+                state_from_runtime_fn=_state_from_runtime,
+                apply_intent_fn=_apply_intent,
+                process_model_response_cls=_ProcessModelResponse,
+                compliance_violation_cls=_ComplianceViolation,
+                render_strict_block_warning_html_fn=_render_strict_block_warning_html,
+                render_strict_warn_banner_html_fn=_render_strict_warn_banner_html,
+                append_system_message_fn=append_system_message_fn,
+            )
+            if isinstance(out, dict):
+                return out
+    except Exception:
+        pass
+    try:
+        hv2, _sv2 = _validate_local(src)
+        hard_violations = [str(x) for x in (hv2 or [])]
+    except Exception as exc:
+        hard_violations = []
+        if callable(append_system_message_fn):
+            try:
+                append_system_message_fn(f"⚠️ QC/Validator error in strict enforcement: {exc}")
+            except Exception:
+                pass
+    hard_violations += override_list
+    if not hard_violations:
+        return _default_out()
+    vio_lines_html = "".join(f"<li>{html.escape(str(x))}</li>" for x in hard_violations)
+    if policy == "strict_block":
+        blocked_html = _render_strict_block_warning_html(vio_lines_html)
+        return {
+            "blocked": True,
+            "blocked_html": str(blocked_html or ""),
+            "strict_banner_html": "",
+            "meta": {
+                "strict_enforcement": "blocked",
+                "hard_violations": hard_violations,
+                "violations_struct": [],
+            },
+        }
+
+    warn_html = _render_strict_warn_banner_html(vio_lines_html)
+    return {
+        "blocked": False,
+        "blocked_html": "",
+        "strict_banner_html": str(warn_html or ""),
+        "meta": {
+            "strict_enforcement": "warned",
+            "hard_violations": hard_violations,
+            "violations_struct": [],
+        },
+    }
+def _looks_like_rendered_html_runtime(html_text: str) -> bool:
+    src = str(html_text or "")
+    try:
+        fn = (
+            getattr(_output_render_quality_renderer, "looks_like_rendered_html", None)
+            if _output_render_quality_renderer is not None
+            else None
+        )
+        if not callable(fn):
+            mod = importlib.import_module("output.renderers.render_quality")
+            fn = getattr(mod, "looks_like_rendered_html", None)
+        if callable(fn):
+            return bool(fn(src))
+    except Exception:
+        pass
+    return bool(src and "<" in src and ">" in src and "&lt;" not in src)
+def _build_render_normalization_summary(raw_text: str, html_text: str) -> dict:
+    raw = str(raw_text or "")
+    out_html = str(html_text or "")
+    try:
+        fn = (
+            getattr(_output_render_quality_renderer, "build_normalization_summary", None)
+            if _output_render_quality_renderer is not None
+            else None
+        )
+        if not callable(fn):
+            mod = importlib.import_module("output.renderers.render_quality")
+            fn = getattr(mod, "build_normalization_summary", None)
+        if callable(fn):
+            out = fn(
+                raw_text=raw,
+                html_text=out_html,
+                detect_self_debunking_numbered_html_fn=detect_self_debunking_numbered_html,
+            )
+            if isinstance(out, dict):
+                return out
+    except Exception:
+        pass
+    return {"qc_footer_raw_count": 0, "qc_footer_html_count": 0, "qc_footer_deduped": False, "self_debunking_boxed": False, "self_debunking_numbered": False}
 def apply_color_spans(text: str, enabled: bool = True) -> str:
     """Render Evidence-Linker tags with actual HTML colors (does not invent tags)."""
+    try:
+        if _output_color_markers_renderer is not None and hasattr(_output_color_markers_renderer, "apply_color_spans"):
+            return _output_color_markers_renderer.apply_color_spans(  # type: ignore[attr-defined]
+                text,
+                enabled=bool(enabled),
+                evidence_color=_EVIDENCE_COLOR,
+                evidence_icon=_EVIDENCE_ICON,
+            )
+    except Exception:
+        pass
+
     if not enabled or not text:
         return text
 
@@ -4516,6 +4832,16 @@ def _reapply_color_styles_if_stripped(html_text: str) -> str:
     This is a defensive fallback for environments where Bleach cannot load CSSSanitizer (e.g., missing tinycss2).
     We only touch spans that contain our Evidence-Linker tokens, and we only inject the fixed palette colors.
     """
+    try:
+        if _output_color_markers_renderer is not None and hasattr(_output_color_markers_renderer, "reapply_color_styles_if_stripped"):
+            return _output_color_markers_renderer.reapply_color_styles_if_stripped(  # type: ignore[attr-defined]
+                html_text,
+                evidence_color=_EVIDENCE_COLOR,
+                evidence_icon=_EVIDENCE_ICON,
+            )
+    except Exception:
+        pass
+
     if not html_text:
         return html_text
 
@@ -4533,6 +4859,54 @@ def _reapply_color_styles_if_stripped(html_text: str) -> str:
         flags=re.IGNORECASE,
     )
     return pat.sub(repl, html_text)
+
+
+def strip_color_markers_for_color_off_text(text: str) -> str:
+    """Hide visual evidence color markers when Color=off (keep textual tags)."""
+    _policy_fn = None
+    try:
+        if _color_marker_policy is not None:
+            _policy_fn = getattr(_color_marker_policy, "strip_color_markers_text", None)
+    except Exception:
+        _policy_fn = None
+    try:
+        if _output_color_markers_renderer is not None and hasattr(_output_color_markers_renderer, "strip_color_markers_for_color_off_text"):
+            return _output_color_markers_renderer.strip_color_markers_for_color_off_text(  # type: ignore[attr-defined]
+                text,
+                strip_policy_fn=_policy_fn,
+            )
+    except Exception:
+        pass
+    try:
+        if callable(_policy_fn):
+            return _policy_fn(text)
+    except Exception:
+        pass
+    return text
+
+
+def strip_color_markers_for_color_off_html(html_text: str) -> str:
+    """Hide visual evidence color markers in rendered HTML when Color=off."""
+    _policy_fn = None
+    try:
+        if _color_marker_policy is not None:
+            _policy_fn = getattr(_color_marker_policy, "strip_color_markers_html", None)
+    except Exception:
+        _policy_fn = None
+    try:
+        if _output_color_markers_renderer is not None and hasattr(_output_color_markers_renderer, "strip_color_markers_for_color_off_html"):
+            return _output_color_markers_renderer.strip_color_markers_for_color_off_html(  # type: ignore[attr-defined]
+                html_text,
+                strip_policy_fn=_policy_fn,
+            )
+    except Exception:
+        pass
+    try:
+        if callable(_policy_fn):
+            return _policy_fn(html_text)
+    except Exception:
+        pass
+    return html_text
 
 @dataclass
 class GovernanceRuntimeState:
@@ -4725,10 +5099,77 @@ def strip_sci_menu_from_answer(text: str) -> str:
     try:
         if not text:
             return text
+
+        out = str(text)
+
+        def _looks_like_variant_table_menu(block: str) -> bool:
+            plain = re.sub(r"<[^>]+>", " ", str(block or ""))
+            plain = html.unescape(plain)
+            low = re.sub(r"\s+", " ", plain).strip().lower()
+            if not low:
+                return False
+            has_header = (
+                (("variante" in low) or ("variant" in low))
+                and ("name" in low)
+                and (
+                    ("fokus / methode" in low)
+                    or ("fokus/methode" in low)
+                    or ("focus / method" in low)
+                    or ("focus/method" in low)
+                )
+            )
+            if not has_header:
+                return False
+            has_a = bool(re.search(r"(?im)^\s*\|?\s*A\s*(?:\||:|\)|\.|\s)", plain))
+            has_h = bool(re.search(r"(?im)^\s*\|?\s*H\s*(?:\||:|\)|\.|\s)", plain))
+            if not (has_a and has_h):
+                return False
+            known_terms = (
+                "standard",
+                "deep-dive",
+                "branch evaluation",
+                "axiomatic reduction",
+                "confidence tracker",
+                "impact projection",
+                "failure mode analysis",
+                "multi-agent simulation",
+                "dialectics",
+                "plan → solution → check",
+            )
+            return any(t in low for t in known_terms)
+
+        # HTML table variant menu echoes (after markdown rendering in weak-model outputs).
+        if "<table" in out.lower():
+            table_re = re.compile(r"(?is)<table\b[^>]*>.*?</table>")
+
+            def _strip_table(m: re.Match) -> str:
+                block = m.group(0)
+                return "\n" if _looks_like_variant_table_menu(block) else block
+
+            out = table_re.sub(_strip_table, out)
+
+        # Markdown/plain table variant menu echoes without an explicit SCI title line.
+        md_pats = [
+            re.compile(
+                r"(?is)(?:^|\n)\s*\|?\s*(?:Variante|Variant)\b[^\n]*(?:Fokus\s*/\s*Methode|Focus\s*/\s*Method)[^\n]*\n"
+                r"(?:\s*\|?[-:| ]+\n)?"
+                r"(?:\s*\|\s*[A-H]\s*\|[^\n]*\n){3,12}"
+            ),
+            re.compile(
+                r"(?is)(?:^|\n)\s*(?:Variante|Variant)\b[^\n]*(?:Fokus\s*/\s*Methode|Focus\s*/\s*Method)[^\n]*\n"
+                r"(?:\s*[A-H]\s+(?:Standard|Deep-Dive|Branch Evaluation|Axiomatic Reduction|Confidence Tracker|Impact Projection|Failure Mode Analysis|Multi-Agent Simulation)\b[^\n]*\n){3,12}"
+            ),
+        ]
+        for pat in md_pats:
+            def _strip_md_block(m: re.Match) -> str:
+                block = m.group(0)
+                return "\n" if _looks_like_variant_table_menu(block) else block
+            out = pat.sub(_strip_md_block, out)
+
         # Work on plain text (not HTML); if HTML is already present, strip tags first for detection only.
-        probe = re.sub(r"<[^>]+>", "", text)
+        probe = re.sub(r"<[^>]+>", "", out)
         if ("SCI variants" not in probe) and ("SCI-Varianten" not in probe):
-            return text
+            return out
 
         # Identify the menu region heuristically: from the first menu title to the first of:
         # - 'SCI Trace' line
@@ -4768,10 +5209,10 @@ def strip_sci_menu_from_answer(text: str) -> str:
         # Now remove corresponding slice from original text by mapping via length in probe.
         # Best-effort: remove by finding the same region in the original (possibly with HTML tags).
         # We try two strategies: exact probe substring, then a regex-based removal.
-        if probe[start:end] in re.sub(r"<[^>]+>", "", text):
+        if probe[start:end] in re.sub(r"<[^>]+>", "", out):
             # Remove on probe basis: use regex over original to delete menu block.
-            text = re.sub(r"(?is)(?:^|\n)\s*(?:Profile\s*:\s*[^\n]*\n)?\s*(SCI variants \(selection\)|SCI-Varianten(?:menü)? \(Auswahl\))\s*:?.*?(?=\n\s*(SCI Trace|Final Answer|Self-Debunking|QC(?:-Matrix)?)\b)", "\n", text, count=1)
-        return text
+            out = re.sub(r"(?is)(?:^|\n)\s*(?:Profile\s*:\s*[^\n]*\n)?\s*(SCI variants \(selection\)|SCI-Varianten(?:menü)? \(Auswahl\))\s*:?.*?(?=\n\s*(SCI Trace|Final Answer|Self-Debunking|QC(?:-Matrix)?)\b)", "\n", out, count=1)
+        return out
     except Exception:
         return text
 
@@ -5097,6 +5538,37 @@ def _init_state_from_rules():
     )
 
 
+def _resolve_profile_color_default_from_ruleset(data, profile_name: str, fallback: str = "on") -> str:
+    prof = str(profile_name or "").strip()
+    fb = str(fallback or "on").strip().lower()
+    if fb not in {"on", "off"}:
+        fb = "on"
+
+    try:
+        if _state_resolve_profile_color_default is not None:
+            return str(
+                _state_resolve_profile_color_default(
+                    data if isinstance(data, dict) else {},
+                    prof,
+                    fallback=fb,
+                )
+            )
+    except Exception:
+        pass
+
+    try:
+        rules = data if isinstance(data, dict) else {}
+        profiles = rules.get("profiles") or {}
+        pdef = (profiles.get(prof) or {}) if isinstance(profiles, dict) else {}
+        raw = str((pdef.get("color_default") if isinstance(pdef, dict) else "") or "").strip().lower()
+        if raw in {"on", "off"}:
+            return raw
+    except Exception:
+        pass
+
+    return fb
+
+
 # --- HTML TEMPLATES ---
 
 HTML_CHAT_TEMPLATE = """
@@ -5266,7 +5738,7 @@ HTML_CHAT_TEMPLATE = """
         <span id="stats" class="top-stats">Session: loading...</span>
     </div>
     <div>
-       <button class="menu-btn" onclick="window.pywebview.api.export()">💾 EXPORT</button>
+       <button class="menu-btn" onclick="exportLogs()">💾 EXPORT</button>
        <button class="menu-btn" onclick="window.pywebview.api.settings()">⚙️ PANEL</button>
        <button class="exit-btn" onclick="openExitConfirm()">❌ EXIT</button>
     </div>
@@ -5383,6 +5855,128 @@ HTML_CHAT_TEMPLATE = """
 
   function escHtml(s){
       return (''+s).replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function _fileName(path){
+      const raw = String(path || '').trim();
+      if(!raw) return '';
+      const parts = raw.split(/[\\/]/);
+      return String(parts.pop() || raw);
+  }
+
+  function _displayExportPath(path){
+      const raw = String(path || '').trim();
+      if(!raw) return '';
+      const norm = raw.replace(/\\/g, '/');
+      const i = norm.toLowerCase().lastIndexOf('/logs/');
+      if(i >= 0){
+          return norm.slice(i + 1);
+      }
+      if(norm.toLowerCase().startsWith('logs/')){
+          return norm;
+      }
+      return _fileName(norm) || norm;
+  }
+
+  function _fileLink(path){
+      const raw = String(path || '').trim();
+      if(!raw) return '';
+      const label = _displayExportPath(raw);
+      return (
+          `<a href="#" class="export-file-link" data-export-path="${escHtml(raw)}"` +
+          ` onclick="return openExportFileFromAnchor(this);"><code>${escHtml(label)}</code></a>`
+      );
+  }
+
+  function _renderExportCard(title, bodyHtml){
+      return (
+          "<div style='border:1px solid #bbb; background:#f7f7f7; padding:10px; border-radius:10px; margin:8px 0;'>"
+          + `<b>${escHtml(String(title || 'Export'))}</b><br>`
+          + String(bodyHtml || '')
+          + "</div>"
+      );
+  }
+
+  function _renderExportNotice(chatPath, auditPath){
+      const rows = [];
+      if(String(chatPath || '').trim()){
+          rows.push(`Chat: ${_fileLink(chatPath)}`);
+      }
+      if(String(auditPath || '').trim()){
+          rows.push(`Audit: ${_fileLink(auditPath)}`);
+      }
+      if(!rows.length){
+          rows.push('Export abgeschlossen.');
+      }
+      return _renderExportCard('Export', rows.join('<br>'));
+  }
+
+  async function _openExportPreviewViaApi(api, raw){
+      if(api && api.open_export_preview){
+          return await api.open_export_preview(raw, 0);
+      }
+      if(api && api.panel_action){
+          const pa = await api.panel_action('open_export_preview', {path: raw, max_chars: 0});
+          if(pa && typeof pa === 'object'){
+              if(pa.result && typeof pa.result === 'object'){
+                  return pa.result;
+              }
+              return pa;
+          }
+      }
+      return null;
+  }
+
+  function openExportFileFromAnchor(anchor){
+      try{
+          const path = String(anchor && anchor.getAttribute ? (anchor.getAttribute('data-export-path') || '') : '').trim();
+          if(path){
+              openExportFile(path);
+          }
+      } catch(e){}
+      return false;
+  }
+
+  async function openExportFile(path){
+      const raw = String(path || '').trim();
+      if(!raw) return false;
+      try{
+          const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+          if(!api){
+              addMsg('bot', _renderExportCard('Datei-Vorschau', "<span style='color:#b91c1c'>Datei-Vorschau ist nicht verfügbar.</span>"), false, null);
+              return false;
+          }
+          const res = await _openExportPreviewViaApi(api, raw);
+          if(!res || res.ok === false){
+              const err = String((res && res.error) ? res.error : 'preview_failed');
+              addMsg('bot', _renderExportCard('Datei-Vorschau', `<span style='color:#b91c1c'>Datei-Vorschau fehlgeschlagen: ${escHtml(err)}</span>`), false, null);
+              return false;
+          }
+          return true;
+      } catch(e){
+          const msg = String((e && e.message) ? e.message : e);
+          addMsg('bot', _renderExportCard('Datei-Vorschau', `<span style='color:#b91c1c'>Datei-Vorschau fehlgeschlagen: ${escHtml(msg)}</span>`), false, null);
+          return false;
+      }
+  }
+
+  async function exportLogs(){
+      try{
+          const res = await window.pywebview.api.export();
+          let chatPath = '';
+          let auditPath = '';
+          if(Array.isArray(res)){
+              chatPath = String(res[0] || '');
+              auditPath = String(res[1] || '');
+          } else if(res && typeof res === 'object'){
+              chatPath = String(res.chat_path || '');
+              auditPath = String(res.audit_path || '');
+          }
+          addMsg('bot', _renderExportNotice(chatPath, auditPath), false, null);
+      } catch(e){
+          const msg = String((e && e.message) ? e.message : e);
+          addMsg('bot', _renderExportCard('Export', `<span style='color:#b91c1c'>Export Fehler: ${escHtml(msg)}</span>`), false, null);
+      }
   }
 
   function renderCscBlock(csc){
@@ -5559,19 +6153,59 @@ HTML_CHAT_TEMPLATE = """
       return `${base}\n${vTxt} ${dTxt}\n${hdr}\n${rows}`;
   }
 
+  function _restoreProtectedQcDimTips(src, blocks){
+      let out = String(src || '');
+      (blocks || []).forEach((block, idx) => {
+          out = out.replace(`__QC_DIM_TIP_PROTECT_${idx}__`, block);
+      });
+      return out;
+  }
+
   function _decorateQcMatrixTooltips(root, answerLang){
       if(!root) return;
       const src = String(root.innerHTML || '');
-      if(src.indexOf('QC-Matrix:') < 0) return;
-      if(src.indexOf('qc-dim-tip') >= 0) return;
-      const re = /(Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality|Klarheit|Kürze|Kuerze|Evidenz|Empathie|Konsistenz|Neutralität|Neutralitaet)\\s+([0-3])\\s*\\(\\s*Δ\\s*([+\\-−]?\\d+)\\s*\\)/g;
-      const out = src.replace(re, (full, label, value, delta) => {
+      if(!src) return;
+      const qcMarker = /(?:QC(?:\\s*-\\s*Matrix)?\\s*:)/i;
+      if(!qcMarker.test(src)) return;
+
+      const protectedBlocks = [];
+      const stage = src.replace(
+          /<span\\b[^>]*\\bclass\\s*=\\s*(?:"[^"]*\\bqc-dim-tip\\b[^"]*"|'[^']*\\bqc-dim-tip\\b[^']*')[^>]*>[\\s\\S]*?<\\/span>/gi,
+          (block) => {
+              const token = `__QC_DIM_TIP_PROTECT_${protectedBlocks.length}__`;
+              protectedBlocks.push(block);
+              return token;
+          },
+      );
+
+      let marker = null;
+      const markerRe = /(?:QC(?:\\s*-\\s*Matrix)?\\s*:)/gi;
+      for(let m = markerRe.exec(stage); m; m = markerRe.exec(stage)){
+          marker = m;
+      }
+      if(!marker){
+          if(protectedBlocks.length) root.innerHTML = _restoreProtectedQcDimTips(stage, protectedBlocks);
+          return;
+      }
+
+      const start = marker.index;
+      const prefix = stage.slice(0, start);
+      const suffix = stage.slice(start);
+      const ws = '(?:\\\\s|&nbsp;|&#160;|&#xA0;|&#xa0;)';
+      const dim = '(Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality|Klarheit|Kürze|Kuerze|Evidenz|Empathie|Konsistenz|Neutralität|Neutralitaet)';
+      const deltaSym = '(?:Δ|∆|&Delta;|&#916;|&#x394;|&#x0394;)';
+      const re = new RegExp(`${dim}${ws}+([0-3])${ws}*\\\\(${ws}*${deltaSym}${ws}*([+\\\\-−]?\\\\d+)${ws}*\\\\)`, 'gi');
+      let changed = false;
+      const decorated = suffix.replace(re, (full, label, value, delta) => {
           const key = _qcDimKey(label);
           if(!key) return full;
           const tip = _qcDimTipText(key, value, delta, answerLang);
+          changed = true;
           return `<span class="qc-dim-tip" data-u-title="${escHtml(tip)}">${full}</span>`;
       });
-      if(out !== src) root.innerHTML = out;
+      if(!changed && protectedBlocks.length === 0) return;
+      const out = changed ? (prefix + decorated) : stage;
+      root.innerHTML = _restoreProtectedQcDimTips(out, protectedBlocks);
   }
 
   function _normalizeCustomTooltipTargets(root){
@@ -5588,6 +6222,11 @@ HTML_CHAT_TEMPLATE = """
               }
           } catch(e) {}
       });
+  }
+
+  function _applyResponseTooltips(root, answerLang){
+      _decorateQcMatrixTooltips(root, answerLang);
+      _normalizeCustomTooltipTargets(root);
   }
 
   async function submitCgi(widgetId, mode){
@@ -5651,17 +6290,26 @@ HTML_CHAT_TEMPLATE = """
   function addMsg(role, text, qc=false, csc=null, opts={}) {
       const d = document.createElement('div');
       d.className = 'msg ' + role;
-      const copyTip = escHtml(_copyTip((opts && opts.answerLang) ? opts.answerLang : ''));
+      const answerLang = (opts && opts.answerLang) ? opts.answerLang : '';
+      const copyTip = escHtml(_copyTip(answerLang));
       let html = `<button class="copy-btn" onclick="copyToClipboard(this)" data-u-title="${copyTip}">📋</button>`;
       if(role === 'bot') html += renderCscBlock(csc);
       html += text;
-      if(qc && role === 'bot') html += _buildCgiWidgetHtml((opts && opts.answerLang) ? opts.answerLang : '');
+      if(qc && role === 'bot') html += _buildCgiWidgetHtml(answerLang);
       d.innerHTML = html;
-      _decorateQcMatrixTooltips(d, (opts && opts.answerLang) ? opts.answerLang : '');
-      _normalizeCustomTooltipTargets(d);
+      _applyResponseTooltips(d, answerLang);
       document.getElementById('chat').appendChild(d);
       document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
-      if(window.MathJax) MathJax.typesetPromise();
+      try {
+          requestAnimationFrame(() => {
+              _applyResponseTooltips(d, answerLang);
+          });
+      } catch(e) {}
+      if(window.MathJax){
+          MathJax.typesetPromise().then(() => {
+              try { _applyResponseTooltips(d, answerLang); } catch(e) {}
+          }).catch(() => {});
+      }
   }
 
   function copyToClipboard(btn) {
@@ -5993,7 +6641,7 @@ HTML_PANEL = """
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
   button { padding: 8px 5px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 11px; text-align:center; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   button:hover { background: #e8f0fe; border-color: #1a73e8; color: #1a73e8; }
-  .setting-select { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #999; margin-bottom: 5px; font-weight: bold; font-size: 12px;}
+  .setting-select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border-radius: 4px; border: 1px solid #999; margin-bottom: 5px; font-weight: bold; font-size: 12px;}
   .card { background: white; padding: 8px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #ddd; }
   .log-box { font-family: monospace; font-size: 9px; color: #333; margin-bottom: 8px; max-height: 70px; overflow-y: auto; background: #eee; padding: 6px; border-radius: 6px; border: 1px solid #ddd; }
   .test-log-box { font-family: monospace; font-size: 10px; color: #222; margin-top: 6px; max-height: 160px; overflow-y: auto; background: #f4f6f8; padding: 6px; border-radius: 6px; border: 1px solid #ddd; white-space: pre-wrap; }
@@ -6070,10 +6718,12 @@ HTML_PANEL = """
     <option value="hide">Monitorfenster: ausblenden</option>
   </select>
   <select id="manualTestScenario" class="setting-select">
+    <option value="actual_test">ACTUAL-TEST (schnell, Report wird ueberschrieben)</option>
     <option value="smoke_short">Kurztest (A+C+D+F ohne HF)</option>
     <option value="provider_switch">Providerwechsel (Gemini/OpenRouter/HF optional)</option>
     <option value="sci_format">SCI-Format (A/B)</option>
     <option value="qc_override_footer">QC-Override + Footer (SCI B, Gemini-Referenz)</option>
+    <option value="profile_self_debunking">Profile + Self-Debunking-Contract (alle Profile)</option>
     <option value="komplexttest">Komplexttest (Matrix + Pflichtprompts + Influence-Checks)</option>
     <option value="full_regression_light">A-F (leicht, HF optional)</option>
   </select>
@@ -6661,665 +7311,8 @@ async function fetchHFCatalog(){
 }
 
 /* ---------- Manual test runner (blocking on answers) ---------- */
-window.__manualTestRunner = window.__manualTestRunner || { running:false, stop:false, runId:0, events:[], summary:null, scenario:'', askFallbackNoted:false };
+/* __PANEL_MANUAL_TEST_RUNNER_SHARED__ */
 
-function _mtMonitorEnabled(){
-  try {
-    const el = document.getElementById('manualTestMonitorMode');
-    return !!(el && el.value === 'show');
-  } catch(e) { return true; }
-}
-
-async function setManualTestMonitorMode(){
-  try {
-    const mode = _mtMonitorEnabled() ? 'show' : 'hide';
-    _safeLsSet('manual_test_monitor_mode', mode);
-    if(mode === 'show'){
-      await _apiCall('panel_action', ['manual_test_monitor_show', {}], 8000);
-    } else {
-      await _apiCall('panel_action', ['manual_test_monitor_hide', {}], 8000);
-    }
-  } catch(e) {
-    _mtWarn('Monitor-Umschaltung fehlgeschlagen: ' + String(e && e.message ? e.message : e));
-  }
-}
-
-function _mtLog(msg, cls){
-  const el = document.getElementById('manualTestLog');
-  if(!el) return;
-  let stamp = '';
-  try { stamp = _now() || ''; } catch(e) { stamp = ''; }
-  const line = document.createElement('div');
-  if(cls) line.className = cls;
-  line.textContent = (stamp ? (stamp + ' · ') : '') + String(msg || '');
-  el.appendChild(line);
-  while(el.children.length > 200) el.removeChild(el.firstChild);
-  el.scrollTop = el.scrollHeight;
-  try {
-    const mt = window.__manualTestRunner;
-    if(mt && mt.running){
-      if(!Array.isArray(mt.events)) mt.events = [];
-      const entry = {
-        ts: stamp || null,
-        level: cls || 'info',
-        message: String(msg || ''),
-      };
-      mt.events.push(entry);
-      try {
-        if(mt.monitorEnabled){
-          _apiCall('panel_action', ['manual_test_monitor_append', {entry: entry}], 4000).catch(()=>{});
-        }
-      } catch(e) {}
-    }
-  } catch(e) {}
-}
-
-function _mtClearLog(){
-  const el = document.getElementById('manualTestLog');
-  if(el) el.innerHTML = '';
-}
-
-async function _mtSaveReport(extra){
-  try {
-    const mt = window.__manualTestRunner || {};
-    const report = {
-      kind: 'manual_test_runner_report',
-      version: 1,
-      scenario: String(mt.scenario || ''),
-      started_at: mt.startedAt || null,
-      finished_at: (extra && extra.finished_at) || (_now ? _now() : null),
-      duration_ms: (extra && extra.duration_ms) || null,
-      summary: Object.assign({}, (mt.summary || {}), (extra && extra.summary ? extra.summary : {})),
-      events: Array.isArray(mt.events) ? mt.events.slice() : [],
-      ui_state: {
-        provider: ((document.getElementById('provider') || {}).value || ''),
-        model: ((document.getElementById('model') || {}).value || ''),
-        answer_language: ((document.getElementById('anslang') || {}).value || ''),
-      }
-    };
-    const res = await _apiCall('panel_action', ['save_manual_test_report', {report: report}], 20000);
-    if(res && res.ok !== false){
-      const path = (res.path || (res.result && res.result.path) || '');
-      if(path) _mtLog('REPORT saved: ' + path, 'ok');
-      else _mtLog('REPORT saved.', 'ok');
-      return res;
-    }
-    _mtWarn('REPORT save failed: ' + String((res && res.error) || 'unknown'));
-    return res;
-  } catch(e) {
-    _mtWarn('REPORT save failed: ' + String(e && e.message ? e.message : e));
-    return null;
-  }
-}
-
-async function _mtExportChatAudit(label){
-  const suffix = String(label || '').trim();
-  const tag = suffix ? (' [' + suffix + ']') : '';
-  _mtLog('EXPORT > Chat/Audit' + tag);
-  try {
-    await _apiCall('export', [], 25000);
-    _mtLog('PASS: Export ausgefuehrt', 'ok');
-    return true;
-  } catch(e) {
-    const msg = String(e && e.message ? e.message : e);
-    if(msg.toLowerCase().includes('pywebview api method not available: export')){
-      try {
-        const res = await _apiCall('panel_action', ['export', {}], 25000);
-        if(!res || res.ok === false){
-          throw new Error((res && res.error) ? res.error : 'panel_action export failed');
-        }
-        _mtLog('PASS: Export ausgefuehrt', 'ok');
-        return true;
-      } catch(e2) {
-        _mtWarn('Export nicht ausgefuehrt: ' + String(e2 && e2.message ? e2.message : e2));
-        return false;
-      }
-    }
-    _mtWarn('Export nicht ausgefuehrt: ' + msg);
-    return false;
-  }
-}
-
-function _mtSetButtons(running){
-  const a = document.getElementById('manualTestStartBtn');
-  const b = document.getElementById('manualTestStopBtn');
-  if(a) a.disabled = !!running;
-  if(b) b.disabled = !running;
-}
-
-function _mtStripHtml(html){
-  try{
-    const d = document.createElement('div');
-    d.innerHTML = String(html || '');
-    return (d.textContent || d.innerText || '').replace(/\\u00a0/g, ' ');
-  }catch(e){ return String(html || ''); }
-}
-
-function _mtHasCompleteQcFooter(html){
-  const txt = _mtStripHtml(html);
-  const idxMatrix = txt.lastIndexOf('QC-Matrix:');
-  const idxQC = txt.lastIndexOf('QC:');
-  const idx = Math.max(idxMatrix, idxQC);
-  if(idx < 0) return false;
-  let qc = txt.slice(idx);
-  const tsIdx = qc.search(/\\bResponse at\\b/i);
-  if(tsIdx >= 0) qc = qc.slice(0, tsIdx);
-  qc = qc.replace(/\\s+/g, ' ').trim();
-  const en = ['Clarity','Brevity','Evidence','Empathy','Consistency','Neutrality'];
-  const de = ['Klarheit','Evidenz','Empathie','Konsistenz'];
-  const hasEN = en.every(k => qc.includes(k + ' '));
-  const hasDE = de.every(k => qc.includes(k + ' ')) &&
-                (qc.includes('Kürze ') || qc.includes('Kuerze ')) &&
-                (qc.includes('Neutralität ') || qc.includes('Neutralitaet '));
-  return !!(hasEN || hasDE);
-}
-
-function _mtHasSelfDebunkingBox(html){
-  const h = String(html || '').toLowerCase();
-  const hasDebunkLabel = h.includes('self-debunking') || h.includes('selbst-debunking');
-  const hasDebunkClass = h.includes('class=\"self-debunk') || h.includes("class='self-debunk");
-  const hasBoxStyle = (h.includes('background') || h.includes('background-color')) &&
-                      (h.includes('border-left') || h.includes('border-radius'));
-  return hasDebunkLabel && (hasDebunkClass || hasBoxStyle);
-}
-
-function _mtHasVerificationRouteMarkers(html){
-  const txt = _mtStripHtml(html || '');
-  return /\\b(?:Verification Route|Verification Route Gate|Source|Measurement|Contrast|Web[- ]Check|Retrieval-Check|Quelle|Messung|Kontrast)\\s*:/i.test(txt);
-}
-
-function _mtHasSciTraceStructure(html){
-  const txt = _mtStripHtml(html);
-  if(!/SCI Trace/i.test(txt)) return false;
-  // Accept numbered or bullet-style step labels (models/renderers vary).
-  const hasNumbered = /\\b1\\.\\s*(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic)/i.test(txt);
-  const hasBulletLabels = /(?:^|\\n)\\s*(?:[-•*]\\s*)?(Plan|Check|Solution|Critic|Linguist|Logician|Adversary|Dialectic(?:_[0-9]+_[A-Za-z]+)?)\\s*:/im.test(txt);
-  return !!(hasNumbered || hasBulletLabels);
-}
-
-function _mtIncludesProviderLimitLabel(htmlOrText, providerLabel){
-  const t = _mtStripHtml(htmlOrText);
-  return t.toLowerCase().includes(String(providerLabel || '').toLowerCase()) &&
-         /(limit|guthaben|credits|rate)/i.test(t);
-}
-
-function _mtEnsureRunning(){
-  if(!window.__manualTestRunner || !window.__manualTestRunner.running) throw new Error('manual_test_not_running');
-  if(window.__manualTestRunner.stop) throw new Error('manual_test_stopped');
-}
-
-async function _mtSleep(ms){
-  await new Promise(r => setTimeout(r, ms||0));
-}
-
-function _mtAskTimeoutForCurrentProvider(timeoutMs){
-  const base = Number(timeoutMs || 180000) || 180000;
-  // In manual GUI regression runs, even command-like asks (profile/SCI menu selections)
-  // may trigger provider roundtrips and exceed 60s on OpenRouter/HF. Use a robust floor.
-  if(base < 180000){
-    return Math.max(base, 180000);
-  }
-  return base;
-}
-
-async function _mtAsk(text, timeoutMs){
-  _mtEnsureRunning();
-  const t = String(text || '').trim();
-  if(!t) return {html:'', csc:null};
-  const askTimeout = _mtAskTimeoutForCurrentProvider(timeoutMs);
-  _mtLog('ASK > ' + t);
-  let res = null;
-  try {
-    res = await _apiCall('ask', [t], askTimeout);
-  } catch(e) {
-    const msg = String(e && e.message ? e.message : e);
-    if(msg.toLowerCase().includes('pywebview api method not available: ask')){
-      try {
-        const mt = window.__manualTestRunner || {};
-        if(!mt.askFallbackNoted){
-          mt.askFallbackNoted = true;
-          _mtLog('INFO: api.ask nicht verfuegbar -> Fallback auf panel_action(ask)', 'info');
-        }
-      } catch(_e) {}
-      res = await _apiCall('panel_action', ['ask', {text: t}], askTimeout);
-      if(res && res.result && typeof res.result === 'object'){
-        res = res.result;
-      }
-    } else {
-      throw e;
-    }
-  }
-  _mtEnsureRunning();
-  const html = (res && res.html) ? String(res.html) : '';
-  _mtLog('ASK < done (' + (html.length||0) + ' html chars)');
-  await _mtSleep(150);
-  try { await buildUI(); } catch(e) {}
-  return res || {html:'', csc:null};
-}
-
-async function _mtPanelAction(action, payload, timeoutMs){
-  _mtEnsureRunning();
-  const res = await _apiCall('panel_action', [action, payload || {}], timeoutMs || 120000);
-  _mtEnsureRunning();
-  if(!res || res.ok === false){
-    throw new Error((res && res.error) ? res.error : ('panel_action failed: ' + action));
-  }
-  return res;
-}
-
-async function _mtSetProvider(provider){
-  const p = String(provider || '').trim().toLowerCase();
-  _mtLog('SET provider = ' + p);
-  // OpenRouter/Hugging Face can be slower due provider API latency / remote catalogs.
-  const _setProviderTimeout = (p === 'openrouter' || p === 'huggingface') ? 45000 : 30000;
-  const _refreshTimeout = (p === 'openrouter' || p === 'huggingface') ? 120000 : 60000;
-  await _mtPanelAction('set_provider', {provider:p}, _setProviderTimeout);
-  await _mtPanelAction('refresh_models', {provider:p}, _refreshTimeout);
-  await _mtSleep(250);
-  await buildUI();
-}
-
-async function _mtSetAnswerLanguage(lang){
-  const l = String(lang || 'de').trim().toLowerCase();
-  _mtLog('SET answer_language = ' + l);
-  await _mtPanelAction('set_answer_language', {lang:l}, 10000);
-  await _mtSleep(100);
-}
-
-async function _mtApplyQcOverride(values){
-  _mtEnsureRunning();
-  _mtLog('QC Override apply: ' + JSON.stringify(values || {}));
-  const api = _api();
-  if(api && typeof api.qc_override_apply === 'function'){
-    const res = await api.qc_override_apply(values || {});
-    if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_apply failed');
-    await _mtSleep(120);
-    return;
-  }
-  _mtWarn('qc_override_apply nicht direkt verfuegbar -> Fallback auf panel_action');
-  const res = await _apiCall('panel_action', ['qc_override_apply', {values: values || {}}], 10000);
-  if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_apply failed');
-  await _mtSleep(120);
-}
-
-async function _mtClearQcOverride(){
-  _mtEnsureRunning();
-  _mtLog('QC Override clear');
-  const api = _api();
-  if(api && typeof api.qc_override_clear === 'function'){
-    const res = await api.qc_override_clear({});
-    if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_clear failed');
-    await _mtSleep(120);
-    return;
-  }
-  _mtWarn('qc_override_clear nicht direkt verfuegbar -> Fallback auf panel_action');
-  const res = await _apiCall('panel_action', ['qc_override_clear', {}], 10000);
-  if(!res || res.ok === false) throw new Error((res && res.error) ? res.error : 'qc_override_clear failed');
-  await _mtSleep(120);
-}
-
-function _mtCheck(cond, okMsg, failMsg){
-  if(cond){
-    _mtLog('PASS: ' + okMsg, 'ok');
-    return true;
-  }
-  _mtLog('FAIL: ' + failMsg, 'err');
-  return false;
-}
-
-function _mtWarn(msg){
-  _mtLog('WARN: ' + msg, 'warn');
-}
-
-function _mtParseErrorTextFromAskResult(res){
-  try{
-    const txt = _mtStripHtml((res && res.html) || '');
-    if(/(error|limit|guthaben|credits|rate)/i.test(txt)) return txt;
-  }catch(e){}
-  return '';
-}
-
-async function _mtScenarioSmokeShort(){
-  let fails = 0;
-  await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtSetAnswerLanguage('de');
-  await _mtAsk('Standard', 30000);
-  await _mtAsk('SCI off', 30000);
-  const r1 = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasCompleteQcFooter(r1.html), 'QC-Footer bei Basisantwort vollstaendig', 'QC-Footer bei Basisantwort fehlt/ist unvollstaendig')) fails++;
-  if(!_mtCheck(_mtStripHtml(r1.html).includes('Self-Debunking') || _mtStripHtml(r1.html).includes('Selbst-Debunking'),
-      'Self-Debunking vorhanden', 'Self-Debunking fehlt')) fails++;
-  return {fails};
-}
-
-async function _mtScenarioProviderSwitch(){
-  let fails = 0;
-  await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtSetAnswerLanguage('de');
-  await _mtSetProvider('gemini');
-  await _mtAsk('Standard', 30000);
-  let rg = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasCompleteQcFooter(rg.html), 'Gemini: QC-Footer ok', 'Gemini: QC-Footer fehlt/unvollstaendig')) fails++;
-
-  await _mtSetProvider('openrouter');
-  let ro = await _mtAsk('Was ist Zeit?', 180000);
-  const txtOR = _mtStripHtml(ro.html);
-  if(/(insufficient credits|Nicht genügend Guthaben|rate limit|Limit erreicht)/i.test(txtOR)){
-    _mtWarn('OpenRouter lieferte Limit/Credit-Fehler (Test trotzdem ok, Providerpfad verifiziert).');
-    if(!_mtCheck(_mtIncludesProviderLimitLabel(ro.html, 'OpenRouter'), 'OpenRouter-Fehlerlabel korrekt', 'OpenRouter-Fehlerlabel unklar/falsch')) fails++;
-  } else {
-    if(!_mtCheck(_mtHasCompleteQcFooter(ro.html), 'OpenRouter: QC-Footer ok', 'OpenRouter: QC-Footer fehlt/unvollstaendig')) fails++;
-    if(!_mtCheck(_mtHasSelfDebunkingBox(ro.html), 'OpenRouter: Self-Debunking-Box erkannt', 'OpenRouter: Self-Debunking nicht als Box erkannt')) fails++;
-  }
-
-  await _mtSetProvider('huggingface');
-  let rhf = await _mtAsk('Was ist Zeit?', 180000);
-  const txtHF = _mtStripHtml(rhf.html);
-  if(/(insufficient credits|Nicht genügend Guthaben|rate limit|Limit erreicht|quota)/i.test(txtHF)){
-    _mtWarn('Hugging Face lieferte Limit/Credit-Fehler (optional).');
-    if(!_mtCheck(_mtIncludesProviderLimitLabel(rhf.html, 'Hugging Face'), 'HF-Fehlerlabel korrekt', 'HF-Fehler wurde nicht als Hugging Face gekennzeichnet')) fails++;
-  } else {
-    if(!_mtCheck(_mtHasCompleteQcFooter(rhf.html), 'HF: QC-Footer ok', 'HF: QC-Footer fehlt/unvollstaendig')) fails++;
-  }
-  return {fails};
-}
-
-async function _mtScenarioSciFormat(){
-  let fails = 0;
-  await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtSetProvider('gemini');
-  await _mtAsk('Expert', 30000);
-  await _mtAsk('SCI menu', 30000);
-  await _mtAsk('A', 30000);
-  const rA = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasSciTraceStructure(rA.html), 'SCI A: SCI-Trace-Struktur erkannt', 'SCI A: SCI-Trace-Struktur fehlt/unsauber')) fails++;
-  if(!_mtCheck(_mtHasCompleteQcFooter(rA.html), 'SCI A: QC-Footer ok', 'SCI A: QC-Footer fehlt/unvollstaendig')) fails++;
-
-  await _mtAsk('SCI menu', 30000);
-  await _mtAsk('B', 30000);
-  const rB = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasSciTraceStructure(rB.html), 'SCI B: SCI-Trace-Struktur erkannt', 'SCI B: SCI-Trace-Struktur fehlt/unsauber')) fails++;
-  if(!_mtCheck(_mtHasCompleteQcFooter(rB.html), 'SCI B: QC-Footer ok', 'SCI B: QC-Footer fehlt/unvollstaendig')) fails++;
-  return {fails};
-}
-
-async function _mtScenarioQcOverrideFooter(){
-  let fails = 0;
-  await _mtPanelAction('clear_chat', {}, 8000);
-  // Deterministic reference provider for QC/SCI contract checks (credits/limits on
-  // optional providers must not turn feature-contract tests into false FAILs).
-  await _mtSetProvider('gemini');
-  await _mtAsk('Expert', 30000);
-  await _mtAsk('SCI menu', 30000);
-  await _mtAsk('B', 30000);
-  await _mtApplyQcOverride({Clarity:3,Brevity:0,Evidence:3,Empathy:3,Consistency:3,Neutrality:3});
-  const r = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(_mtHasCompleteQcFooter(r.html), 'SCI B + QC-Override: QC-Footer vollstaendig', 'SCI B + QC-Override: QC-Footer fehlt/unvollstaendig')) fails++;
-  if(!_mtCheck(_mtHasSelfDebunkingBox(r.html), 'SCI B + QC-Override: Self-Debunking-Box erkannt', 'SCI B + QC-Override: Self-Debunking nicht als Box erkannt')) fails++;
-  try { await _mtClearQcOverride(); } catch(e) { _mtWarn('QC-Override clear fehlgeschlagen: ' + String(e && e.message ? e.message : e)); }
-  return {fails};
-}
-
-async function _mtScenarioFullRegressionLight(){
-  let fails = 0;
-  for(const fn of [_mtScenarioSmokeShort, _mtScenarioProviderSwitch, _mtScenarioSciFormat, _mtScenarioQcOverrideFooter]){
-    _mtEnsureRunning();
-    const r = await fn();
-    fails += (r && r.fails) ? r.fails : 0;
-  }
-  await _mtExportChatAudit('full_regression_light');
-  return {fails};
-}
-
-async function _mtScenarioKomplexttest(){
-  let fails = 0;
-  const prompts = [
-    'Was ist Zeit?',
-    'Was ist die objektiv beste und dauerhaft faire Strategie, um ab heute weltweit ein einheitliches KI-Regelwerk verbindlich durchzusetzen, sodass alle LLMs in jeder Sprache, Kultur und Rechtsordnung identische Antworten liefern, ohne negative Folgen fuer Datenschutz, Demokratie, Kreativitaet, Wissenschaft und Arbeitsmarkt?',
-  ];
-  const profiles = ['Standard', 'Expert'];
-  const sciVariants = ['off', 'A', 'B'];
-  const qcStates = [false, true];
-  const colorStates = ['on', 'off'];
-  const totalCases = profiles.length * sciVariants.length * qcStates.length * colorStates.length;
-  let caseIdx = 0;
-
-  await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtSetProvider('gemini');
-  await _mtSetAnswerLanguage('de');
-
-  for(const profile of profiles){
-    for(const sci of sciVariants){
-      for(const qcOn of qcStates){
-        for(const color of colorStates){
-          _mtEnsureRunning();
-          caseIdx += 1;
-          _mtLog(
-            'CASE ' + caseIdx + '/' + totalCases
-            + ' > profile=' + profile
-            + ' · sci=' + sci
-            + ' · qc_override=' + (qcOn ? 'on' : 'off')
-            + ' · color=' + color
-          );
-
-          if(caseIdx > 1){
-            await _mtExportChatAudit('case_checkpoint_before_clear_chat_' + caseIdx);
-          }
-          await _mtPanelAction('clear_chat', {}, 8000);
-          await _mtAsk(profile, 30000);
-          if(color === 'on') await _mtAsk('Color on', 30000);
-          else await _mtAsk('Color off', 30000);
-
-          if(sci === 'off'){
-            await _mtAsk('SCI off', 30000);
-          } else {
-            await _mtAsk('SCI menu', 30000);
-            await _mtAsk(sci, 30000);
-          }
-
-          if(qcOn){
-            await _mtApplyQcOverride({Clarity:3, Brevity:0, Evidence:3, Empathy:3, Consistency:3, Neutrality:3});
-          } else {
-            try { await _mtClearQcOverride(); } catch(e) {}
-          }
-
-          for(let i = 0; i < prompts.length; i += 1){
-            _mtEnsureRunning();
-            const prompt = prompts[i];
-            const res = await _mtAsk(prompt, 180000);
-            const txt = _mtStripHtml(res.html || '');
-            const caseLabel = 'CASE ' + caseIdx + ' P' + String(i + 1);
-
-            if(!_mtCheck(
-              _mtHasCompleteQcFooter(res.html),
-              caseLabel + ': QC-Footer vollstaendig',
-              caseLabel + ': QC-Footer fehlt/unvollstaendig'
-            )) fails++;
-
-            if(!_mtCheck(
-              /\bU[1-6]\b/.test(txt),
-              caseLabel + ': U-Marker vorhanden',
-              caseLabel + ': kein U-Marker gefunden'
-            )) fails++;
-
-            if(!_mtCheck(
-              _mtHasSelfDebunkingBox(res.html) || /(Self-Debunking|Selbst-Debunking)/i.test(txt),
-              caseLabel + ': Self-Debunking vorhanden',
-              caseLabel + ': Self-Debunking fehlt'
-            )) fails++;
-
-            const hasTagMarker = /\\[(GREEN|YELLOW|RED|GRAY|WHITE)(-[A-Z0-9]+)*\\]/i.test(txt);
-            const hasEmojiMarker = txt.indexOf('🟢') >= 0 || txt.indexOf('🟡') >= 0 || txt.indexOf('🔴') >= 0 || txt.indexOf('⚪') >= 0;
-            const hasColorMarker = hasTagMarker || hasEmojiMarker;
-            if(color === 'on'){
-              if(!_mtCheck(
-                hasColorMarker,
-                caseLabel + ': Farbmarker vorhanden (Color on)',
-                caseLabel + ': Farbmarker fehlen (Color on)'
-              )) fails++;
-            } else if(hasColorMarker){
-              _mtWarn(caseLabel + ': Farbmarker trotz Color off erkannt (modell-/renderpfadabhaengig).');
-            }
-          }
-
-          if(qcOn){
-            try { await _mtClearQcOverride(); } catch(e) { _mtWarn('QC-Override clear fehlgeschlagen: ' + String(e && e.message ? e.message : e)); }
-          }
-        }
-      }
-    }
-  }
-
-  _mtEnsureRunning();
-  await _mtExportChatAudit('before_influence_checks');
-  _mtLog('INFLUENCE-CHECKS > CGI / QC-Override / Dynamic one-shot');
-  await _mtPanelAction('clear_chat', {}, 8000);
-  await _mtAsk('Standard', 30000);
-  await _mtAsk('SCI off', 30000);
-  await _mtAsk('Color on', 30000);
-
-  const baseline = await _mtAsk('Was ist Zeit?', 180000);
-  const baselineTxt = _mtStripHtml(baseline.html || '');
-
-  const cgiNote = await _mtAsk('3,3,3', 30000);
-  if(!_mtCheck(
-    /cgi/i.test(_mtStripHtml(cgiNote.html || '')),
-    'CGI-Feedback wurde vom Wrapper registriert',
-    'CGI-Feedback wurde nicht registriert'
-  )) fails++;
-  const afterCgi = await _mtAsk('Was ist Zeit?', 180000);
-  const afterCgiTxt = _mtStripHtml(afterCgi.html || '');
-  if(!_mtCheck(
-    baselineTxt !== afterCgiTxt,
-    'CGI-Feedback beeinflusst Folgeresponse',
-    'CGI-Feedback beeinflusst Folgeresponse nicht sichtbar'
-  )) fails++;
-
-  const baselineQc = await _mtAsk('Was ist Zeit?', 180000);
-  await _mtApplyQcOverride({Clarity:3, Brevity:0, Evidence:3, Empathy:3, Consistency:3, Neutrality:3});
-  const afterQc = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(
-    _mtStripHtml(baselineQc.html || '') !== _mtStripHtml(afterQc.html || ''),
-    'QC-Override beeinflusst Folgeresponse',
-    'QC-Override beeinflusst Folgeresponse nicht sichtbar'
-  )) fails++;
-  try { await _mtClearQcOverride(); } catch(e) { _mtWarn('QC-Override clear fehlgeschlagen: ' + String(e && e.message ? e.message : e)); }
-
-  const baselineDyn = await _mtAsk('Was ist Zeit?', 180000);
-  await _mtAsk('Dynamic one-shot on', 30000);
-  const afterDyn = await _mtAsk('Was ist Zeit?', 180000);
-  if(!_mtCheck(
-    _mtStripHtml(baselineDyn.html || '') !== _mtStripHtml(afterDyn.html || ''),
-    'Dynamic one-shot beeinflusst Folgeresponse',
-    'Dynamic one-shot beeinflusst Folgeresponse nicht sichtbar'
-  )) fails++;
-
-  _mtLog('VERIFICATION-ROUTE VISIBILITY CHECK > explicit marker prompt');
-  const vrProbe = await _mtAsk(
-    'Gib eine kurze Antwort mit einem expliziten Verification Route Block. Verwende genau diese Marker: Source:, Measurement:, Contrast:, Web-Check:.',
-    180000
-  );
-  if(!_mtCheck(
-    _mtHasVerificationRouteMarkers(vrProbe.html),
-    'Verification-Route Marker sichtbar',
-    'Verification-Route Marker fehlen oder werden gefiltert'
-  )) fails++;
-
-  await _mtExportChatAudit('komplexttest_final');
-  return {fails};
-}
-
-function stopManualTestRunner(){
-  if(!window.__manualTestRunner) return;
-  window.__manualTestRunner.stop = true;
-  _mtLog('Stop angefordert.');
-}
-
-async function startManualTestRunner(){
-  const mt = window.__manualTestRunner || (window.__manualTestRunner = { running:false, stop:false, runId:0 });
-  if(mt.running){
-    _mtWarn('Ein Testlauf laeuft bereits.');
-    return;
-  }
-  mt.running = true;
-  mt.stop = false;
-  mt.runId = (mt.runId || 0) + 1;
-  mt.events = [];
-  mt.summary = null;
-  mt.monitorEnabled = _mtMonitorEnabled();
-  mt.askFallbackNoted = false;
-  mt.monitorLang = (String(((document.getElementById('anslang') || {}).value || 'de')).trim().toLowerCase() === 'en') ? 'en' : 'de';
-  const myRun = mt.runId;
-  _mtSetButtons(true);
-  _mtClearLog();
-  const sel = document.getElementById('manualTestScenario');
-  const scenario = (sel && sel.value) ? sel.value : 'smoke_short';
-  mt.scenario = scenario;
-  mt.startedAt = (_now ? _now() : null);
-  try {
-    if(mt.monitorEnabled){
-      await _apiCall('panel_action', ['manual_test_monitor_show', {}], 8000);
-      await _apiCall('panel_action', ['manual_test_monitor_reset', {
-        scenario: scenario,
-        status: 'running',
-        summary: '-',
-        lang: mt.monitorLang,
-      }], 8000);
-    }
-  } catch(e) {
-    _mtWarn('Manual-Test-Monitor konnte nicht initialisiert werden: ' + String(e && e.message ? e.message : e));
-  }
-  _mtLog('Manual-Test gestartet: ' + scenario);
-  const t0 = Date.now();
-  try {
-    let result = {fails: 0};
-    if(scenario === 'smoke_short') result = await _mtScenarioSmokeShort();
-    else if(scenario === 'provider_switch') result = await _mtScenarioProviderSwitch();
-    else if(scenario === 'sci_format') result = await _mtScenarioSciFormat();
-    else if(scenario === 'qc_override_footer') result = await _mtScenarioQcOverrideFooter();
-    else if(scenario === 'komplexttest') result = await _mtScenarioKomplexttest();
-    else if(scenario === 'full_regression_light') result = await _mtScenarioFullRegressionLight();
-    else throw new Error('unknown scenario: ' + scenario);
-    _mtEnsureRunning();
-    const ms = Date.now() - t0;
-    if((result && result.fails) > 0){
-      mt.summary = { status: 'FAIL', fails: Number(result.fails||0) };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'FAIL', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
-      _mtLog('SUMMARY: FAILS=' + result.fails + ' · Dauer=' + ms + 'ms', 'err');
-      _setStatus('Manual Test fertig: ' + result.fails + ' Fehler', 'err');
-    } else {
-      mt.summary = { status: 'PASS', fails: 0 };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'PASS', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
-      _mtLog('SUMMARY: PASS · Dauer=' + ms + 'ms', 'ok');
-      _setStatus('Manual Test fertig: PASS', 'ok');
-    }
-    await _mtSaveReport({ duration_ms: ms, summary: mt.summary, finished_at: (_now ? _now() : null) });
-  } catch(e) {
-    const stopped = (String(e && e.message ? e.message : e).indexOf('manual_test_stopped') >= 0);
-    if(stopped){
-      mt.summary = { status: 'STOPPED' };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'STOPPED', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
-      _mtLog('SUMMARY: STOPPED', 'warn');
-      _setStatus('Manual Test gestoppt', 'err');
-      await _mtExportChatAudit('manual_test_stopped_partial');
-      await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
-    } else {
-      mt.summary = { status: 'ERROR', error: String(e && e.message ? e.message : e) };
-      try { if(mt.monitorEnabled) await _apiCall('panel_action', ['manual_test_monitor_header', {scenario: scenario, status: 'ERROR', summary: mt.summary, lang: mt.monitorLang}], 4000); } catch(e) {}
-      _mtLog('ERROR: ' + String(e && e.message ? e.message : e), 'err');
-      _setStatus('Manual Test error: ' + String(e && e.message ? e.message : e), 'err');
-      await _mtExportChatAudit('manual_test_error_partial');
-      await _mtSaveReport({ duration_ms: (Date.now()-t0), summary: mt.summary, finished_at: (_now ? _now() : null) });
-    }
-  } finally {
-    if(window.__manualTestRunner && window.__manualTestRunner.runId === myRun){
-      window.__manualTestRunner.running = false;
-      window.__manualTestRunner.stop = false;
-    }
-    _mtSetButtons(false);
-    try { await buildUI(); } catch(e) {}
-  }
-}
 </script>
 </body>
 </html>
@@ -7331,7 +7324,8 @@ try:
 except Exception:
     pass
 
-
+HTML_PANEL_MANUAL_TEST_SHARED = _load_panel_manual_test_shared_js("")
+HTML_PANEL = _inject_panel_manual_test_shared_js(HTML_PANEL, HTML_PANEL_MANUAL_TEST_SHARED)
 
 HTML_QC_OVERRIDE = """
 <!doctype html>
@@ -7558,6 +7552,7 @@ HTML_CHAT_TEMPLATE = _load_ui_asset_text("chat_template.html", HTML_CHAT_TEMPLAT
 HTML_CHAT = HTML_CHAT_TEMPLATE.replace('__WRAPPER_LABEL__', html.escape(WRAPPER_NAME))
 HTML_PANEL_EMBEDDED = HTML_PANEL
 HTML_PANEL, PANEL_HTML_ASSET_META = _load_panel_asset_text_s7(HTML_PANEL)
+HTML_PANEL = _inject_panel_manual_test_shared_js(HTML_PANEL, HTML_PANEL_MANUAL_TEST_SHARED)
 try:
     # Keep fallback panel content in sync with the externally loaded panel asset when available.
     # This avoids feature drift between primary panel and runtime embedded fallback.
@@ -7566,6 +7561,7 @@ try:
             HTML_PANEL_EMBEDDED = HTML_PANEL
 except Exception:
     pass
+HTML_PANEL_EMBEDDED = _inject_panel_manual_test_shared_js(HTML_PANEL_EMBEDDED, HTML_PANEL_MANUAL_TEST_SHARED)
 HTML_QC_OVERRIDE = _load_ui_asset_text("qc_override.html", HTML_QC_OVERRIDE)
 
 HTML_MANUAL_TEST_MONITOR = """
@@ -8845,6 +8841,130 @@ class CSCRefiner:
             return 'Explore'
         return ov
 
+    def _build_active_profile_header_line(
+        self,
+        *,
+        profile: str,
+        sci_variant: str,
+        overlay: str,
+        control_layer: str = "on",
+        qc: str = "on",
+        cgi: str = "on",
+        color: str = "off",
+        sci_pending: bool = False,
+        off_label: str = "off",
+        pending_label: str = "PENDING",
+        pending_mode: str = "when_pending_and_unset",
+        uppercase_sci_non_off: bool = False,
+        color_force_off_profiles=(),
+    ) -> str:
+        """Build canonical Active-profile status line with modular fallback."""
+        try:
+            if _output_header_renderer is not None and hasattr(_output_header_renderer, "build_active_profile_status_line"):
+                return _output_header_renderer.build_active_profile_status_line(
+                    profile=str(profile or "Standard"),
+                    sci_variant=str(sci_variant or ""),
+                    overlay=str(overlay or "off"),
+                    control_layer=str(control_layer or "on"),
+                    qc=str(qc or "on"),
+                    cgi=str(cgi or "on"),
+                    color=str(color or "off"),
+                    sci_pending=bool(sci_pending),
+                    off_label=str(off_label or "off"),
+                    pending_label=str(pending_label or "PENDING"),
+                    pending_mode=str(pending_mode or "when_pending_and_unset"),
+                    uppercase_sci_non_off=bool(uppercase_sci_non_off),
+                    color_force_off_profiles=color_force_off_profiles,
+                )
+        except Exception:
+            pass
+
+        prof = str(profile or "Standard")
+        ov = str(overlay or "off")
+        ctl = str(control_layer or "on")
+        qc_v = str(qc or "on")
+        cgi_v = str(cgi or "on")
+        color_v = str(color or "off")
+        sci_raw = str(sci_variant or "").strip()
+        sci_low = sci_raw.lower()
+        sci_is_unset = (not sci_raw) or (sci_low in {"off", "none"})
+
+        try:
+            force_profiles = {str(x) for x in (color_force_off_profiles or ())}
+        except Exception:
+            force_profiles = set()
+        if force_profiles and prof in force_profiles:
+            color_v = "off"
+
+        mode = str(pending_mode or "when_pending_and_unset").strip().lower()
+        if mode == "always_when_pending" and bool(sci_pending):
+            sci_out = str(pending_label or "PENDING")
+        elif mode == "when_pending_and_unset" and bool(sci_pending) and sci_is_unset:
+            sci_out = str(pending_label or "PENDING")
+        elif sci_is_unset:
+            sci_out = str(off_label or "off")
+        else:
+            sci_out = sci_raw.upper() if bool(uppercase_sci_non_off) else sci_raw
+
+        return (
+            f"Active profile: {prof} · SCI: {sci_out} · Overlay: {ov} · "
+            f"Control Layer: {ctl} · QC: {qc_v} · CGI: {cgi_v} · Color: {color_v}"
+        )
+
+    def _build_comm_status_line(
+        self,
+        *,
+        comm: str,
+        profile: str,
+        sci_variant: str,
+        overlay: str,
+        control_layer: str = "on",
+        qc: str = "on",
+        cgi: str = "on",
+        color: str = "off",
+        language_policy: str = "",
+        sci_pending: bool = False,
+    ) -> str:
+        """Build canonical Comm status line with modular fallback."""
+        try:
+            if _output_header_renderer is not None and hasattr(_output_header_renderer, "build_comm_status_line"):
+                return _output_header_renderer.build_comm_status_line(
+                    comm=str(comm or "off"),
+                    profile=str(profile or "Standard"),
+                    sci_variant=str(sci_variant or ""),
+                    overlay=str(overlay or "off"),
+                    control_layer=str(control_layer or "on"),
+                    qc=str(qc or "on"),
+                    cgi=str(cgi or "on"),
+                    color=str(color or "off"),
+                    language_policy=str(language_policy or ""),
+                    sci_pending=bool(sci_pending),
+                    off_label="OFF",
+                    pending_label="PENDING",
+                    pending_mode="always_when_pending",
+                    uppercase_sci_non_off=True,
+                )
+        except Exception:
+            pass
+
+        sci_raw = str(sci_variant or "").strip()
+        if bool(sci_pending):
+            sci_out = "PENDING"
+        elif sci_raw and sci_raw.lower() not in {"off", "none"}:
+            sci_out = sci_raw.upper()
+        else:
+            sci_out = "OFF"
+
+        line = (
+            f"Comm: {str(comm or 'off')} · Active profile: {str(profile or 'Standard')} · SCI: {sci_out} · "
+            f"Overlay: {str(overlay or 'off')} · Control Layer: {str(control_layer or 'on')} · "
+            f"QC: {str(qc or 'on')} · CGI: {str(cgi or 'on')} · Color: {str(color or 'off')}"
+        )
+        lp = str(language_policy or "").strip()
+        if lp:
+            line += f" · Language policy: {lp}"
+        return line
+
     def _status_line(
         self,
         *,
@@ -8859,15 +8979,22 @@ class CSCRefiner:
         color: str,
         lang_override: str = None,
     ) -> str:
-        lang = (lang_override or self._lang())
-        sci_norm = (sci or "OFF").strip()
-        sci_l = sci_norm.lower()
-        sci_out = "OFF" if sci_l in {"", "off", "none"} else sci_norm.upper()
-        # IMPORTANT: avoid accidental shadowing by the imported `sys` module.
-        # The status line must use the system name from the ruleset (sysname).
-        return (
-            f"Active profile: {profile} · SCI: {sci_out} · Overlay: {overlay} · "
-            f"Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color}"
+        _lang = (lang_override or self._lang())
+        _ = _lang  # Reserved: language-specific status variants may be added later.
+        return self._build_active_profile_header_line(
+            profile=str(profile or "Standard"),
+            sci_variant=str(sci or ""),
+            overlay=str(overlay or "off"),
+            control_layer=str(ctl or "on"),
+            qc=str(qc or "on"),
+            cgi=str(cgi or "on"),
+            color=str(color or "off"),
+            sci_pending=False,
+            off_label="OFF",
+            pending_label="PENDING",
+            pending_mode="never",
+            uppercase_sci_non_off=True,
+            color_force_off_profiles=(),
         )
     def _qc_footer_for_profile(self, profile_name: str) -> str:
         """Create a deterministic QC-Matrix line based on the active profile's qc_target (use upper bounds).
@@ -9387,7 +9514,7 @@ class CSCRefiner:
             (txt["public_site"], "https://vfi64.github.io/Comm-SCI-Control/", "vfi64.github.io/Comm-SCI-Control"),
             (txt["ruleset_repo"], "https://github.com/vfi64/Comm-SCI-Control", "github.com/vfi64/Comm-SCI-Control"),
             (txt["wrapper_repo"], "https://github.com/vfi64/wrapper", "github.com/vfi64/wrapper"),
-            (txt["license"], "https://github.com/vfi64/Comm-SCI-Control-private/blob/main/LICENSE", txt["license_text"]),
+            (txt["license"], "https://github.com/vfi64/wrapper/blob/main/LICENSE", txt["license_text"]),
             (txt["maintainer"], "", "Volker Fickert"),
         ]
         out = []
@@ -9437,37 +9564,39 @@ class CSCRefiner:
         if not gov.loaded:
             return "Comm State: No ruleset loaded."
 
-        sysname = gov.data.get("system_name", "Comm-SCI-Control")
-        ver = gov.data.get("version", "")
+        snap = self._output_state_snapshot_view()
 
-        ui_lang = self._lang()
-        note_html = ''
-
-        prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
-        comm = "on" if getattr(self.gov_state, "comm_active", False) else "off"
-        overlay = getattr(self.gov_state, "overlay", "") or "off"
-        color = getattr(self.gov_state, "color", "off") or "off"
+        prof = str(snap.get("active_profile", "Standard") or "Standard")
+        comm = "on" if bool(snap.get("comm_active", False)) else "off"
+        overlay = str(snap.get("overlay", "off") or "off")
+        color = str(snap.get("color", "off") or "off")
         language_policy = self._language_policy_mode()
-        ctl = getattr(self.gov_state, "control_layer", "on") or "on"
-        qc = getattr(self.gov_state, "qc", "on") or "on"
-        cgi = getattr(self.gov_state, "cgi", "on") or "on"
+        ctl = str(snap.get("control_layer", "on") or "on")
+        qc = str(snap.get("qc", "on") or "on")
+        cgi = str(snap.get("cgi", "on") or "on")
 
-        sci_pending = bool(getattr(self.gov_state, "sci_pending", False))
-        sci_variant = getattr(self.gov_state, "sci_variant", "") or ""
-        if sci_pending:
-            sci = "PENDING"
-        else:
-            sci = sci_variant.upper() if sci_variant else "OFF"
+        sci_pending = bool(snap.get("sci_pending", False))
+        sci_variant = str(snap.get("sci_variant", "") or "")
 
-        anchor_auto = "on" if bool(getattr(self.gov_state, "anchor_auto", True)) else "off"
-        user_turns = int(getattr(self.gov_state, "user_turns", 0) or 0)
-        dyn = getattr(self.gov_state, "dynamic_nudge", "") or ""
+        anchor_auto = "on" if bool(snap.get("anchor_auto", True)) else "off"
+        user_turns = int(snap.get("user_turns", 0) or 0)
+        dyn = str(snap.get("dynamic_nudge", "") or "")
+        vr_display = "hidden" if self._hide_verification_route_lines_in_chat() else "visible"
 
         out = []
-        out.append(
-            f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · "
-            f"Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color} · Language policy: {language_policy}"
+        status_line = self._build_comm_status_line(
+            comm=str(comm or "off"),
+            profile=str(prof or "Standard"),
+            sci_variant=str(sci_variant or ""),
+            overlay=str(overlay or "off"),
+            control_layer=str(ctl or "on"),
+            qc=str(qc or "on"),
+            cgi=str(cgi or "on"),
+            color=str(color or "off"),
+            language_policy=str(language_policy or ""),
+            sci_pending=bool(sci_pending),
         )
+        out.append(status_line)
         try:
             ds = getattr(self, 'deps_status', {}) or {}
             parts = []
@@ -9478,6 +9607,7 @@ class CSCRefiner:
         except Exception:
             pass
 
+        out.append(f"Verification route lines: {vr_display}")
         out.append(f"Anchor auto: {anchor_auto} · User turns: {user_turns}")
         if dyn:
             out.append(f"Dynamic nudge: {dyn}")
@@ -9499,32 +9629,37 @@ class CSCRefiner:
         if not gov.loaded:
             return '<div class="comm-help comm-state">Comm State: No ruleset loaded.</div>'
 
-        sysname = gov.data.get("system_name", "Comm-SCI-Control")
-        ver = gov.data.get("version", "")
+        snap = self._output_state_snapshot_view()
 
-        ui_lang = self._lang()
-        note_html = ''
-
-        prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
-        comm = "on" if getattr(self.gov_state, "comm_active", False) else "off"
-        overlay = getattr(self.gov_state, "overlay", "") or "off"
-        color = getattr(self.gov_state, "color", "off") or "off"
+        prof = str(snap.get("active_profile", "Standard") or "Standard")
+        comm = "on" if bool(snap.get("comm_active", False)) else "off"
+        overlay = str(snap.get("overlay", "off") or "off")
+        color = str(snap.get("color", "off") or "off")
         language_policy = self._language_policy_mode()
-        ctl = getattr(self.gov_state, "control_layer", "on") or "on"
-        qc = getattr(self.gov_state, "qc", "on") or "on"
-        cgi = getattr(self.gov_state, "cgi", "on") or "on"
+        ctl = str(snap.get("control_layer", "on") or "on")
+        qc = str(snap.get("qc", "on") or "on")
+        cgi = str(snap.get("cgi", "on") or "on")
 
-        sci_pending = bool(getattr(self.gov_state, "sci_pending", False))
-        sci_variant = getattr(self.gov_state, "sci_variant", "") or ""
+        sci_pending = bool(snap.get("sci_pending", False))
+        sci_variant = str(snap.get("sci_variant", "") or "")
         sci = "PENDING" if sci_pending else (sci_variant.upper() if sci_variant else "OFF")
 
-        anchor_auto = "on" if bool(getattr(self.gov_state, "anchor_auto", True)) else "off"
-        user_turns = int(getattr(self.gov_state, "user_turns", 0) or 0)
-        dyn = getattr(self.gov_state, "dynamic_nudge", "") or ""
+        anchor_auto = "on" if bool(snap.get("anchor_auto", True)) else "off"
+        user_turns = int(snap.get("user_turns", 0) or 0)
+        dyn = str(snap.get("dynamic_nudge", "") or "")
+        vr_display = "hidden" if self._hide_verification_route_lines_in_chat() else "visible"
 
-        status = (
-            f"Comm: {comm} · Active profile: {prof} · SCI: {sci} · Overlay: {overlay} · "
-            f"Control Layer: {ctl} · QC: {qc} · CGI: {cgi} · Color: {color} · Language policy: {language_policy}"
+        status = self._build_comm_status_line(
+            comm=str(comm or "off"),
+            profile=str(prof or "Standard"),
+            sci_variant=str(sci_variant or ""),
+            overlay=str(overlay or "off"),
+            control_layer=str(ctl or "on"),
+            qc=str(qc or "on"),
+            cgi=str(cgi or "on"),
+            color=str(color or "off"),
+            language_policy=str(language_policy or ""),
+            sci_pending=bool(sci_pending),
         )
 
         rows = [
@@ -9537,6 +9672,7 @@ class CSCRefiner:
             ("CGI", cgi),
             ("Color", color),
             ("Language policy", language_policy),
+            ("Verification route lines", vr_display),
             ("Anchor auto", anchor_auto),
             ("User turns", str(user_turns)),
         ]
@@ -9555,8 +9691,6 @@ class CSCRefiner:
 
         out = []
         out.append('<div class="comm-help comm-state">')
-        if note_html:
-            out.append(note_html)
         out.append(f'<div class="help-status">{html.escape(status)}</div>')
         if audit_line:
             out.append(f"<div style='margin-top:8px'>{html.escape(str(audit_line))}</div>")
@@ -9584,8 +9718,6 @@ class CSCRefiner:
         if not gov.loaded:
             return "Comm Config: No ruleset loaded."
 
-        sysname = gov.data.get("system_name", "Comm-SCI-Control")
-        ver = gov.data.get("version", "")
         fname = getattr(gov, "current_filename", "") or ""
         prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
 
@@ -9608,11 +9740,6 @@ class CSCRefiner:
         if not gov.loaded:
             return '<div class="comm-help comm-config">Comm Config: No ruleset loaded.</div>'
 
-        sysname = gov.data.get("system_name", "Comm-SCI-Control")
-        ver = gov.data.get("version", "")
-
-        ui_lang = self._lang()
-        note_html = ''
         fname = getattr(gov, "current_filename", "") or ""
         prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
 
@@ -9625,8 +9752,6 @@ class CSCRefiner:
 
         out = []
         out.append('<div class="comm-help comm-config">')
-        if note_html:
-            out.append(note_html)
         out.append(f'<div class="help-status">{html.escape(status)}</div>')
         out.append('<div class="minor">Read-only view of the full governance configuration (deterministic from JSON, no LLM).</div>')
         out.append('<details class="config-details">')
@@ -9847,6 +9972,29 @@ class CSCRefiner:
         try:
             conf = (getattr(getattr(self, 'cfg_mgr', None), 'config', None) or getattr(cfg, 'config', {}) or {})
             provider = (self._active_provider() or 'gemini').strip().lower()
+            if _output_verification_route_policy_renderer is not None and hasattr(
+                _output_verification_route_policy_renderer,
+                "resolve_hide_verification_route_lines",
+            ):
+                try:
+                    return bool(
+                        _output_verification_route_policy_renderer.resolve_hide_verification_route_lines(  # type: ignore[attr-defined]
+                            config=conf,
+                            provider=provider,
+                        )
+                    )
+                except Exception:
+                    pass
+            if _output_pipeline is not None and hasattr(_output_pipeline, "resolve_hide_verification_route_lines"):
+                try:
+                    return bool(
+                        _output_pipeline.resolve_hide_verification_route_lines(  # type: ignore[attr-defined]
+                            config=conf,
+                            provider=provider,
+                        )
+                    )
+                except Exception:
+                    pass
             provs = conf.get('providers') or {}
             pconf = provs.get(provider) if isinstance(provs, dict) else {}
             raw = None
@@ -10319,8 +10467,19 @@ class CSCRefiner:
         return {"ok": True, "added": True, "size": len(cur)}
 
     def _cgi_ui_texts(self, *, lang: str = "") -> dict:
-        use_en = str(lang or self._answer_lang() or "").strip().lower().startswith("en")
-        if use_en:
+        lang_norm = str(lang or self._answer_lang() or "").strip().lower()
+        lang_key = "en" if lang_norm.startswith("en") else "de"
+        try:
+            if _output_cgi_line_renderer is not None and hasattr(_output_cgi_line_renderer, "get_cgi_ui_texts"):
+                out = _output_cgi_line_renderer.get_cgi_ui_texts(lang=lang_key)  # type: ignore[attr-defined]
+                if isinstance(out, dict):
+                    required = ("saved", "applied", "no_prompt", "invalid", "repeat_failed")
+                    if all(k in out for k in required):
+                        return {k: str(out.get(k, "")) for k in required}
+        except Exception:
+            pass
+
+        if lang_key == "en":
             return {
                 "saved": "CGI saved: C={c} · I={i} · E={e}",
                 "applied": "CGI applied (one-shot): C={c} · I={i} · E={e}",
@@ -10437,6 +10596,58 @@ class CSCRefiner:
             lines.append("- Stelle sicher, dass die ueberarbeitete Antwort deutlich von der vorherigen abweicht (Struktur + konkrete Detaildifferenz).")
         return lines
 
+    def _build_cgi_feedback_prompt_blocks(
+        self,
+        *,
+        user_feedback_triplet: str = "",
+        process_feedback: str = "",
+        one_shot_constraints: list[str] | tuple[str, ...] | None = None,
+    ) -> list[str]:
+        user_triplet = str(user_feedback_triplet or "").strip()
+        process_triplet = str(process_feedback or "").strip()
+        constraints = [str(line or "").strip() for line in list(one_shot_constraints or []) if str(line or "").strip()]
+        blocks: list[str] = []
+
+        feedback_block = ""
+        try:
+            if _output_cgi_line_renderer is not None and hasattr(_output_cgi_line_renderer, "render_cgi_feedback_block"):
+                feedback_block = str(
+                    _output_cgi_line_renderer.render_cgi_feedback_block(  # type: ignore[attr-defined]
+                        user_feedback_triplet=user_triplet,
+                        process_feedback=process_triplet,
+                    )
+                    or ""
+                ).strip()
+        except Exception:
+            feedback_block = ""
+
+        if not feedback_block:
+            feedback_rows = []
+            if user_triplet:
+                feedback_rows.append(f"User feedback triplet (CGI): {user_triplet}")
+            if process_triplet:
+                feedback_rows.append(f"Process CGI feedback: {process_triplet}")
+            if feedback_rows:
+                feedback_block = "[CGI Feedback]\n" + "\n".join(feedback_rows)
+        if feedback_block:
+            blocks.append(feedback_block)
+
+        constraints_block = ""
+        try:
+            if constraints and _output_cgi_line_renderer is not None and hasattr(_output_cgi_line_renderer, "render_cgi_constraints_block"):
+                constraints_block = str(
+                    _output_cgi_line_renderer.render_cgi_constraints_block(constraints)  # type: ignore[attr-defined]
+                    or ""
+                ).strip()
+        except Exception:
+            constraints_block = ""
+        if (not constraints_block) and constraints:
+            constraints_block = "[CGI One-Shot Rewrite Constraints]\n" + "\n".join(constraints)
+        if constraints_block:
+            blocks.append(constraints_block)
+
+        return blocks
+
     def submit_cgi_feedback(self, clarity, insight, efficiency, mode: str = "repeat"):
         """Record CGI feedback via UI widgets; optionally re-answer the last content question."""
         texts = self._cgi_ui_texts()
@@ -10543,7 +10754,7 @@ class CSCRefiner:
             # Harte Sperre: Config-Datei ist KEIN Ruleset.
             if base.lower() == "comm-sci-config.json" or base.lower().endswith("-config.json") or base.lower().endswith("config.json"):
                 self._ui_add_system_message(
-                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.2.2.json)."
+                    "JSON ERROR: You selected the configuration file. Please choose a ruleset file (e.g., Comm-SCI-v20.2.5.json)."
                 )
                 start_dir = os.path.dirname(new_file)
                 continue  # retry once
@@ -10577,1098 +10788,366 @@ class CSCRefiner:
 
 
     def _render_sci_trace_as_html_runtime(self, text_in: str) -> str:
-        """Repair + render SCI Trace deterministically for display.
-
-        Goals:
-        - If the model emits an empty 'SCI Trace' (only step names), rebuild it from step-labeled content
-          elsewhere in the response.
-        - Ensure all required steps for the active SCI variant are shown, and never as empty bullets.
-        - Avoid duplicate content: extracted step sections are removed from the final-answer body.
-        """
+        """Render SCI Trace via modular renderer (fail-soft passthrough)."""
         try:
-            if not text_in or 'SCI Trace' not in text_in:
+            if _output_sci_trace_renderer is None or not hasattr(_output_sci_trace_renderer, "render_sci_trace_as_html_runtime"):
                 return text_in
-
-            variant = (getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '').strip().upper()
-            sci_active = bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False))
-            if not sci_active or not variant:
-                return text_in
-
-            # Determine required steps from ruleset mapping
+            variant = (getattr(getattr(self, "gov_state", None), "sci_variant", "") or "").strip().upper()
+            sci_active = bool(getattr(getattr(self, "gov_state", None), "sci_active", False))
             try:
                 _vdef, steps, _maps_to = self._sci_variant_def(variant)
             except Exception:
                 steps = []
-            required_steps = [str(s) for s in (steps or []) if str(s).strip()]
-            if not required_steps:
-                return text_in
-
-            lines = text_in.splitlines()
-
-            def _is_sci_trace_heading_line(plain_line: str) -> bool:
-                p = re.sub(r"\s+", " ", str(plain_line or "")).strip()
-                p = p.strip("*").strip()
-                return bool(
-                    re.match(
-                        r"^(?:#+\s*)?(?:\d+[\.\)]\s*)?SCI\s+Trace\b",
-                        p,
-                        flags=re.IGNORECASE,
-                    )
-                )
-
-            # Find the earliest SCI Trace marker line (also accepts forms like
-            # "4. SCI Trace (Variante A: Standard)").
-            sci_idx = None
-            for i, ln in enumerate(lines):
-                ln_plain = re.sub(r"<[^>]+>", "", ln).strip()
-                ln_plain = ln_plain.strip().strip("*").strip()
-                if _is_sci_trace_heading_line(ln_plain):
-                    sci_idx = i
-                    break
-            if sci_idx is None:
-                return text_in
-
-            # Identify the end of the immediate list after 'SCI Trace' (bullets/numbering only)
-            list_pat = re.compile(r"^\s*(?:[*+-]|•|\d+\.)\s+")
-            k = sci_idx + 1
-            while k < len(lines) and (not lines[k].strip() or list_pat.match(re.sub(r"<[^>]+>", "", lines[k]))):
-                k += 1
-            trace_list_end = k  # exclusive
-
-            # If this immediate list already contains SCI step headers (e.g. "• Plan: ..."),
-            # keep it as content; otherwise it is typically an empty placeholder list.
-            try:
-                _has_step_header = False
-                for _ln in lines[sci_idx + 1:trace_list_end]:
-                    _plain = re.sub(r"<[^>]+>", "", _ln or "")
-                    _step, _rest = match_required_sci_step_header(_plain, required_steps)
-                    if _step:
-                        _has_step_header = True
-                        break
-                if _has_step_header:
-                    trace_list_end = sci_idx + 1
-            except Exception:
-                pass
-
-            # Build a working copy without the original (often empty) trace list block
-            pre = lines[:sci_idx]
-            rest = lines[trace_list_end:]
-
-            # Split off trailing governance blocks we must keep in place (Self-Debunking, QC-Matrix)
-            boundary_pat = re.compile(r"^\s*(Self-?Debunking\s*:|QC-?Matrix\s*:)", re.IGNORECASE)
-            tail_start = None
-            for i, ln in enumerate(rest):
-                plain_ln = re.sub(r"<[^>]+>", "", ln or "")
-                if (
-                    boundary_pat.match(plain_ln)
-                    or re.search(r"(?i)\bself[- ]?debunking\b", plain_ln)
-                    or re.search(r"(?i)\bQC-?Matrix\s*:", plain_ln)
-                    or re.search(r"(?is)class=(?:\"|')[^\"']*self-debunking[^\"']*(?:\"|')", ln or "")
-                ):
-                    tail_start = i
-                    break
-            if tail_start is None:
-                main = rest
-                tail = []
-            else:
-                main = rest[:tail_start]
-                tail = rest[tail_start:]
-
-            # Normalize basic HTML bold headers that may leak into raw text
-            def _strip_basic_tags(s: str) -> str:
-                s = re.sub(r"</?(strong|b)>", "", s, flags=re.IGNORECASE)
-                s = re.sub(r"</?p>", "", s, flags=re.IGNORECASE)
-                return s
-
-            blocks = {}
-            out_main = []
-            cur_step = None
-            buf = []
-            last_step = required_steps[-1] if required_steps else ""
-            after_last_step_break = False
-
-            def _looks_like_final_answer_start(plain_line: str, raw_line: str = "") -> bool:
-                s = str(plain_line or "").strip()
-                if not s:
-                    return False
-                if re.match(r"^(?:[*+-]|•|\d+\.)\s+", s):
-                    return False
-                if re.match(r"(?i)^(?:Self[- ]?Debunking|Selbst[- ]?Debunking|QC(?:-Matrix)?|Final\s+Answer)\b", s):
-                    return False
-                # Evidence/uncertainty markers in raw HTML are a strong indicator that
-                # we have entered the narrative final-answer body.
-                raw = str(raw_line or "")
-                if ("signal-dot-marker" in raw) or ("uncertainty-inline-marker" in raw):
-                    return True
-                words = re.findall(r"[A-Za-zÄÖÜäöüß0-9]+", s)
-                return (len(words) >= 8) or (len(s) >= 80)
-
-            def flush():
-                nonlocal cur_step, buf
-                if cur_step is None:
-                    return
-                cleaned = []
-                for x in buf:
-                    cleaned.append(re.sub(r"^\s*\d+\.\s+", "", x))
-                while cleaned and not cleaned[0].strip():
-                    cleaned.pop(0)
-                while cleaned and not cleaned[-1].strip():
-                    cleaned.pop()
-                # Keep the first non-empty capture for a step when duplicated SCI Trace
-                # sections leak into the same answer.
-                if (cur_step not in blocks) or (not blocks.get(cur_step)):
-                    blocks[cur_step] = cleaned
-                cur_step = None
-                buf = []
-
-            recognized_steps = 0
-            for ln in main:
-                ln2 = _strip_basic_tags(re.sub(r"<[^>]+>", "", ln))
-                if _is_sci_trace_heading_line(ln2):
-                    # Drop duplicate SCI Trace headings from the body once we rebuild.
-                    continue
-                step_name, rest = match_required_sci_step_header(ln2, required_steps)
-                if step_name:
-                    flush()
-                    cur_step = step_name
-                    recognized_steps += 1
-                    after_last_step_break = False
-                    if rest:
-                        buf.append(rest)
-                    continue
-                if cur_step is not None:
-                    if cur_step == last_step:
-                        if not ln2.strip():
-                            after_last_step_break = True
-                            buf.append(ln2)
-                            continue
-                        if after_last_step_break and _looks_like_final_answer_start(ln2, ln):
-                            # Split here: remaining narrative belongs to final answer,
-                            # not to the last SCI step.
-                            flush()
-                            after_last_step_break = False
-                            out_main.append(ln)
-                            continue
-                    buf.append(ln2)
-                else:
-                    out_main.append(ln)
-
-            flush()            # If we didn't recognize any step content, do not fabricate trace items.
-            if recognized_steps == 0:
-                return text_in
-
-            # Render only steps that have real content; never emit empty steps.
-            missing = []
-            for s in required_steps:
-                if s in missing:
-                    continue
-                if not blocks.get(s):
-                    missing.append(s)
-
-
-            # Optional deterministic alert if step content is missing
-            alert_html = ""
-            if missing:
-                safe = ", ".join([html.escape(x) for x in missing])
-                alert_html = (
-                    "<div style='border:1px solid #fca5a5; background:#fef2f2; padding:10px; "
-                    "border-radius:10px; margin:8px 0; color:#991b1b;'>"
-                    "<b>CONTROL LAYER ALERT (SCI)</b><br>"
-                    "Missing SCI Trace step content for: " + safe +
-                    "</div>"
-                )
-
-            # Render deterministic HTML trace block
-            html_parts = [
-                "<!-- SCI Trace: -->",
-                "<div class='sci-trace' style='margin:10px 0; padding:10px; border:1px solid #ddd; border-radius:12px;'>",
-                "<div style='font-weight:700; margin-bottom:6px;'>SCI Trace</div>",
-                "<ol style='margin:0 0 0 22px; padding:0;'>",
-            ]
-            for s in required_steps:
-                if s in missing:
-                    continue
-                html_parts.append("<li style='margin:4px 0 10px 0;'>")
-                html_parts.append(f"<div style='font-weight:700; margin:0 0 4px 0;'>{html.escape(s)}:</div>")
-                for ln in (blocks.get(s) or []):
-                    t = (ln or "").rstrip("\n")
-                    if not t.strip():
-                        html_parts.append("<div style='height:6px'></div>")
-                        continue
-                    m2 = re.match(r"^\s*([*+-]|•)\s+(.*)$", t)
-                    if m2:
-                        html_parts.append(f"<div style='margin-left:14px;'>• {html.escape(m2.group(2).strip())}</div>")
-                    else:
-                        html_parts.append(f"<div>{html.escape(t.strip())}</div>")
-                html_parts.append("</li>")
-            html_parts.extend(["</ol>", "</div>"])
-
-            out_lines = []
-            out_lines.extend(pre)
-            if alert_html:
-                out_lines.append(alert_html)
-            out_lines.append("\n".join(html_parts))
-            out_lines.extend(out_main)
-            out_lines.extend(tail)
-            return "\n".join(out_lines)
+            return _output_sci_trace_renderer.render_sci_trace_as_html_runtime(
+                text_in,
+                sci_variant=variant,
+                sci_active=bool(sci_active),
+                required_steps=steps or [],
+                match_required_sci_step_header_fn=match_required_sci_step_header,
+            )
         except Exception:
             return text_in
 
+    def _build_csc_refiner_meta_stage(
+        self,
+        *,
+        raw_response: str,
+        user_raw: str,
+        profile_name: str,
+        overlay_name: str,
+        refiner_obj,
+    ):
+        """Build CSC refiner metadata via runtime stage (fail-soft)."""
+        prof = str(profile_name or "Standard")
+        overlay = str(overlay_name or "")
+        mult = 2 if overlay == "Explore" else 1
+        stage_mod = _output_csc_mid_runtime_stage
+        if stage_mod is not None and hasattr(stage_mod, "build_csc_refiner_meta_stage"):
+            try:
+                out = stage_mod.build_csc_refiner_meta_stage(  # type: ignore[attr-defined]
+                    raw_response=str(raw_response or ""),
+                    user_raw=str(user_raw or ""),
+                    profile_name=prof,
+                    overlay_name=overlay,
+                    answer_lang=str(self._answer_lang() or "de"),
+                    csc_warning_text=str(CSC_WARNING_TEXT or ""),
+                    refiner_obj=refiner_obj,
+                    csc_score_tooltip_text_fn=_csc_score_tooltip_text,
+                    csc_thresholds_tooltip_text_fn=_csc_thresholds_tooltip_text,
+                )
+                if isinstance(out, dict):
+                    return out.get("csc_meta"), int(out.get("threshold_multiplier", mult) or mult)
+            except Exception:
+                pass
+        # Minimal fail-soft fallback: keep routing stable if stage import fails.
+        return None, int(mult or 1)
+
+    def _build_csc_alerts_and_header_stage(
+        self,
+        *,
+        raw_response: str,
+        profile_name: str,
+        overlay_name: str,
+        csc_meta,
+        refiner_obj,
+    ):
+        """Build alerts + header via runtime stage (fail-soft)."""
+        prof = str(profile_name or "Standard")
+        overlay = str(overlay_name or "")
+        stage_mod = _output_csc_mid_runtime_stage
+        if stage_mod is not None and hasattr(stage_mod, "build_alerts_and_header_stage"):
+            try:
+                out = stage_mod.build_alerts_and_header_stage(  # type: ignore[attr-defined]
+                    raw_response=str(raw_response or ""),
+                    profile_name=prof,
+                    overlay_name=overlay,
+                    csc_meta=csc_meta,
+                    refiner_obj=refiner_obj,
+                    gov_mgr=gov,
+                    runtime_state=self.gov_state,
+                    check_verification_route_gate_fn=getattr(gov, "check_verification_route_gate", None),
+                    normalize_qc_overrides_fn=getattr(gov, "normalize_qc_overrides", None),
+                    get_effective_qc_corridor_fn=getattr(gov, "get_effective_qc_corridor", None),
+                    strip_basic_html_for_enforcement_fn=_strip_basic_html_for_enforcement,
+                    ensure_qc_footer_present_fn=ensure_qc_footer_present,
+                    enforce_qc_footer_deltas_fn=enforce_qc_footer_deltas,
+                    ensure_qc_footer_is_last_fn=ensure_qc_footer_is_last,
+                    build_active_profile_header_line_fn=self._build_active_profile_header_line,
+                )
+                if isinstance(out, dict):
+                    return (
+                        str(out.get("raw_response") or ""),
+                        str(out.get("alert_html") or ""),
+                        str(out.get("header") or ""),
+                    )
+            except Exception:
+                pass
+        raw_out = str(raw_response or "")
+        alert_html = ""
+        header = ""
+        try:
+            sci = str(getattr(self.gov_state, "sci_variant", "") or "").strip()
+            sci_pending = bool(getattr(self.gov_state, "sci_pending", False))
+            color = getattr(self.gov_state, "color", "off")
+            header = self._build_active_profile_header_line(
+                profile=str(prof or "Standard"),
+                sci_variant=str(sci or ""),
+                overlay=str(overlay or "off"),
+                control_layer="on",
+                qc="on",
+                cgi="on",
+                color=str(color or "off"),
+                sci_pending=bool(sci_pending),
+                off_label="off",
+                pending_label="PENDING",
+                pending_mode="when_pending_and_unset",
+                uppercase_sci_non_off=False,
+                color_force_off_profiles=(),
+            )
+            try:
+                if bool(getattr(self.gov_state, "dynamic_one_shot_active", False)):
+                    header += " · Dynamic: one-shot (active)"
+            except Exception:
+                    pass
+            try:
+                marker = str((csc_meta or {}).get("message") or "").strip()
+                if marker and marker.startswith("CSC:") and marker not in header:
+                    header += f" · {marker}"
+            except Exception:
+                pass
+        except Exception:
+            header = ""
+        return str(raw_out or ""), str(alert_html or ""), str(header or "")
+
+    def _apply_csc_pre_render_policy_strict_gate_stage(
+        self,
+        *,
+        raw_response: str,
+        user_raw: str,
+        profile_name: str,
+        is_command: bool,
+        ctx: dict,
+        header: str,
+        alert_html: str,
+    ):
+        """Apply pre-render policy + strict gate via runtime stage (fail-soft)."""
+        _conf = (
+            getattr(getattr(self, "cfg_mgr", None), "config", None)
+            or getattr(cfg, "config", {})
+            or {}
+        )
+        _provider = (self._active_provider() or "gemini").strip().lower()
+
+        prof = str(profile_name or "Standard")
+        raw_response_out = str(raw_response or "")
+        out_alert_html = str(alert_html or "")
+        header_out = str(header or "")
+        stage_mod = _output_csc_mid_runtime_stage
+        if stage_mod is None:
+            try:
+                stage_mod = _load_optional_module_with_file_fallback(
+                    "output.csc_mid_runtime_stage",
+                    "output/csc_mid_runtime_stage.py",
+                    "output_csc_mid_runtime_stage",
+                )
+            except Exception:
+                stage_mod = None
+
+        _hook_scope = None
+        try:
+            _hook_scope = globals() if isinstance(globals(), dict) else None
+        except Exception:
+            _hook_scope = None
+
+        runtime_bundle = None
+        if stage_mod is not None and hasattr(stage_mod, "build_pre_render_policy_strict_gate_runtime_bundle"):
+            try:
+                runtime_bundle = stage_mod.build_pre_render_policy_strict_gate_runtime_bundle(  # type: ignore[attr-defined]
+                    gov_mgr=gov,
+                    runtime_state=self.gov_state,
+                    validator_obj=getattr(self, "validator", None),
+                    output_pipeline_mod=_output_pipeline,
+                    verification_route_config=(_conf if isinstance(_conf, dict) else {}),
+                    verification_route_provider=str(_provider or "gemini"),
+                    app_obj=self,
+                    hook_scope=_hook_scope,
+                )
+            except Exception:
+                runtime_bundle = None
+
+        if not isinstance(runtime_bundle, dict):
+            runtime_bundle = {
+                "gov_mgr": gov,
+                "runtime_state": self.gov_state,
+                "validator_obj": getattr(self, "validator", None),
+                "output_pipeline_mod": _output_pipeline,
+                "verification_route_config": (_conf if isinstance(_conf, dict) else {}),
+                "verification_route_provider": str(_provider or "gemini"),
+                "hooks": {},
+            }
+
+        def _compat_normalize_stage_out(out):
+            _norm_fn = getattr(stage_mod, "normalize_pre_render_policy_strict_gate_stage_out", None)
+            out_norm = (
+                _norm_fn(
+                    out,
+                    default_alert_html=str(out_alert_html or ""),
+                    default_raw_response=str(raw_response_out or ""),
+                )
+                if callable(_norm_fn)
+                else None
+            )
+            if isinstance(out_norm, dict):
+                return out_norm
+            if not isinstance(out, dict):
+                return None
+            return {
+                "blocked": bool(out.get("blocked", False)),
+                "blocked_response": out.get("blocked_response"),
+                "strict_meta": out.get("strict_meta"),
+                "alert_html": str(out.get("alert_html") or out_alert_html),
+                "raw_for_render": str(out.get("raw_for_render") or ""),
+                "raw_response": str(out.get("raw_response") or raw_response_out),
+            }
+
+        # Primary path: zentraler Stage-Dispatch (Chain/Fallback bleiben im Stage-Modul).
+        _dispatch_fn = (
+            getattr(stage_mod, "apply_pre_render_policy_strict_gate_runtime_dispatch_stage", None)
+            if stage_mod is not None
+            else None
+        )
+        if callable(_dispatch_fn):
+            try:
+                out = _dispatch_fn(
+                    raw_response=raw_response_out,
+                    user_raw=str(user_raw or ""),
+                    profile_name=prof,
+                    is_command=bool(is_command),
+                    ctx=(ctx if isinstance(ctx, dict) else {}),
+                    header=header_out,
+                    alert_html=out_alert_html,
+                    runtime_bundle=runtime_bundle,
+                )
+                out_norm = _compat_normalize_stage_out(out)
+                if out_norm is not None:
+                    return out_norm
+            except Exception:
+                pass
+
+        # Notbremse: falls Stage-Dispatch nicht verfuegbar ist, deterministisch durchreichen.
+        if stage_mod is not None and hasattr(stage_mod, "build_pre_render_policy_strict_gate_runtime_passthrough_out"):
+            try:
+                out = stage_mod.build_pre_render_policy_strict_gate_runtime_passthrough_out(  # type: ignore[attr-defined]
+                    raw_response=str(raw_response_out or ""),
+                    header=str(header_out or ""),
+                    alert_html=str(out_alert_html or ""),
+                )
+                if isinstance(out, dict):
+                    return out
+            except Exception:
+                pass
+        raw_for_render = str(raw_response_out or "")
+        if header_out:
+            raw_for_render = str(header_out or "") + "\n\n" + raw_for_render
+        return {
+            "blocked": False,
+            "blocked_response": None,
+            "strict_meta": None,
+            "alert_html": str(out_alert_html or ""),
+            "raw_for_render": str(raw_for_render or ""),
+            "raw_response": str(raw_response_out or ""),
+        }
 
     def _apply_csc_strict(self, raw_response: str, *, user_raw: str, is_command: bool):
-        """Wrapper-enforced CSC (strict) with Full Rendering (Ported from Fix7c5-Plus)."""
-        
+        """Wrapper-enforced CSC (strict) with modular runtime stages."""
         ctx = _build_route_ctx(self, user_raw=user_raw, is_command=is_command)
-        # --- Nested Helper: Color Spans (Logic from Fix7c5-Plus) ---
-        def _apply_color_spans_local(text):
-            if not text: return text
-            # Fallback falls global _EVIDENCE_COLOR fehlt
-            ev_colors = globals().get('_EVIDENCE_COLOR', {
-                "GREEN": "#137333", "YELLOW": "#f9ab00", "RED": "#d93025", "GRAY": "#5f6368"
-            })
-            def repl(m):
-                tag = m.group("tag")
-                suffix = m.group("suffix") or ""
-                emoji = m.group("emoji") or ""
-                color = ev_colors.get(tag, "#616161")
-                token = f"[{tag}{suffix}]"
-                if emoji: token = f"{token} {emoji}"
-                return f'<span style="color:{color}; font-weight:600;">{token}</span>'
-            
-            # Regex wie in der alten Version
-            pat = re.compile(r"\[(?P<tag>GREEN|YELLOW|RED|GRAY)(?P<suffix>(?:-[A-Z0-9]+)*)\]\s*(?P<emoji>[🟢🟡🔴⚪⚪️])?")
-            return pat.sub(repl, text)
-
-        # --- Nested Helper: Image Embedding ---
-        def _auto_embed_image_urls(text):
-            if not text or 'http' not in text: return text
-            parts = text.split('```')
-            url_re = re.compile(r"(https?://[^\s<>()\]\[]+?\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s<>()\]\[]*)?(?:/[^\s<>()\]\[]+)*)", re.IGNORECASE)
-            
-            for i in range(0, len(parts), 2):
-                seg = parts[i]
-                def repl_img(m):
-                    url = m.group(0)
-                    safe_url = html.escape(url, quote=True)
-                    img = f'\n\n<img src="{safe_url}" style="max-width:100%; height:auto; border-radius:10px; margin:6px 0;" loading="lazy" />\n'
-                    return url + img
-                parts[i] = url_re.sub(repl_img, seg)
-            return '```'.join(parts)
-
         try:
-            # 1. Command? -> Render via v192 pipeline if available (deterministic-ish), else legacy Markdown
             if is_command:
-                raw_response = unwrap_accidental_full_text_codefence(raw_response or "")
-                raw_response = normalize_known_markdown_control_headings(raw_response or "")
-                if _rendering_pipeline_v192 is not None:
-                    try:
-                        rctx = _rendering_pipeline_v192.RenderContext(
-                            ui_lang=(self._lang() or 'en'),
-                            color=str(ctx.get('color', 'off') or 'off'),
-                            is_command=True,
-                            comm_active=bool(getattr(self.gov_state, 'comm_active', False)),
-                            strict=False,
-                        )
-                        return _rendering_pipeline_v192.render_llm_text_to_html(raw_response or "", rctx), None
-                    except Exception:
-                        pass
-
-                # Legacy fallback (kept for safety)
-                if ctx.get('color', 'off') == 'on':
-                    raw_response = apply_color_spans(raw_response, enabled=True)
-                _h = markdown.markdown(raw_response, extensions=['extra', 'codehilite'])
-                return sanitize_html(_h), None
-
-            # 2. Comm Inactive? -> Render via v192 pipeline if available (comm-inactive Markdown render path), else legacy Markdown
-            if not getattr(self.gov_state, 'comm_active', False):
-                html_out = ""
-                try:
-                    raw_response = unwrap_accidental_full_text_codefence(raw_response or "")
-                    raw_response = normalize_known_markdown_control_headings(raw_response or "")
-                    try:
-                        raw_response = strip_governance_scaffolding_when_comm_inactive(raw_response or "")
-                    except Exception:
-                        pass
-                    if _rendering_pipeline_v192 is not None:
-                        try:
-                            rctx = _rendering_pipeline_v192.RenderContext(
-                                ui_lang=(self._lang() or 'en'),
-                                color=str(ctx.get('color', 'off') or 'off'),
-                                is_command=False,
-                                comm_active=False,
-                                strict=False,
-                            )
-                            html_out = _rendering_pipeline_v192.render_llm_text_to_html(raw_response or "", rctx)
-                        except Exception:
-                            html_out = ""
-            
-                    if not html_out:
-                        # Legacy fallback (kept for safety)
-                        _raw = raw_response
-                        if ctx.get('color', 'off') == 'on':
-                            _raw = apply_color_spans(_raw, enabled=True)
-                        _h = markdown.markdown(_raw, extensions=['extra', 'codehilite'])
-                        html_out = sanitize_html(_h)
-                except Exception:
-                    # Ultimate fallback: show escaped raw in <pre> (never crash).
-                    try:
-                        html_out = "<pre>" + html.escape(str(raw_response or "")) + "</pre>"
-                    except Exception:
-                        html_out = "<pre></pre>"
-            
-                # Provide deterministic normalization meta even in comm-inactive path (tests rely on it).
-                try:
-                    _qc_pat = re.compile(r"(?im)^\s*QC(?:-Matrix)?\s*:")
-                    _raw_qc_count = len(_qc_pat.findall(str(raw_response or "")))
-                    _html_qc_count = len(_qc_pat.findall(re.sub(r"<[^>]+>", "", str(html_out or ""))))
-                    _sd_boxed = ("self-debunking" in str(html_out or "").lower()) or ("selbst-debunking" in str(html_out or "").lower())
-                    _sd_numbered = detect_self_debunking_numbered_html(str(html_out or ""))
-            
-                    def _looks_like_rendered_html(h: str) -> bool:
-                        if not h:
-                            return False
-                        hl = h.lstrip().lower()
-                        if hl.startswith("<pre") and "&lt;" in hl:
-                            return False
-                        if h.count("&lt;") > 10 and ("<p" not in hl and "<div" not in hl and "<ol" not in hl):
-                            return False
-                        return any(t in hl for t in ("<p", "<div", "<ol", "<ul", "<table", "<pre", "<blockquote"))
-            
-                    render_ok = _looks_like_rendered_html(str(html_out or ""))
-                    meta = {
-                        "normalization": {
-                            "qc_footer_raw_count": _raw_qc_count,
-                            "qc_footer_html_count": _html_qc_count,
-                            "qc_footer_deduped": (_raw_qc_count > 1 and _html_qc_count == 1),
-                            "self_debunking_boxed": bool(_sd_boxed),
-                            "self_debunking_numbered": bool(_sd_numbered),
-                            "render_ok": bool(render_ok),
-                            "render_fallback": (not bool(render_ok)),
-                        }
-                    }
-                except Exception:
-                    meta = {"normalization": {"render_ok": True, "render_fallback": False}}
-            
-                return html_out, meta
-            # 3. Refiner Logic (Erhalten für csc_meta)
-            refiner = getattr(gov, 'csc_refiner', None)
-            csc_meta = None
-            
-            # Trigger-Analyse (wie bisher)
-            prof = getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard'
-            overlay = getattr(self.gov_state, 'overlay', '') or ''
-            mult = 2 if overlay == "Explore" else 1
-            txt_l = (raw_response or "").lower()
-            uncertainty_U4 = bool(re.search(r"\bU[4-6]\b", raw_response or ""))
-            web_check = bool(re.search(r"\bweb\s*[- ]\s*check\b", txt_l))
-            strong_claim = any(x in txt_l for x in ["immer", "niemals", "definitiv", "guarantee", "prove"])
-            
-            if refiner:
-                dec = refiner.decide(
-                    comm_active=True, active_profile=prof, input_raw=user_raw or "",
-                    uncertainty_U4_active=uncertainty_U4, web_check_hook_active=web_check,
-                    strong_claim_detected=strong_claim, neutrality_delta_negative=False,
-                    threshold_multiplier=mult
+                return render_command_html_stage(
+                    raw_response=str(raw_response or ""),
+                    color_mode=str(ctx.get("color", "off") or "off"),
+                    ui_lang=str(self._lang() or "en"),
+                    comm_active=bool(getattr(self.gov_state, "comm_active", False)),
                 )
-                
-                # Metadata bauen (für Badge)
-                if dec.apply:
-                    ans_lang = self._answer_lang()
-                    msg = CSC_WARNING_TEXT
-                    thr_fs = int(getattr(refiner, '_refine_params', {}).get('threshold_f_score', 8) or 8)
-                    thr_tok = int(getattr(refiner, '_refine_params', {}).get('min_token_count', 80) or 80)
-                    gov_min_tok = int(getattr(refiner, '_gov_params', {}).get('min_token_count_governance', 40) or 40)
-                    if mult != 1:
-                        thr_fs *= mult
-                        thr_tok *= mult
-                        gov_min_tok *= mult
-                    csc_meta = {
-                        "applied": True, "message": msg,
-                        "trigger": str(getattr(dec, 'trigger_source', '')),
-                        "mode": str(getattr(dec, 'mode', '')),
-                        "governance_triggered": bool(getattr(dec, 'governance_triggered', False)),
-                        "token_count": int(getattr(dec, 'token_count', 0)),
-                        "f_score": int(getattr(dec, 'f_score', 0)),
-                        "score_tooltip": _csc_score_tooltip_text(
-                            lang=ans_lang,
-                            f_score=int(getattr(dec, 'f_score', 0)),
-                            token_count=int(getattr(dec, 'token_count', 0)),
-                        ),
-                        "thresholds_tooltip": _csc_thresholds_tooltip_text(
-                            lang=ans_lang,
-                            thr_fs=thr_fs,
-                            thr_tok=thr_tok,
-                            gov_min_tok=gov_min_tok,
-                            mult=mult,
-                        ),
-                        "overlay": overlay,
-                        "profile": str(prof or ''),
-                        "threshold_multiplier": int(mult or 1),
-                        "threshold_f_score": int(thr_fs),
-                        "threshold_token_count": int(thr_tok),
-                        "min_token_count": int(thr_tok),
-                        "min_token_count_governance": int(gov_min_tok),
-                        "schema_version": "1.0",
-                    }
-
-            # 4. Alerts generieren (Wiederhergestellt aus alter Version)
-            alerts = []
-            csc_visible_marker = ""
-
-            # CSC transparency marker: render deterministically in the visible header when the
-            # ruleset requires visibility, instead of emitting a noisy false-positive alert based
-            # on raw model text (the marker is prompt-side and may be stripped during normalization).
-            try:
-                if csc_meta and csc_meta.get('applied'):
-                    cl = (getattr(gov, 'data', {}) or {}).get('control_layer', {}) or {}
-                    bridge = (cl.get('components', {}) or {}).get('csc_trigger_bridge', {}) or {}
-                    constraints = (bridge.get('constraints', {}) or {})
-                    tm = (constraints.get('transparency_marker', {}) or {})
-                    marker = str(tm.get('marker', getattr(refiner, 'marker', '') or '') or '').strip()
-                    marker_enabled = bool(tm.get('enabled', True))
-                    marker_visibility = str(tm.get('visibility', '') or '').strip().lower()
-                    if marker_enabled and marker and marker_visibility == 'always_visible_if_applied':
-                        csc_visible_marker = marker
-            except Exception:
-                pass
-            
-            # VR Gate Check
-            try:
-                vr_msg = gov.check_verification_route_gate(raw_response)
-                if vr_msg: alerts.append(("Verification Route Gate", vr_msg))
-            except: pass
-            
-            # QC Matrix Check (deterministic delta enforcement before alerting)
-            try:
-                # IMPORTANT: use the same profile as shown in the header/rendering.
-                # This avoids false "expected Δ..." alerts if the runtime state changes mid-turn.
-                _prof = (prof or getattr(self.gov_state, 'active_profile', 'Standard') or 'Standard')
-                _ovr_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
-                _ovr = gov.normalize_qc_overrides(_ovr_raw)
-                _corr = gov.get_effective_qc_corridor(_prof, _ovr)
-                
-                raw_response = _strip_basic_html_for_enforcement(raw_response)
-                raw_response = ensure_qc_footer_present(raw_response, gov, _prof, _ovr)
-                enforced_txt = enforce_qc_footer_deltas(raw_response, _corr, _prof)
-                enforced_txt = ensure_qc_footer_is_last(enforced_txt)
-                cur_qc, rep_delta = gov.parse_qc_footer(enforced_txt)
-                if cur_qc:
-                    exp_delta = gov.expected_qc_deltas(_prof, cur_qc, overrides=_ovr)
-                    if rep_delta:
-                        mism = [f"{k}: expected Δ{v}, got Δ{rep_delta[k]}" for k, v in exp_delta.items() if rep_delta.get(k) != v]
-                        if mism:
-                            alerts.append(("QC-Matrix", "Delta mismatch: " + "; ".join(mism)))
-                    else:
-                        alerts.append(("QC-Matrix", "QC detected but no deltas found."))
-            except Exception:
-                pass
-
-            
-            # Cross-version leak guard alerts
-            try:
-                hits = list(getattr(self.gov_state, 'cross_version_guard_hits', []) or [])
-                active_v = str(getattr(self.gov_state, 'active_ruleset_version', '') or str((self.gov.data or {}).get('version', '') or '')).strip()
-                if hits:
-                    alerts.append(("Cross-Version Guard", f"Ignored foreign version token(s) in user input (active {active_v})."))
-            except Exception:
-                pass
-
-            # Render Alerts HTML
-            alert_html = ""
-            if alerts:
-                items = "".join([f"<li><b>{html.escape(str(k))}</b>: {html.escape(str(v))}</li>" for k,v in alerts])
-                alert_html = (
-                    "<div style='border:1px solid #b00; background:#fff5f5; padding:10px; "
-                    "border-radius:10px; margin:8px 0;'><b>CONTROL LAYER ALERTS (Python)</b>"
-                    f"<ul style='margin:6px 0 0 18px; padding:0;'>{items}</ul></div>"
+            if not getattr(self.gov_state, "comm_active", False):
+                return render_comm_inactive_html_stage(
+                    raw_response=str(raw_response or ""),
+                    color_mode=str(ctx.get("color", "off") or "off"),
+                    ui_lang=str(self._lang() or "en"),
                 )
 
-            # 5. Header generieren (Manuell erzwingen wie in alter Version)
-            header = ""
-            try:
-                ver = gov.data.get("version", "")
-                sysname = gov.data.get("system_name", "Comm-SCI-Control")
-                sci = getattr(self.gov_state, "sci_variant", "") or ""
-                color = getattr(self.gov_state, "color", "off")
-                # Falls Profil Sandbox/Briefing -> Color off im Header anzeigen
-                disp_color = "off" if prof in {"Sandbox", "Briefing"} else color
-                
-                header = (
-                    f"Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
-                    f"Control Layer: on · QC: on · CGI: on · Color: {disp_color}"
-                )
+            refiner = getattr(gov, "csc_refiner", None)
+            prof = getattr(self.gov_state, "active_profile", "Standard") or "Standard"
+            overlay = getattr(self.gov_state, "overlay", "") or ""
+            csc_meta, _mult = self._build_csc_refiner_meta_stage(
+                raw_response=str(raw_response or ""),
+                user_raw=str(user_raw or ""),
+                profile_name=str(prof or "Standard"),
+                overlay_name=str(overlay or ""),
+                refiner_obj=refiner,
+            )
 
-                # Dynamic one-shot marker (canonical JSON requires a visible marker)
-                try:
-                    if bool(getattr(self.gov_state, 'dynamic_one_shot_active', False)):
-                        header += " · Dynamic: one-shot (active)"
-                except Exception:
-                    pass
-                try:
-                    if csc_visible_marker and (csc_visible_marker not in header):
-                        header += f" · {csc_visible_marker}"
-                except Exception:
-                    pass
-            except: header = ""
+            raw_response, alert_html, header = self._build_csc_alerts_and_header_stage(
+                raw_response=str(raw_response or ""),
+                profile_name=str(prof or "Standard"),
+                overlay_name=str(overlay or ""),
+                csc_meta=csc_meta,
+                refiner_obj=refiner,
+            )
 
-            # 6. Finales Assembly (Rendering Pipeline)
-            # Apply deterministic QC delta enforcement before any further rendering.
-            # This keeps the QC footer stable even if the model's deltas drift.
-            try:
-                _ovr_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
-                _ovr = gov.normalize_qc_overrides(_ovr_raw)
-                corr = gov.get_effective_qc_corridor(prof, _ovr)
-                
-                raw_response = _strip_basic_html_for_enforcement(raw_response)
-                raw_response = ensure_qc_footer_present(raw_response, gov, prof, _ovr)
-                raw_for_render = enforce_qc_footer_deltas(raw_response, corr, prof)
-                raw_for_render = ensure_qc_footer_is_last(raw_for_render)
-            except Exception:
-                raw_for_render = raw_response
+            pre = self._apply_csc_pre_render_policy_strict_gate_stage(
+                raw_response=str(raw_response or ""),
+                user_raw=str(user_raw or ""),
+                profile_name=str(prof or "Standard"),
+                is_command=bool(is_command),
+                ctx=(ctx if isinstance(ctx, dict) else {}),
+                header=str(header or ""),
+                alert_html=str(alert_html or ""),
+            )
+            if bool((pre or {}).get("blocked")):
+                return (pre or {}).get("blocked_response"), (pre or {}).get("strict_meta")
 
-            # Persist last observed QC + Python-computed deltas for dynamic one-shot prompting
-            try:
-                cur_qc, _rep = gov.parse_qc_footer(raw_for_render)
-                if cur_qc:
-                    exp_delta = gov.expected_qc_deltas(prof, cur_qc, overrides=getattr(self.gov_state, "qc_overrides", {}))
-                    self.gov_state.last_qc = dict(cur_qc)
-                    self.gov_state.last_qc_deltas = dict(exp_delta or {})
-            except Exception:
-                pass
+            alert_html = str((pre or {}).get("alert_html") or alert_html)
+            raw_for_render = str((pre or {}).get("raw_for_render") or "")
+            raw_response = str((pre or {}).get("raw_response") or raw_response)
 
-            # Normalize Evidence-Linker provenance formatting (without inventing provenance).
-            try:
-                raw_for_render = normalize_evidence_tags(raw_for_render)
-            except Exception:
-                pass
+            _ans_lang = getattr(getattr(self, "gov_state", None), "answer_language", "de")
+            raw_for_render, final_html_body = render_final_html_body_stage(
+                raw_for_render=str(raw_for_render or ""),
+                color_mode=str(ctx.get("color", "off") or "off"),
+                answer_lang=str(_ans_lang or "de"),
+                ui_lang_fallback=str(self._lang() or "en"),
+            )
 
-                        # Strip erroneous SCI menu echoes from normal answers (menu is command-only).
-            try:
-                if (not is_command) and (not bool(ctx.get('sci_pending'))):
-                    raw_for_render = strip_sci_menu_from_answer(raw_for_render)
-            except Exception:
-                pass
+            _ovr_mod = getattr(self.gov_state, "qc_overrides", {}) or {}
+            final_html_body = finalize_qc_footer_html_stage(
+                final_html_body=str(final_html_body or ""),
+                raw_for_render=str(raw_for_render or ""),
+                profile_name=str(prof or "Standard"),
+                gov_mgr=gov,
+                overrides=_ovr_mod,
+                qc_footer_for_profile_fn=self._qc_footer_for_profile,
+                ensure_qc_footer_present_fn=ensure_qc_footer_present,
+                enforce_qc_footer_deltas_fn=enforce_qc_footer_deltas,
+                ensure_qc_footer_is_last_fn=ensure_qc_footer_is_last,
+                qc_probe_is_complete_fn=(
+                    getattr(_output_rules_registry, "qc_probe_is_complete", None)
+                    if _output_rules_registry is not None
+                    else None
+                ),
+                lang=str(_ans_lang or "de"),
+            )
 
-            # If SCI is off, remove leaked inline "SCI Trace: ..." lines from model output.
-            try:
-                raw_for_render = strip_sci_trace_line_when_inactive(
-                    raw_for_render,
-                    sci_active=bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False)),
-                    sci_variant=(getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''),
-                    sci_pending=bool(getattr(getattr(self, 'gov_state', None), 'sci_pending', False)),
-                )
-            except Exception:
-                pass
-
-            # Normalize inline "Self-Debunking: ..." leaks so the block parser can box it deterministically.
-            try:
-                raw_for_render = normalize_inline_self_debunking_header(raw_for_render)
-            except Exception:
-                pass
-
-            # Enforce Self-Debunking contract deterministically (when required by JSON).
-            try:
-                raw_for_render = enforce_self_debunking_contract(raw_for_render, gov, prof, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
-            except Exception:
-                pass
-            try:
-                raw_for_render = normalize_self_debunking_numbering_text(
-                    raw_for_render,
-                    lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
-                )
-            except Exception:
-                pass
-            try:
-                raw_for_render = dedupe_self_debunking_sections(raw_for_render)
-            except Exception:
-                pass
-
-            # Normalize SCI Trace numbering (only step headers numbered)
-            try:
-                raw_for_render = normalize_sci_trace_numbering(raw_for_render, gov)
-            except Exception:
-                pass
-
-            # Hard-render SCI Trace as HTML to prevent Markdown list runaway numbering (1..31)
-            try:
-                raw_for_render = self._render_sci_trace_as_html_runtime(raw_for_render)
-            except Exception:
-                pass
-
-            # Deterministic QC-override runtime checks (best-effort): detect obvious target/output mismatches.
-            override_vios = []
-            try:
-                _ovr_runtime = getattr(self.gov_state, 'qc_overrides', {}) or {}
-                override_vios = qc_override_runtime_violations(raw_for_render, _ovr_runtime)
-                if override_vios:
-                    alerts.append(("QC-Override", "; ".join(override_vios)))
-            except Exception:
-                override_vios = []
-
-            # Remove internal status scaffolding leaked by weaker models.
-            try:
-                raw_for_render = strip_internal_scaffolding_status_lines(raw_for_render or "")
-            except Exception:
-                pass
-            try:
-                raw_for_render = strip_exact_status_header_line(raw_for_render or "", header or "")
-            except Exception:
-                pass
-            
-            # A: Header voranstellen
-            if header:
-                raw_for_render = header + "\n\n" + raw_for_render
-            # Strict enforcement gate (optional): validate final text (pre-render) and optionally warn/block.
-            strict_banner_html = ""
-            try:
-                _ens = self._get_enforcement_settings()
-                pol = str((_ens or {}).get("policy") or "audit_only")
-                ens_enabled = bool((_ens or {}).get("enabled", True))
-                ens_blocked = list((_ens or {}).get("blocked_severities") or ["critical", "major"])
-            except Exception:
-                pol = "audit_only"
-                ens_enabled = True
-                ens_blocked = ["critical", "major"]
-            if ens_enabled and pol in ("strict_warn", "strict_block"):
-                try:
-                    hv2, sv2 = self.validator.validate(
-                        raw_for_render,
-                        state=self.gov_state,
-                        profile=prof,
-                        expect_menu=False,
-                        expect_trace=False,
-                        is_command=False,
-                        user_prompt=user_raw,
-                        raw_response=raw_for_render,
-                    )
-                    if override_vios:
-                        hv2 = list(hv2 or []) + list(override_vios)
-                except Exception as e:
-                    hv2, sv2 = [], []
-                    # Fail-soft: show a warning in chat, but never crash.
-                    try:
-                        self._append_system_message(f"⚠️ QC/Validator error in strict enforcement: {e}")
-                    except Exception:
-                        pass
-                if hv2:
-                    # Build structured violations (code/message/severity) for incremental policy handling.
-                    vios_struct = []
-                    try:
-                        if _compliance_scan is not None and hasattr(_compliance_scan, "classify_violation_messages_best_effort"):
-                            vios_struct = _compliance_scan.classify_violation_messages_best_effort(
-                                [str(x) for x in (hv2 or [])],
-                                default_severity="critical",  # keep strict_block backward-compatible for current hard-validator path
-                            ) or []
-                    except Exception:
-                        vios_struct = []
-
-                    # New incremental path: evaluate strict action via modular transition intent.
-                    # Fallback to legacy behavior if modules are unavailable.
-                    strict_action = None
-                    try:
-                        if (
-                            _state_from_runtime is not None
-                            and _apply_intent is not None
-                            and _ProcessModelResponse is not None
-                            and _ComplianceViolation is not None
-                        ):
-                            dom_state = _state_from_runtime(self.gov_state)
-                            try:
-                                dom_state.enforcement_policy = pol
-                            except Exception:
-                                pass
-                            try:
-                                dom_state.enforcement_enabled = bool(ens_enabled)
-                            except Exception:
-                                dom_state.enforcement_enabled = True
-                            try:
-                                _bsl = [str(x).strip().lower() for x in (ens_blocked or []) if str(x).strip()]
-                                dom_state.blocked_severities = _bsl or ["critical", "major"]
-                            except Exception:
-                                dom_state.blocked_severities = ["critical", "major"]
-
-                            vio_objs = []
-                            if isinstance(vios_struct, list) and vios_struct:
-                                for vv in vios_struct:
-                                    if not isinstance(vv, dict):
-                                        continue
-                                    vio_objs.append(
-                                        _ComplianceViolation(
-                                            rule=str(vv.get("code") or "hard_violation"),
-                                            severity=str(vv.get("severity") or "critical"),
-                                            message=str(vv.get("message") or ""),
-                                        )
-                                    )
-                            else:
-                                for msg in hv2 or []:
-                                    vio_objs.append(
-                                        _ComplianceViolation(
-                                            rule="hard_violation",
-                                            severity="critical",
-                                            message=str(msg),
-                                        )
-                                    )
-
-                            tr = _apply_intent(
-                                dom_state,
-                                _ProcessModelResponse(raw_text=raw_for_render, violations=tuple(vio_objs)),
-                                {},
-                            )
-                            evs = list(getattr(tr, "audit_events", []) or [])
-                            if evs:
-                                strict_action = str((evs[-1] or {}).get("action") or "").strip().lower() or None
-                    except Exception:
-                        strict_action = None
-
-                    if strict_action is None:
-                        strict_action = "blocked" if pol == "strict_block" else "warned"
-
-                    if strict_action == "blocked":
-                        vio_lines = []
-                        if isinstance(vios_struct, list) and vios_struct:
-                            for vv in vios_struct:
-                                sev = str((vv or {}).get("severity") or "").strip().upper()
-                                msg = str((vv or {}).get("message") or "").strip()
-                                code = str((vv or {}).get("code") or "").strip()
-                                if msg:
-                                    vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(msg)}</li>")
-                                else:
-                                    vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(code)}</li>")
-                        else:
-                            vio_lines = [f"<li>{html.escape(str(x))}</li>" for x in hv2]
-                        blocked_html = (
-                            "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
-                            "<summary>⛔ STRICT BLOCK (hard violations)</summary>"
-                            "<div class='csc-details'>"
-                            "<p>The model response was blocked by the wrapper because hard rule violations remained after repair/enforcement.</p>"
-                            "<ul>"
-                            + "".join(vio_lines)
-                            + "</ul>"
-                            "<p><i>(Content withheld by wrapper)</i></p>"
-                            "</div></details>"
-                        )
-                        try:
-                            return (
-                                {"html": sanitize_html(blocked_html), "text": "", "csc": None},
-                                {"strict_enforcement": "blocked", "hard_violations": hv2, "violations_struct": vios_struct},
-                            )
-                        except Exception:
-                            return (
-                                {"html": blocked_html, "text": "", "csc": None},
-                                {"strict_enforcement": "blocked", "hard_violations": hv2, "violations_struct": vios_struct},
-                            )
-                    else:
-                        if strict_action == "warned":
-                            # strict_warn
-                            vio_lines = []
-                            if isinstance(vios_struct, list) and vios_struct:
-                                for vv in vios_struct:
-                                    sev = str((vv or {}).get("severity") or "").strip().upper()
-                                    msg = str((vv or {}).get("message") or "").strip()
-                                    code = str((vv or {}).get("code") or "").strip()
-                                    if msg:
-                                        vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(msg)}</li>")
-                                    else:
-                                        vio_lines.append(f"<li>[{html.escape(sev)}] {html.escape(code)}</li>")
-                            else:
-                                vio_lines = [f"<li>{html.escape(str(x))}</li>" for x in hv2]
-
-                            strict_banner_html = (
-                                "<details class='csc-warning' open style='border: 2px solid #c00; background: #fee; color: #600;'>"
-                                "<summary>⚠️ RULE VIOLATION DETECTED (strict_warn)</summary>"
-                                "<div class='csc-details'>"
-                                "<p>The following response still contains hard rule violations after repair/enforcement:</p>"
-                                "<ul>"
-                                + "".join(vio_lines)
-                                + "</ul>"
-                                "</div></details><hr>"
-                            )
-            # Strict warn: show banner above the normal alerts/content
-            if strict_banner_html:
-                alert_html = strict_banner_html + alert_html
-
-            # Display policy for verification-route markers:
-            # default = visible (auditable); optional legacy hide via config switch.
-            try:
-                if self._hide_verification_route_lines_in_chat():
-                    raw_for_render = strip_verification_route_display_lines(raw_for_render or "")
-            except Exception:
-                pass
-
-            try:
-                raw_for_render = unwrap_accidental_full_text_codefence(raw_for_render or "")
-            except Exception:
-                pass
-            try:
-                raw_for_render = strip_pathological_repetition_display_noise(
-                    raw_for_render or "",
-                    lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
-                )
-            except Exception:
-                pass
-
-            
-            # B: Bilder einbetten
-            raw_for_render = _auto_embed_image_urls(raw_for_render)
-            
-            # C: Farben anwenden
-            if ctx.get('color', 'off') == 'on':
-                raw_for_render = apply_color_spans(raw_for_render, enabled=True)
-            
-            # D: Markdown Cleanup (Abstände)
-            raw_for_render = re.sub(r'(?<!\n)\n([*-]|\d+\.) ', r'\n\n\1 ', raw_for_render)
-            raw_for_render = re.sub(r'(?<!\n)\nQC-Matrix:', r'\n\nQC-Matrix:', raw_for_render)
-            
-            # E: Render (prefer v192 pipeline if available, else legacy Markdown+Sanitize+SD numbering)
-            raw_for_render = normalize_known_markdown_control_headings(raw_for_render or "")
-            if _rendering_pipeline_v192 is not None:
-                try:
-                    # For SD/labels we follow Answer Language (not UI language) because SD must be in Answer Language.
-                    ans_lang = getattr(getattr(self, 'gov_state', None), 'answer_language', None) or self._lang() or 'en'
-                    ans_lang = 'de' if str(ans_lang).lower().startswith('de') else 'en'
-                    rctx = _rendering_pipeline_v192.RenderContext(
-                        ui_lang=ans_lang,
-                        color=str(ctx.get('color', 'off') or 'off'),
-                        is_command=False,
-                        comm_active=True,
-                        strict=True,
-                    )
-                    final_html_body = _rendering_pipeline_v192.render_llm_text_to_html(raw_for_render or "", rctx)
-                except Exception:
-                    final_html_body = ""
-            else:
-                # Legacy path (kept as fallback)
-                try:
-                    final_html_body = markdown.markdown(raw_for_render, extensions=['extra', 'codehilite'])
-                except Exception:
-                    final_html_body = markdown.markdown(raw_for_render, extensions=['fenced_code', 'tables'])
-                final_html_body = sanitize_html(final_html_body)
-                try:
-                    final_html_body = html_number_self_debunking(final_html_body, lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'))
-                except Exception:
-                    pass
-
-            # After HTML rendering, normalize leaked markdown emphasis inside self-debunking blocks.
-            try:
-                final_html_body = sanitize_self_debunking_markdown_in_html(final_html_body or "")
-            except Exception:
-                pass
-            try:
-                final_html_body = normalize_hash_subheadings_in_html(final_html_body or "")
-            except Exception:
-                pass
-            try:
-                final_html_body = strip_internal_scaffolding_status_html(final_html_body or "")
-            except Exception:
-                pass
-
-            # Ensure Self-Debunking points are visibly numbered in HTML on all render paths (v192 + legacy).
-            try:
-                final_html_body = html_number_self_debunking(
-                    final_html_body or "",
-                    lang=getattr(getattr(self, 'gov_state', None), 'answer_language', 'de'),
-                )
-            except Exception:
-                pass
-            try:
-                # Second pass: html_number_self_debunking may surface orphan "*" lines from weak markdown output.
-                final_html_body = sanitize_self_debunking_markdown_in_html(final_html_body or "")
-            except Exception:
-                pass
-
-            # HTML-stage QC footer guard:
-            # If a canonical QC footer exists in raw text but is missing or truncated after HTML rendering,
-            # restore the raw canonical line at the end of the HTML body.
-            try:
-                _raw_qc_match = None
-                for _m in re.finditer(r"(?im)^\s*QC-Matrix:\s*.*$", str(raw_for_render or "")):
-                    _raw_qc_match = _m
-                _raw_qc_line = (_raw_qc_match.group(0).strip() if _raw_qc_match else "")
-                # Fallback: rebuild a canonical footer from parsed raw text if line extraction failed.
-                if not _raw_qc_line:
-                    try:
-                        _ovr2_raw = getattr(self.gov_state, 'qc_overrides', {}) or {}
-                        _ovr2 = gov.normalize_qc_overrides(_ovr2_raw)
-                        _corr2 = gov.get_effective_qc_corridor(prof, _ovr2)
-                        _seed = ensure_qc_footer_present(str(raw_for_render or ""), gov, prof, _ovr2)
-                        _rebuilt = enforce_qc_footer_deltas(str(_seed or ""), _corr2, prof)
-                        _rebuilt = ensure_qc_footer_is_last(_rebuilt or "")
-                        for _m2 in re.finditer(r"(?im)^\s*QC-Matrix:\s*.*$", str(_rebuilt or "")):
-                            _raw_qc_match = _m2
-                        _raw_qc_line = (_raw_qc_match.group(0).strip() if _raw_qc_match else "")
-                    except Exception:
-                        pass
-                # If a raw footer line exists but is itself incomplete/truncated, replace it with a
-                # deterministic canonical footer based on the active profile + current overrides.
-                try:
-                    _raw_probe = re.sub(r"\s+", " ", str(_raw_qc_line or "")).strip()
-                    _raw_complete = (
-                        ("Clarity " in _raw_probe and "Brevity " in _raw_probe and "Evidence " in _raw_probe and
-                         "Empathy " in _raw_probe and "Consistency " in _raw_probe and "Neutrality " in _raw_probe)
-                        or
-                        ("Klarheit " in _raw_probe and ("Kürze " in _raw_probe or "Kuerze " in _raw_probe) and "Evidenz " in _raw_probe and
-                         "Empathie " in _raw_probe and "Konsistenz " in _raw_probe and ("Neutralität " in _raw_probe or "Neutralitaet " in _raw_probe))
-                    )
-                    if (not _raw_complete):
-                        try:
-                            _raw_qc_line = str(self._qc_footer_for_profile(prof) or "").strip()
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                if _raw_qc_line:
-                    _plain_html = re.sub(r"<[^>]+>", "", str(final_html_body or ""))
-                    _html_any_qc_lines = re.findall(r"(?im)^\s*QC(?:-Matrix)?\s*:\s*.*$", _plain_html)
-                    _html_qc_lines = re.findall(r"(?im)^\s*QC-Matrix:\s*.*$", _plain_html)
-                    _html_qc_last = (_html_qc_lines[-1].strip() if _html_qc_lines else "")
-                    # Use the whole suffix from the last footer marker because renderers can fragment
-                    # the QC footer across wrappers/newlines.
-                    _qc_probe = _html_qc_last
-                    try:
-                        _idx = _plain_html.rfind("QC-Matrix:")
-                        if _idx >= 0:
-                            _qc_probe = _plain_html[_idx:]
-                    except Exception:
-                        pass
-                    try:
-                        _ts_idx = str(_qc_probe or "").lower().find("response at")
-                        if _ts_idx >= 0:
-                            _qc_probe = str(_qc_probe or "")[:_ts_idx]
-                    except Exception:
-                        pass
-                    _qc_probe = re.sub(r"\s+", " ", str(_qc_probe or "")).strip()
-                    _qc_complete = (
-                        ("Clarity " in _qc_probe and "Brevity " in _qc_probe and "Evidence " in _qc_probe and
-                         "Empathy " in _qc_probe and "Consistency " in _qc_probe and "Neutrality " in _qc_probe)
-                        or
-                        ("Klarheit " in _qc_probe and ("Kürze " in _qc_probe or "Kuerze " in _qc_probe) and "Evidenz " in _qc_probe and
-                         "Empathie " in _qc_probe and "Konsistenz " in _qc_probe and ("Neutralität " in _qc_probe or "Neutralitaet " in _qc_probe))
-                    )
-                    # If the renderer kept multiple footer variants (e.g. model-emitted localized "QC:" plus
-                    # the wrapper's canonical "QC-Matrix:"), collapse them to exactly one canonical footer.
-                    _has_duplicate_qc_footer_lines = len(_html_any_qc_lines) > 1
-                    if (not _qc_complete) or _has_duplicate_qc_footer_lines:
-                        final_html_body = re.sub(
-                            r"(?is)<p>\s*QC(?:-Matrix)?\s*:.*?</p>\s*",
-                            "",
-                            str(final_html_body or ""),
-                        ).rstrip()
-                        # Also remove common fragmented QC footer wrappers if present.
-                        final_html_body = re.sub(
-                            r"(?is)<div[^>]*>\s*QC(?:-Matrix)?\s*:.*?</div>\s*",
-                            "",
-                            str(final_html_body or ""),
-                        ).rstrip()
-                        final_html_body += "<p>" + html.escape(_raw_qc_line) + "</p>"
-            except Exception:
-                pass
-            
-            # F: Alerts + Body + Timestamp zusammenbauen
-            # Render-failure behavior (Variant D = Auto):
-            # - If the rendered HTML looks valid, show it and include raw provider output in a collapsible <details>.
-            # - If rendering looks broken/escaped, show the raw output (escaped) instead (no double output).
-            def _looks_like_rendered_html(h: str) -> bool:
-                if not h:
-                    return False
-                hl = h.lstrip().lower()
-                # Common failure: escaped HTML inside <pre> or heavy entity-escaping.
-                if hl.startswith("<pre") and "&lt;" in hl:
-                    return False
-                if h.count("&lt;") > 10 and ("<p" not in hl and "<div" not in hl and "<ol" not in hl):
-                    return False
-                # Must contain at least one typical HTML block tag.
-                return any(t in hl for t in ("<p", "<div", "<ol", "<ul", "<table", "<pre", "<blockquote"))
-
-            
-            # --- Normalization / rendering summary (structural-only; used for audits & debugging) ---
-            try:
-                _qc_pat = re.compile(r"(?im)^\s*QC(?:-Matrix)?\s*:")
-                _raw_qc_count = len(_qc_pat.findall(str(raw_for_render or "")))
-                _html_qc_count = len(_qc_pat.findall(re.sub(r"<[^>]+>", "", str(final_html_body or ""))))
-                _sd_boxed = ("self-debunking" in str(final_html_body or "").lower()) or ("selbst-debunking" in str(final_html_body or "").lower())
-                _sd_numbered = detect_self_debunking_numbered_html(str(final_html_body or ""))
-                _norm_summary = {
-                    "qc_footer_raw_count": _raw_qc_count,
-                    "qc_footer_html_count": _html_qc_count,
-                    "qc_footer_deduped": (_raw_qc_count > 1 and _html_qc_count == 1),
-                    "self_debunking_boxed": bool(_sd_boxed),
-                    "self_debunking_numbered": bool(_sd_numbered),
-                }
-                if csc_meta is None:
-                    csc_meta = {}
-                if isinstance(csc_meta, dict):
-                    csc_meta["normalization"] = _norm_summary
-            except Exception:
-                pass
-
-            render_ok = _looks_like_rendered_html(final_html_body or "")
-
-            # Provider outputs can occasionally end abruptly (especially with weaker/free models).
-            # Warn deterministically, but do not alter the model text.
-            try:
-                _raw_probe = (raw_original or raw_response or "")
-                _trunc, _trunc_msg = _detect_probable_truncation(_raw_probe, final_html_body or "")
-                if _trunc and _trunc_msg:
-                    alert_html = _control_layer_alert_html(
-                        _trunc_msg + " Bitte gegenprüfen oder Antwort neu generieren.",
-                        title="CONTROL LAYER NOTE",
-                        severity="warn",
-                        lang=self._answer_lang(),
-                    ) + (alert_html or "")
-                    try:
-                        if csc_meta is None:
-                            csc_meta = {}
-                        if isinstance(csc_meta, dict):
-                            csc_meta["probable_truncation"] = True
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            # Record render outcome in normalization summary (if present)
-            try:
-                if csc_meta is None:
-                    csc_meta = {}
-                if isinstance(csc_meta, dict):
-                    ns = csc_meta.get("normalization")
-                    if isinstance(ns, dict):
-                        ns["render_ok"] = bool(render_ok)
-                        ns["render_fallback"] = (not bool(render_ok))
-            except Exception:
-                pass
-
-            timestamp = _format_response_timestamp()
-
-            if render_ok:
-                raw_details = ""
-                try:
-                    _raw = (raw_original or raw_response or "")
-                    # Keep it readable but safe.
-                    _raw_esc = html.escape(str(_raw))
-                    raw_details = (
-                        '<details class="raw-output"><summary>Raw model output</summary>'
-                        '<pre class="raw-output-pre">' + _raw_esc + '</pre></details>'
-                    )
-                except Exception:
-                    raw_details = ""
-
-                final_html = alert_html + final_html_body + raw_details + f'<div class="ts-footer">Response at {timestamp}</div>'
-                return final_html, csc_meta
-
-            # Render looks broken: show raw (escaped) as a last-resort, but do not duplicate it.
-            try:
-                _raw = (raw_original or raw_response or "")
-                _raw_esc = html.escape(str(_raw))
-                fallback_note = '<div class="note-box"><b>Render fallback</b>: showing raw model output.</div>'
-                final_html = alert_html + fallback_note + '<pre class="raw-output-pre">' + _raw_esc + '</pre>' + f'<div class="ts-footer">Response at {timestamp}</div>'
-                return final_html, csc_meta
-            except Exception:
-                final_html = alert_html + f'<div class="ts-footer">Response at {timestamp}</div>'
-                return final_html, csc_meta
-
-
+            return finalize_render_end_html_stage(
+                alert_html=str(alert_html or ""),
+                final_html_body=str(final_html_body or ""),
+                raw_for_render=str(raw_for_render or ""),
+                raw_original=str(raw_for_render or ""),
+                raw_response=str(raw_response or ""),
+                csc_meta=csc_meta,
+                answer_lang=str(self._answer_lang() or "de"),
+            )
         except Exception as e:
-            # Fallback bei schwerem Error
             return f"<span style='color:red'>Runtime Error in Renderer: {e}</span>", None
 
     def _normalize_raw_output_contracts(self, text: str, *, governance_enabled: bool, is_command: bool = False) -> str:
@@ -11699,6 +11178,16 @@ class CSCRefiner:
             pass
         try:
             repaired = normalize_evidence_tags(repaired)
+        except Exception:
+            pass
+        try:
+            repaired = strip_empty_citation_placeholders(repaired)
+        except Exception:
+            pass
+        try:
+            color_state = str(getattr(getattr(self, 'gov_state', None), 'color', 'off') or 'off').strip().lower()
+            if color_state == 'off':
+                repaired = strip_color_markers_for_color_off_text(repaired)
         except Exception:
             pass
         try:
@@ -12047,6 +11536,14 @@ class CSCRefiner:
         """Apply deterministic state changes for Profiles, Modes, and Core commands."""
         gov_obj = getattr(self, 'gov', None) or globals().get('gov')
         data = getattr(gov_obj, 'data', {}) if gov_obj is not None else {}
+        profile_switch_catalog_available = bool(
+            _output_command_response_catalog is not None
+            and hasattr(_output_command_response_catalog, "apply_profile_switch_state")
+        )
+        basic_command_catalog_available = bool(
+            _output_command_response_catalog is not None
+            and hasattr(_output_command_response_catalog, "apply_basic_command_state")
+        )
 
         # Phase 3: controller dispatch path (application layer). Legacy path stays as fallback.
         try:
@@ -12098,11 +11595,53 @@ class CSCRefiner:
             pass
 
         # 1) Profile switching
+        try:
+            if cmd.startswith("Profile ") and profile_switch_catalog_available:
+                def _on_profile_qc_reset():
+                    try:
+                        gov_obj2 = getattr(self, 'gov', None) or globals().get('gov')
+                        if gov_obj2 is not None:
+                            setattr(gov_obj2, 'qc_overrides', {})
+                            gov.runtime_state = self.gov_state
+                            setattr(gov_obj2, 'runtime_state', self.gov_state)
+                    except Exception:
+                        pass
+
+                handled_profile = _output_command_response_catalog.apply_profile_switch_state(  # type: ignore[attr-defined]
+                    cmd=str(cmd or ""),
+                    state=self.gov_state,
+                    data=(data if isinstance(data, dict) else {}),
+                    resolve_profile_color_default_fn=(
+                        lambda rules, profile, fallback: _resolve_profile_color_default_from_ruleset(
+                            rules if isinstance(rules, dict) else {},
+                            profile,
+                            fallback=str(fallback or "on"),
+                        )
+                    ),
+                    on_profile_qc_reset_fn=_on_profile_qc_reset,
+                )
+                if bool(handled_profile):
+                    return
+        except Exception:
+            pass
+
         if cmd.startswith("Profile "):
+            # Phase G: Once the catalog profile reducer is available, avoid duplicating
+            # profile-switch mutations through the monolith fallback path.
+            if profile_switch_catalog_available:
+                return
             pname = cmd.split(" ", 1)[1].strip()
             profiles = (data or {}).get("profiles", {}) if isinstance(data, dict) else {}
             if isinstance(profiles, dict) and pname in profiles:
                 self.gov_state.active_profile = pname
+                try:
+                    self.gov_state.color = _resolve_profile_color_default_from_ruleset(
+                        data if isinstance(data, dict) else {},
+                        pname,
+                        fallback=str(getattr(self.gov_state, "color", "on") or "on"),
+                    )
+                except Exception:
+                    pass
                 # QC overrides are session-local and must reset on profile switch
                 try:
                     self.gov_state.qc_overrides = {}
@@ -12131,6 +11670,56 @@ class CSCRefiner:
                     except Exception:
                         pass
             return
+
+        try:
+            if basic_command_catalog_available:
+                handled = _output_command_response_catalog.apply_basic_command_state(  # type: ignore[attr-defined]
+                    cmd=str(cmd or ""),
+                    state=self.gov_state,
+                    data=(data if isinstance(data, dict) else {}),
+                    resolve_profile_color_default_fn=(
+                        lambda rules, profile, fallback: _resolve_profile_color_default_from_ruleset(
+                            rules if isinstance(rules, dict) else {},
+                            profile,
+                            fallback=str(fallback or "on"),
+                        )
+                    ),
+                    try_enter_sci_recursion_fn=try_enter_sci_recursion,
+                )
+                if bool(handled):
+                    return
+
+                # Phase G: When catalog reducer is present and command belongs to the
+                # catalogized basic-state set, avoid duplicate legacy mutation paths.
+                basic_supported = False
+                try:
+                    if hasattr(_output_command_response_catalog, "is_basic_command_supported"):
+                        basic_supported = bool(
+                            _output_command_response_catalog.is_basic_command_supported(str(cmd or ""))  # type: ignore[attr-defined]
+                        )
+                    else:
+                        basic_supported = str(cmd or "").strip() in {
+                            "Strict on",
+                            "Strict off",
+                            "Explore on",
+                            "Explore off",
+                            "Color on",
+                            "Color off",
+                            "SCI on",
+                            "SCI off",
+                            "SCI recurse",
+                            "Comm Stop",
+                            "Comm Start",
+                            "Comm Anchor off",
+                            "Comm Anchor on",
+                            "Dynamic one-shot on",
+                        }
+                except Exception:
+                    basic_supported = False
+                if basic_supported:
+                    return
+        except Exception:
+            pass
 
         # 2. Mode Overlays
         if cmd == "Strict on": self.gov_state.overlay = "Strict"
@@ -12190,6 +11779,11 @@ class CSCRefiner:
                 profiles = (data.get('profiles') or {}) if isinstance(data, dict) else {}
                 if isinstance(profiles, dict) and default_prof in profiles:
                     self.gov_state.active_profile = default_prof
+                    self.gov_state.color = _resolve_profile_color_default_from_ruleset(
+                        data if isinstance(data, dict) else {},
+                        str(default_prof),
+                        fallback=str(getattr(self.gov_state, "color", "on") or "on"),
+                    )
                     self.gov_state.sci_pending_turns = 0
                     if default_prof not in ['Expert', 'Sparring']:
                         self.gov_state.sci_active = False
@@ -12263,44 +11857,61 @@ class CSCRefiner:
         gov_obj = getattr(self, "gov", None) or globals().get("gov")
         data = getattr(gov_obj, "data", None) if gov_obj else None
 
-        vname = ""
-        vfocus = ""
-        if isinstance(data, dict):
-            variants = (((data.get("sci") or {}).get("variant_menu") or {}).get("variants") or {})
-            v = (variants.get(char) or {}) if isinstance(variants, dict) else {}
-            if isinstance(v, dict):
-                vname = v.get("name") or ""
-                vfocus = v.get("focus") or ""
+        html_out = ""
+        history_text = f"SCI Variant {char} activated."
+        try:
+            if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "build_sci_selection_result"):
+                payload = _output_command_response_catalog.build_sci_selection_result(  # type: ignore[attr-defined]
+                    letter=char,
+                    data=(data if isinstance(data, dict) else {}),
+                    lang=str(ui_lang or "de"),
+                    translate_fn=tr,
+                )
+                if isinstance(payload, dict):
+                    html_out = str(payload.get("html") or "")
+                    history_text = str(payload.get("history_text") or history_text)
+        except Exception:
+            html_out = ""
 
-        # Display (optional I18N overrides if present; otherwise JSON)
-        title = tr(f"sci_name_{char}", "") or tr(f"sci_var_{char}", "") or (vname or f"Variant {char}")
-        desc = tr(f"sci_focus_{char}", "") or (vfocus or "")
+        if not html_out:
+            vname = ""
+            vfocus = ""
+            if isinstance(data, dict):
+                variants = (((data.get("sci") or {}).get("variant_menu") or {}).get("variants") or {})
+                v = (variants.get(char) or {}) if isinstance(variants, dict) else {}
+                if isinstance(v, dict):
+                    vname = v.get("name") or ""
+                    vfocus = v.get("focus") or ""
 
-        footer = "SCI activated"
-        proto = "Protocol"
+            # Display (optional I18N overrides if present; otherwise JSON)
+            title = tr(f"sci_name_{char}", "") or tr(f"sci_var_{char}", "") or (vname or f"Variant {char}")
+            desc = tr(f"sci_focus_{char}", "") or (vfocus or "")
 
-        html_out = f"""
-        <div style="border: 2px solid #1a73e8; background: #f0f7ff; padding: 15px; border-radius: 8px; margin: 10px 0;">
-            <div style="font-weight: bold; color: #1a73e8; font-size: 14px; margin-bottom: 5px;">SCI ACTIVE: {html.escape(char)}</div>
-            <div style="font-size: 18px; font-weight: bold; color: #333; margin-bottom: 8px;">{html.escape(title)}</div>
-        """
+            footer = "SCI activated"
+            proto = "Protocol"
 
-        if desc:
-            html_out += f"""
-            <div style="font-size: 14px; color: #444; line-height: 1.4;">
-                <i>"{html.escape(desc)}"</i>
-            </div>
+            html_out = f"""
+            <div style="border: 2px solid #1a73e8; background: #f0f7ff; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                <div style="font-weight: bold; color: #1a73e8; font-size: 14px; margin-bottom: 5px;">SCI ACTIVE: {html.escape(char)}</div>
+                <div style="font-size: 18px; font-weight: bold; color: #333; margin-bottom: 8px;">{html.escape(title)}</div>
             """
 
-        html_out += f"""
-            <hr style="border: 0; border-top: 1px solid #ccd; margin: 10px 0;">
-            <div style="font-size: 11px; color: #666;">
-                <b>{proto}:</b> Plan &rarr; Solution &rarr; Check.<br>
-                Control Layer strictly monitors compliance with this role.
+            if desc:
+                html_out += f"""
+                <div style="font-size: 14px; color: #444; line-height: 1.4;">
+                    <i>"{html.escape(desc)}"</i>
+                </div>
+                """
+
+            html_out += f"""
+                <hr style="border: 0; border-top: 1px solid #ccd; margin: 10px 0;">
+                <div style="font-size: 11px; color: #666;">
+                    <b>{proto}:</b> Plan &rarr; Solution &rarr; Check.<br>
+                    Control Layer strictly monitors compliance with this role.
+                </div>
             </div>
-        </div>
-        <div class="ts-footer">{html.escape(footer)}</div>
-        """
+            <div class="ts-footer">{html.escape(footer)}</div>
+            """
         # Update model state (no session recreation)
         try:
             self._ensure_governance_pinned(reason=f'SCI select {char}')
@@ -12319,23 +11930,85 @@ class CSCRefiner:
             pass
 
         try:
-            self.history.append({"role": "bot", "content": f"SCI Variant {char} activated.", "ts": datetime.now().isoformat(), "csc": None})
+            self.history.append({"role": "bot", "content": history_text, "ts": datetime.now().isoformat(), "csc": None})
         except Exception:
             pass
 
         return {"html": html_out, "csc": None}
 
+    def _output_state_snapshot_view(self) -> dict:
+        """Return deterministic runtime state snapshot for output/rendering paths."""
+        gs = getattr(self, "gov_state", None)
+        try:
+            if _output_state_snapshot is not None and hasattr(_output_state_snapshot, "OutputStateSnapshot"):
+                snap_obj = _output_state_snapshot.OutputStateSnapshot.from_runtime_state(gs)
+                return {
+                    "comm_active": bool(getattr(snap_obj, "comm_active", False)),
+                    "active_profile": str(getattr(snap_obj, "active_profile", "Standard") or "Standard"),
+                    "sci_variant": str(getattr(snap_obj, "sci_variant", "off") or "off"),
+                    "sci_pending": bool(getattr(snap_obj, "sci_pending", False)),
+                    "sci_active": bool(getattr(snap_obj, "sci_active", False)),
+                    "overlay": str(getattr(snap_obj, "overlay", "off") or "off"),
+                    "color": str(getattr(snap_obj, "color", "off") or "off"),
+                    "control_layer": str(getattr(snap_obj, "control_layer", "on") or "on"),
+                    "qc": str(getattr(snap_obj, "qc", "on") or "on"),
+                    "cgi": str(getattr(snap_obj, "cgi", "on") or "on"),
+                    "anchor_auto": bool(getattr(snap_obj, "anchor_auto", True)),
+                    "user_turns": int(getattr(snap_obj, "user_turns", 0) or 0),
+                    "dynamic_nudge": str(getattr(snap_obj, "dynamic_nudge", "") or ""),
+                    "language_policy_mode": str(getattr(snap_obj, "language_policy_mode", "production") or "production"),
+                }
+        except Exception:
+            pass
+
+        try:
+            overlay_raw = str(getattr(gs, "overlay", "") or "").strip()
+            overlay = overlay_raw if overlay_raw else "off"
+            sci_raw = str(getattr(gs, "sci_variant", "") or "").strip()
+            return {
+                "comm_active": bool(getattr(gs, "comm_active", False)),
+                "active_profile": str(getattr(gs, "active_profile", "Standard") or "Standard"),
+                "sci_variant": sci_raw or "off",
+                "sci_pending": bool(getattr(gs, "sci_pending", False)),
+                "sci_active": bool(getattr(gs, "sci_active", False)),
+                "overlay": overlay,
+                "color": str(getattr(gs, "color", "off") or "off"),
+                "control_layer": str(getattr(gs, "control_layer", "on") or "on"),
+                "qc": str(getattr(gs, "qc", "on") or "on"),
+                "cgi": str(getattr(gs, "cgi", "on") or "on"),
+                "anchor_auto": bool(getattr(gs, "anchor_auto", True)),
+                "user_turns": int(getattr(gs, "user_turns", 0) or 0),
+                "dynamic_nudge": str(getattr(gs, "dynamic_nudge", "") or ""),
+                "language_policy_mode": str(getattr(gs, "language_policy_mode", "production") or "production"),
+            }
+        except Exception:
+            return {
+                "comm_active": False,
+                "active_profile": "Standard",
+                "sci_variant": "off",
+                "sci_pending": False,
+                "sci_active": False,
+                "overlay": "off",
+                "color": "off",
+                "control_layer": "on",
+                "qc": "on",
+                "cgi": "on",
+                "anchor_auto": True,
+                "user_turns": 0,
+                "dynamic_nudge": "",
+                "language_policy_mode": "production",
+            }
+
     def _state_reminder_line(self) -> str:
         # Compact runtime-state reminder for the model (low token overhead).
         try:
-            prof = getattr(getattr(self, 'gov_state', None), 'active_profile', 'Standard') or 'Standard'
-            overlay = getattr(getattr(self, 'gov_state', None), 'overlay', '') or ''
-            sci = getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''
-            sci_active = bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False))
-            color = getattr(getattr(self, 'gov_state', None), 'color', 'off') or 'off'
-            comm = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
-            if prof in {'Sandbox', 'Briefing'}:
-                color = 'off'
+            snap = self._output_state_snapshot_view()
+            prof = str(snap.get("active_profile", "Standard") or "Standard")
+            overlay = str(snap.get("overlay", "off") or "off")
+            sci = str(snap.get("sci_variant", "off") or "off")
+            sci_active = bool(snap.get("sci_active", False))
+            color = str(snap.get("color", "off") or "off")
+            comm = bool(snap.get("comm_active", False))
             sci_show = (sci or 'off') if sci_active else 'off'
             return f"[CURRENT STATE] Profile={prof} | Overlay={(overlay or 'off')} | SCI={sci_show} | Color={color} | Comm={'on' if comm else 'off'}"
         except Exception:
@@ -12997,21 +12670,26 @@ class CSCRefiner:
         if not getattr(gov, 'loaded', False):
             return '<div class="comm-help comm-state">No ruleset loaded.</div>'
 
-        try:
-            ver = (gov.data or {}).get('version', '')
-            sysname = (gov.data or {}).get('system_name', 'Comm-SCI-Control')
-        except Exception:
-            ver, sysname = '', 'Comm-SCI-Control'
-
-        prof = getattr(getattr(self, 'gov_state', None), 'active_profile', 'Standard') or 'Standard'
-        overlay = getattr(getattr(self, 'gov_state', None), 'overlay', '') or 'off'
-        sci = getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''
-        color = getattr(getattr(self, 'gov_state', None), 'color', 'off') or 'off'
-        disp_color = 'off' if prof in {'Sandbox', 'Briefing'} else color
-
-        header = (
-            f"Active profile: {prof} · SCI: {sci or 'off'} · Overlay: {overlay or 'off'} · "
-            f"Control Layer: on · QC: on · CGI: on · Color: {disp_color}"
+        snap = self._output_state_snapshot_view()
+        prof = str(snap.get("active_profile", "Standard") or "Standard")
+        overlay = str(snap.get("overlay", "off") or "off")
+        sci = str(snap.get("sci_variant", "off") or "off")
+        color = str(snap.get("color", "off") or "off")
+        sci_pending = bool(snap.get("sci_pending", False))
+        header = self._build_active_profile_header_line(
+            profile=str(prof or "Standard"),
+            sci_variant=str(sci or ""),
+            overlay=str(overlay or "off"),
+            control_layer="on",
+            qc="on",
+            cgi="on",
+            color=str(color or "off"),
+            sci_pending=bool(sci_pending),
+            off_label="off",
+            pending_label="PENDING",
+            pending_mode="when_pending_and_unset",
+            uppercase_sci_non_off=False,
+            color_force_off_profiles=(),
         )
 
         qc_line = ''
@@ -13020,6 +12698,17 @@ class CSCRefiner:
         except Exception:
             qc_line = 'QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)'
 
+        try:
+            if _output_header_renderer is not None and hasattr(_output_header_renderer, "render_profile_switch_control_html"):
+                return _output_header_renderer.render_profile_switch_control_html(
+                    timestamp=str(timestamp),
+                    header_line=header,
+                    qc_line=qc_line,
+                    audit_line=str(audit_line or ""),
+                )
+        except Exception:
+            pass
+
         out = []
         out.append('<div class="comm-help comm-state">')
         out.append(f'<div class="help-status">{html.escape(header)}</div>')
@@ -13027,8 +12716,127 @@ class CSCRefiner:
             out.append(f"<div style='margin-top:8px'>{html.escape(str(audit_line))}</div>")
         out.append(f"<div style='margin-top:10px'>{html.escape(qc_line)}</div>")
         out.append('</div>')
-        out.append(f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>')
+        out.append(_render_ts_footer_html(str(timestamp)))
         return "\n".join(out)
+
+    def _resolve_route_context(self, raw_txt: str):
+        """Resolve route and derive deterministic route flags (fail-soft)."""
+        try:
+            if _output_routing_runtime is not None and hasattr(_output_routing_runtime, "resolve_route_context"):
+                return _output_routing_runtime.resolve_route_context(
+                    raw_txt,
+                    self.gov_state,
+                    self,
+                    gov_manager=gov,
+                    route_input_fn=route_input,
+                    output_resolver_mod=_output_resolver,
+                    output_dispatcher_mod=_output_dispatcher,
+                )
+        except Exception:
+            pass
+
+        route = None
+        try:
+            if _output_resolver is not None and hasattr(_output_resolver, "resolve_input"):
+                route = _output_resolver.resolve_input(
+                    raw_txt,
+                    self.gov_state,
+                    self,
+                    gov_manager=gov,
+                    route_input_fn=route_input,
+                )
+        except Exception:
+            route = None
+        if not isinstance(route, dict):
+            try:
+                route = route_input(raw_txt, self.gov_state, self)
+            except Exception:
+                txt = str(raw_txt or "").strip()
+                route = {"kind": "chat", "query_text": txt} if txt else {"kind": "noop"}
+        try:
+            if _output_resolver is not None and hasattr(_output_resolver, "normalize_route_shape"):
+                route = _output_resolver.normalize_route_shape(route, raw_txt=str(raw_txt or ""))
+        except Exception:
+            pass
+        route_kind = str(route.get("kind") or "")
+        is_command = bool(route_kind == "command")
+        is_sci_selection = bool(route.get("is_sci_selection"))
+        is_error = bool(route_kind == "error")
+        is_noop = bool(route_kind == "noop")
+        route_meta = {
+            "kind": str(route_kind or ""),
+            "is_command": bool(is_command),
+            "is_sci_selection": bool(is_sci_selection),
+            "is_error": bool(is_error),
+            "is_noop": bool(is_noop),
+            "standalone_only_violation": bool(route.get("standalone_only_violation")),
+        }
+        return route, route_meta
+
+    def _route_contract_ok(self, route: dict) -> bool:
+        """Evaluate route contract through module if available, else local fallback."""
+        try:
+            if _output_routing_runtime is not None and hasattr(_output_routing_runtime, "route_contract_ok"):
+                return bool(
+                    _output_routing_runtime.route_contract_ok(
+                        route,
+                        output_resolver_mod=_output_resolver,
+                        output_dispatcher_mod=_output_dispatcher,
+                        local_contract_fn=contract_route_shape,
+                    )
+                )
+        except Exception:
+            pass
+
+        _contract_fn = None
+        try:
+            if _output_resolver is not None and hasattr(_output_resolver, "contract_route_shape"):
+                _contract_fn = _output_resolver.contract_route_shape
+        except Exception:
+            _contract_fn = None
+        if _contract_fn is None:
+            _contract_fn = contract_route_shape
+
+        if _output_dispatcher is not None and hasattr(_output_dispatcher, "route_contract_ok"):
+            try:
+                return bool(_output_dispatcher.route_contract_ok(route, contract_route_shape_fn=_contract_fn))
+            except Exception:
+                pass
+        try:
+            return bool(_contract_fn(route))
+        except Exception:
+            return False
+
+    def _route_audit_payload(self, route: dict, route_meta: dict | None = None) -> dict:
+        """Build deterministic route audit payload."""
+        try:
+            if _output_routing_runtime is not None and hasattr(_output_routing_runtime, "route_audit_payload"):
+                return _output_routing_runtime.route_audit_payload(
+                    route,
+                    route_meta,
+                    output_dispatcher_mod=_output_dispatcher,
+                )
+        except Exception:
+            pass
+
+        meta = route_meta if isinstance(route_meta, dict) else {}
+        payload = {
+            "kind": str(meta.get("kind") or str((route or {}).get("kind") or "")),
+            "is_command": bool(meta.get("is_command", False)),
+            "is_sci_selection": bool(meta.get("is_sci_selection", False)),
+            "standalone_only_violation": bool((route or {}).get("standalone_only_violation")),
+        }
+        if _output_dispatcher is not None and hasattr(_output_dispatcher, "route_audit_payload"):
+            try:
+                payload = dict(payload)
+                payload.update(_output_dispatcher.route_audit_payload(route, meta) or {})
+            except Exception:
+                try:
+                    payload.update(_output_dispatcher.route_audit_payload(route) or {})
+                except Exception:
+                    pass
+        payload["standalone_only_violation"] = bool((route or {}).get("standalone_only_violation"))
+        return payload
 
     def ask(self, txt):
         # NOTE: Profile switch outputs should be minimal (header -> QC-Matrix -> timestamp).
@@ -13120,10 +12928,17 @@ class CSCRefiner:
                 pass
 
             # 1. Routing
-            route = route_input(raw_txt, self.gov_state, self)
+            route, _route_meta = self._resolve_route_context(raw_txt)
+            _route_kind = str(_route_meta.get("kind") or "")
+            _is_route_command = bool(_route_meta.get("is_command"))
+            _is_route_sci_selection = bool(_route_meta.get("is_sci_selection"))
+            _is_route_error = bool(_route_meta.get("is_error"))
+            _is_route_noop = bool(_route_meta.get("is_noop"))
+
             # STUFE 1 contract: route shape (fail-soft; no behavior change)
             try:
-                if not contract_route_shape(route):
+                _ok_route = self._route_contract_ok(route)
+                if not _ok_route:
                     try:
                         self.log_event('contract_violation', {'where': 'route_input', 'kind': str(route.get('kind'))})
                     except Exception:
@@ -13131,21 +12946,16 @@ class CSCRefiner:
             except Exception:
                 pass
 
-
             try:
+                _route_payload = self._route_audit_payload(route, _route_meta)
                 self.log_event(
                     'route',
-                    {
-                        'kind': route.get('kind'),
-                        'is_command': bool(route.get('kind') == 'command'),
-                        'is_sci_selection': bool(route.get('is_sci_selection')),
-                        'standalone_only_violation': bool(route.get('standalone_only_violation')),
-                    },
+                    _route_payload,
                 )
             except Exception:
                 pass
 
-            if route["kind"] == "error":
+            if _is_route_error:
                 self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
                 self.history.append({"role": "bot", "content": "Blocked.", "ts": datetime.now().isoformat()})
                 try:
@@ -13155,7 +12965,7 @@ class CSCRefiner:
                 return {"html": route["html"], "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
             # SCI Selection (A-H)
-            if route.get("is_sci_selection"):
+            if _is_route_sci_selection:
                 self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
                 try:
                     self.log_event('sci_selection', {'value': _safe_preview_text(route.get('query_text') or '', 16)})
@@ -13168,11 +12978,11 @@ class CSCRefiner:
                     return sci_res
                 return {"html": str(sci_res or ""), "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
-            if route["kind"] == "noop":
+            if _is_route_noop:
                 return {"html": "", "csc": None, "cgi_bar": False, "answer_lang": self._answer_lang()}
 
             # 2. Commands
-            if route["kind"] == "command":
+            if _is_route_command:
                 self.history.append({"role": "user", "content": raw_txt, "ts": datetime.now().isoformat()})
                 cmd = route["canonical_cmd"]
                 prev_profile_for_audit = (getattr(self.gov_state, "active_profile", "Standard") or "Standard")
@@ -13258,42 +13068,12 @@ class CSCRefiner:
                 # Response after command execution
                 # - For Profile switches: minimal control output (header -> QC-Matrix -> timestamp)
                 # - Additionally, ONLY for Profile Sparring/Expert: show SCI menu to choose variant
-                current_profile = getattr(self.gov_state, "active_profile", "")
-                comm_start_audit_line = ""
-                if cmd == "Comm Start" and str(current_profile) != str(prev_profile_for_audit):
-                    comm_start_audit_line = _build_profile_switch_audit_line(
-                        "Comm Start",
-                        str(prev_profile_for_audit),
-                        str(current_profile),
-                    )
-                profile_switch_audit_line = ""
-                if cmd.startswith("Profile ") and str(current_profile) != str(prev_profile_for_audit):
-                    profile_switch_audit_line = _build_profile_switch_audit_line(
-                        cmd,
-                        str(prev_profile_for_audit),
-                        str(current_profile),
-                    )
-
-                if cmd.startswith("Profile "):
-                    html_content = self._render_profile_switch_control_html(timestamp, audit_line=profile_switch_audit_line)
-                    if current_profile in ["Expert", "Sparring"]:
-                        try:
-                            self.gov_state.sci_pending = True
-                        except Exception:
-                            pass
-                        # Show SCI menu as an additional block (after the control output)
-                        menu_html = self._render_sci_menu_html(lang=self._lang())
-                        html_content = html_content + "\n<div style='margin-top:12px'></div>\n" + menu_html
-                else:
-                    triggered_sci = (cmd in ["SCI on", "SCI menu"])
-                    if triggered_sci:
-                        try:
-                            self.gov_state.sci_pending = True
-                        except Exception:
-                            pass
-                        html_content = self._render_sci_menu_html(lang=self._lang())
-                    else:
-                        html_content = self._render_comm_state_html(audit_line=comm_start_audit_line)
+                html_content = _resolve_post_state_command_html(
+                    self,
+                    cmd=cmd,
+                    timestamp=timestamp,
+                    prev_profile_for_audit=str(prev_profile_for_audit),
+                )
 
                 self.history.append({"role": "bot", "content": f"Command executed: {cmd}", "ts": datetime.now().isoformat()})
                 try:
@@ -13502,20 +13282,16 @@ class CSCRefiner:
             # If CGI feedback was provided earlier, forward it ONCE as a neutral note (no rule/code changes).
             try:
                 if bool(getattr(self.gov_state, 'cgi_feedback_pending_for_model', False)):
-                    fb_parts = []
                     lu = (getattr(self.gov_state, 'last_user_feedback_triplet', '') or '').strip()
                     lp = (getattr(self.gov_state, 'last_process_cgi_feedback', '') or '').strip()
-                    if lu:
-                        fb_parts.append(f"User feedback triplet (CGI): {lu}")
-                    if lp:
-                        fb_parts.append(f"Process CGI feedback: {lp}")
-                    extra_blocks = []
-                    if fb_parts:
-                        extra_blocks.append("[CGI Feedback]\n" + "\n".join(fb_parts))
+                    cgi_constraints = []
                     if lu:
                         cgi_constraints = self._build_cgi_one_shot_constraints(lu, lang=self._answer_lang())
-                        if cgi_constraints:
-                            extra_blocks.append("[CGI One-Shot Rewrite Constraints]\n" + "\n".join(cgi_constraints))
+                    extra_blocks = self._build_cgi_feedback_prompt_blocks(
+                        user_feedback_triplet=lu,
+                        process_feedback=lp,
+                        one_shot_constraints=cgi_constraints,
+                    )
                     if extra_blocks:
                         user_for_model = (user_for_model.rstrip() + "\n\n" + "\n\n".join(extra_blocks)).strip()
                     # Mark as sent (single-use)
@@ -13708,33 +13484,27 @@ class CSCRefiner:
                         )
 
                         # Banner (visible; does not claim perfection beyond one pass)
-                        note_tip_attr = ""
+                        note_tip = ""
                         try:
-                            note_tip = html.escape(
+                            note_tip = str(
                                 _control_layer_tooltip_text(lang=self._answer_lang(), severity="warn"),
-                                quote=True,
                             )
-                            if note_tip:
-                                note_tip_attr = f" data-u-title='{note_tip}' style='cursor:help;'"
                         except Exception:
-                            note_tip_attr = ""
+                            note_tip = ""
                         try:
                             if _should_show_repair_pass_banner(hard_vios):
-                                items = "".join([f"<li class='control-layer-violation'>{html.escape(str(v))}</li>" for v in hard_vios])
-                                repair_banner_html = (
-                                    f"<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
-                                    "border-radius:10px; margin:8px 0; color:#92400e;'>"
-                                    f"<b{note_tip_attr}>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
-                                    f"<ul class='control-layer-violations' style='margin:6px 0 0 18px; padding:0;'>{items}</ul></div>"
+                                repair_banner_html = _render_repair_pass_banner_html(
+                                    hard_violations=[str(v) for v in list(hard_vios or [])],
+                                    tooltip_text=note_tip,
+                                    include_violation_list=True,
                                 )
                             else:
                                 repair_banner_html = ""
                         except Exception:
-                            repair_banner_html = (
-                                f"<div class='control-layer-note csc-warning' style='border:1px solid #f59e0b; background:#fffbeb; padding:10px; "
-                                "border-radius:10px; margin:8px 0; color:#92400e;'>"
-                                f"<b{note_tip_attr}>CONTROL LAYER NOTE</b><br>One repair pass was applied for hard contract violations."
-                                "</div>"
+                            repair_banner_html = _render_repair_pass_banner_html(
+                                hard_violations=[],
+                                tooltip_text=note_tip,
+                                include_violation_list=False,
                             )
             except Exception:
                 pass
@@ -13779,15 +13549,8 @@ class CSCRefiner:
                 except Exception:
                     pass
                 if _hits and bool(getattr(self.gov_state, 'comm_active', False)):
-                    _hits_s = ', '.join(str(x) for x in _hits)
                     _active_v = str((self.gov.data or {}).get('version', '') or '').strip()
-                    crossv_html = (
-                        "<div class='csc-warning' style='background:#fff7ed; border:1px solid #fb923c; padding:10px; "
-                        "border-radius:10px; margin:8px 0; color:#9a3412;'>"
-                        "<b>CONTROL LAYER ALERT</b><br><b>Cross-Version Guard</b>: "
-                        f"Ignored foreign version token(s) in user input. Active: {_active_v}."
-                        "</div>"
-                    )
+                    crossv_html = _render_cross_version_guard_html(_active_v)
                     final_work = crossv_html + final_work
             except Exception:
                 pass
@@ -14250,31 +14013,23 @@ class CSCRefiner:
         if not txt:
             return txt
         lang = self._answer_lang()
-        out = txt
         try:
-            if _uncertainty_codes_mod is not None and hasattr(_uncertainty_codes_mod, "ensure_uncertainty_annotations_html"):
-                out = _uncertainty_codes_mod.ensure_uncertainty_annotations_html(
-                    txt,
-                    lang=lang,
-                    user_text=str(user_text or ""),
-                )
-            elif _uncertainty_codes_mod is not None and hasattr(_uncertainty_codes_mod, "append_uncertainty_legend_html"):
-                out = _uncertainty_codes_mod.append_uncertainty_legend_html(txt, lang=lang)
-        except Exception:
-            out = txt
-        try:
-            out = annotate_signal_dot_tooltips_html(out, lang=lang)
-        except Exception:
-            pass
-        try:
-            out = re.sub(
-                r"(?is)<details\b[^>]*class=(?:\"|')[^\"']*\buncertainty-legend\b[^\"']*(?:\"|')[^>]*>.*?</details>\s*",
-                "",
-                str(out or ""),
+            _uncertainty_fn = (
+                getattr(_output_uncertainty_renderer, "append_uncertainty_explanation_if_needed", None)
+                if _output_uncertainty_renderer is not None
+                else None
             )
+            if callable(_uncertainty_fn):
+                return _uncertainty_fn(
+                    txt,
+                    user_text=str(user_text or ""),
+                    lang=lang,
+                    uncertainty_codes_mod=_uncertainty_codes_mod,
+                    annotate_signal_dot_tooltips_fn=annotate_signal_dot_tooltips_html,
+                )
         except Exception:
             pass
-        return out
+        return txt
 
     def ping(self, _payload=None):
         """Panel health check."""
@@ -14291,6 +14046,23 @@ class CSCRefiner:
         This keeps the Panel functional even if certain individual JS API methods are not
         exposed reliably by the backend for secondary windows.
         """
+        if _panel_action_orchestrator_runtime_mod is not None:
+            try:
+                fn = getattr(_panel_action_orchestrator_runtime_mod, 'dispatch_panel_action', None)
+                if callable(fn):
+                    out = fn(
+                        self,
+                        action=action,
+                        payload=payload,
+                        gate_mod=_panel_action_gate_runtime_mod,
+                        runtime_routes_mod=_panel_action_runtime_routes_mod,
+                    )
+                    if isinstance(out, dict):
+                        return out
+            except Exception:
+                pass
+
+        # Fail-open local fallback when orchestrator seam is unavailable.
         try:
             action_s = str(action or '').strip()
         except Exception:
@@ -14301,130 +14073,7 @@ class CSCRefiner:
                 payload = {'value': payload}
         except Exception:
             payload = {}
-
-        def _ok(result=None, **extra):
-            out = {'ok': True, 'action': action_s, 'result': result, 'error': None}
-            if extra:
-                out.update(extra)
-            return out
-
-        def _err(message: str):
-            return {'ok': False, 'action': action_s, 'result': None, 'error': str(message or 'error')}
-
-        # Exit-confirm modal gate: exclusive program-wide modal state.
-        if self._is_exit_confirm_modal_active():
-            try:
-                self.log_event(
-                    'exit_confirm_block',
-                    {'source': 'panel_action', 'action': action_s},
-                )
-            except Exception:
-                pass
-            return _err("exit_confirm_open_blocked")
-
-        # QC-Override modal gate: while dialog is open, block Main/Panel actions except QC actions.
-        if self._is_qc_override_modal_active():
-            _allowed_modal_actions = {
-                'qc_override_apply',
-                'qc_override_clear',
-                'qc_override_cancel',
-                'panel_bootstrap_selftest',
-            }
-            if action_s not in _allowed_modal_actions:
-                try:
-                    self._bring_qc_override_to_front()
-                except Exception:
-                    pass
-                try:
-                    self.log_event(
-                        'qc_override_modal_block',
-                        {'source': 'panel_action', 'action': action_s},
-                    )
-                except Exception:
-                    pass
-                return _err("qc_override_modal_blocked")
-
-        # Strict Comm-off panel gate: block rule-workflow actions even if stale/hidden UI calls still fire.
-        try:
-            _comm_on = bool(getattr(getattr(self, 'gov_state', None), 'comm_active', False))
-        except Exception:
-            _comm_on = False
-        if not _comm_on:
-            _blocked_actions = {
-                'qc_override_apply', 'qc_override_clear',
-                'manual_test_monitor_show', 'manual_test_monitor_hide', 'manual_test_monitor_reset',
-                'manual_test_monitor_append', 'manual_test_monitor_header', 'save_manual_test_report',
-                'manual_test_main_chat_append',
-            }
-            if action_s in _blocked_actions:
-                return _err("comm_off_blocked")
-            if action_s in {'cmd', 'ask'}:
-                try:
-                    _txt = str((payload or {}).get('text', '') or '').strip()
-                except Exception:
-                    _txt = ''
-                if _txt != 'Comm Start':
-                    return _err("comm_off_blocked")
-
-        # S6: delegate stable panel-action subsets to UIController (primary route).
-        try:
-            _ui = getattr(self, 'ui_controller', None)
-            if _ui is not None and hasattr(_ui, 'try_handle_panel_aux_action'):
-                _delegated = _ui.try_handle_panel_aux_action(self, action_s, payload)
-                if isinstance(_delegated, dict):
-                    return _delegated
-        except Exception:
-            pass
-
-        if action_s == 'panel_bootstrap_selftest':
-            try:
-                info = self._panel_accept_bootstrap_report(payload)
-            except Exception as e:
-                info = {'accepted': False, 'runtime_ok': False, 'reason': f'{type(e).__name__}: {e}'}
-            return _ok(info, runtime_ok=bool((info or {}).get('runtime_ok')))
-
-        try:
-            if action_s == 'cmd':
-                # Execute via main window pipeline so results appear in the chat UI.
-                text = payload.get('text', '')
-                try:
-                    if hasattr(self, 'remote_cmd'):
-                        self.remote_cmd(str(text or ''))
-                        return _ok({'queued': True}, queued=True)
-                except Exception as e:
-                    return _err(str(e))
-                return _err('remote_cmd_unavailable')
-            if action_s == 'ask':
-                # Blocking ask-path for panel-side automation/test runners.
-                text = payload.get('text', '')
-                try:
-                    if hasattr(self, 'ask'):
-                        res = self.ask(str(text or ''))
-                        if isinstance(res, dict):
-                            return _ok(res, **res)
-                        return _ok({'html': str(res or '')})
-                except Exception as e:
-                    return _err(str(e))
-                return _err('ask_unavailable')
-            if action_s == 'export':
-                # Panel bridge does not expose api.export directly; provide a deterministic
-                # route through panel_action for manual-test checkpoints.
-                try:
-                    chat_path, audit_path = self.export()
-                    return _ok({'chat_path': chat_path, 'audit_path': audit_path}, chat_path=chat_path, audit_path=audit_path)
-                except Exception as e:
-                    return _err(str(e))
-            if action_s == 'manual_test_stop':
-                fn = getattr(self, 'manual_test_request_stop', None)
-                res = fn(payload or {}) if callable(fn) else {'ok': False, 'error': 'manual_test_request_stop unavailable'}
-                if isinstance(res, dict):
-                    if bool(res.get('ok', True)):
-                        return _ok(res, **res)
-                    return _err(str(res.get('error', 'manual_test_stop_failed')))
-                return _ok({'ok': True})
-        except Exception as e:
-            return _err(str(e))
-        return _err('unknown action')
+        return {'ok': False, 'action': action_s, 'result': None, 'error': 'panel_action_orchestrator unavailable'}
 
     def clear_chat(self):
         """Clear in-memory chat history and reset the main chat UI (no model call).
@@ -14478,20 +14127,36 @@ class CSCRefiner:
     def save_manual_test_report(self, report):
         """Persist panel manual-test run results as JSON under Logs/ManualTests (best-effort)."""
         try:
-            payload = report if isinstance(report, dict) else {'raw': report}
-        except Exception:
-            payload = {'raw': str(report)}
-        try:
             ts = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         except Exception:
             ts = str(int(time.time()))
-        try:
-            scenario = str((payload or {}).get('scenario') or 'manual_test').strip().lower()
-            scenario = re.sub(r'[^a-z0-9._-]+', '_', scenario).strip('_') or 'manual_test'
-        except Exception:
-            scenario = 'manual_test'
-        target_dir = os.path.join(LOGS_DIR, 'ManualTests')
-        target = os.path.join(target_dir, f'ManualTest_{ts}_{scenario}.json')
+        plan = None
+        if _manual_test_runtime_seam_mod is not None and hasattr(_manual_test_runtime_seam_mod, "manual_test_report_write_plan"):
+            try:
+                plan = _manual_test_runtime_seam_mod.manual_test_report_write_plan(  # type: ignore[attr-defined]
+                    report,
+                    logs_dir=LOGS_DIR,
+                    ts=ts,
+                )
+            except Exception:
+                plan = None
+        if not isinstance(plan, dict):
+            try:
+                payload = report if isinstance(report, dict) else {'raw': report}
+            except Exception:
+                payload = {'raw': str(report)}
+            target_dir = os.path.join(LOGS_DIR, 'ManualTests')
+            target = os.path.join(target_dir, f'ManualTest_{ts}_manual_test.json')
+            plan = {
+                'payload': payload,
+                'target_dir': target_dir,
+                'target_path': target,
+                'overwritten': False,
+            }
+        payload = plan.get('payload') if isinstance(plan, dict) else {}
+        target_dir = str((plan or {}).get('target_dir') or os.path.join(LOGS_DIR, 'ManualTests'))
+        target = str((plan or {}).get('target_path') or os.path.join(target_dir, f'ManualTest_{ts}_manual_test.json'))
+        overwritten = bool((plan or {}).get('overwritten'))
         try:
             svc = getattr(self, 'storage_service', None)
         except Exception:
@@ -14512,48 +14177,32 @@ class CSCRefiner:
                 ok = True
         except Exception as e:
             return {'ok': False, 'error': f'{type(e).__name__}: {e}', 'path': target}
-        return {'ok': bool(ok), 'path': target}
+        return {'ok': bool(ok), 'path': target, 'overwritten': overwritten}
 
     def manual_test_main_chat_append(self, payload=None):
         """Best-effort append helper for mirroring manual-test steps into the main chat UI."""
-        p = payload if isinstance(payload, dict) else {}
-        role = str((p or {}).get("role") or "sys").strip().lower()
-        if role not in {"user", "bot", "sys"}:
-            role = "sys"
-        text = str((p or {}).get("text") or "")
-        html_text = str((p or {}).get("html") or "")
-        cgi_bar = bool((p or {}).get("cgi_bar", False))
-        answer_lang = str((p or {}).get("answer_lang") or "").strip().lower()
-        if answer_lang not in {"de", "en"}:
-            answer_lang = ""
-
-        csc = (p or {}).get("csc")
-        if not isinstance(csc, (dict, list, str, int, float, bool)) and csc is not None:
+        plan = None
+        if _manual_test_runtime_seam_mod is not None and hasattr(_manual_test_runtime_seam_mod, "manual_test_main_chat_append_plan"):
             try:
-                csc = str(csc)
+                plan = _manual_test_runtime_seam_mod.manual_test_main_chat_append_plan(payload)  # type: ignore[attr-defined]
             except Exception:
-                csc = None
+                plan = None
+        if not isinstance(plan, dict):
+            try:
+                _txt = str((payload or {}).get("text") or "")
+            except Exception:
+                _txt = ""
+            plan = {"ok": True, "role": "sys", "js": f"addMsg('sys', {json.dumps(_txt, ensure_ascii=False)});"}
 
         win = getattr(self, "main_win", None)
         if win is None:
             return {"ok": False, "error": "main_win unavailable"}
 
         try:
-            if role == "bot":
-                content = html_text if html_text else text
-                opts = {"answerLang": answer_lang} if answer_lang else {}
-                js = (
-                    f"addMsg('bot', {json.dumps(str(content or ''), ensure_ascii=False)}, "
-                    f"{'true' if cgi_bar else 'false'}, "
-                    f"{json.dumps(csc, ensure_ascii=False)}, "
-                    f"{json.dumps(opts, ensure_ascii=False)});"
-                )
-            elif role == "user":
-                content = text if text else html_text
-                js = f"addMsg('user', {json.dumps(str(content or ''), ensure_ascii=False)});"
-            else:
-                content = text if text else html_text
-                js = f"addMsg('sys', {json.dumps(str(content or ''), ensure_ascii=False)});"
+            js = str((plan or {}).get("js") or "")
+            role = str((plan or {}).get("role") or "sys")
+            if not js:
+                return {"ok": False, "error": "manual_test_main_chat_append_js_missing"}
             win.evaluate_js(js)
             return {"ok": True, "role": role}
         except Exception as e:
@@ -14561,23 +14210,29 @@ class CSCRefiner:
 
     def manual_test_request_stop(self, payload=None):
         """Request stop for the running panel-side manual-test runner."""
-        p = payload if isinstance(payload, dict) else {}
-        lang = str((p or {}).get("lang") or "").strip().lower()
-        msg = "Stop requested (monitor)." if lang == "en" else "Stop angefordert (Monitor)."
         try:
             win = getattr(self, "panel_win", None)
             if win is None:
                 return {"ok": False, "error": "panel_win unavailable"}
-            js = (
-                "(function(){"
-                "try{"
-                "if(!window.__manualTestRunner){return {ok:false,error:'manual_test_runner unavailable'};}"
-                "window.__manualTestRunner.stop = true;"
-                f"if(typeof _mtLog==='function'){{_mtLog({json.dumps(msg, ensure_ascii=False)});}}"
-                "return {ok:true,running:!!window.__manualTestRunner.running};"
-                "}catch(e){return {ok:false,error:String(e&&e.message?e.message:e)};}"
-                "})();"
-            )
+            plan = None
+            if _manual_test_runtime_seam_mod is not None and hasattr(_manual_test_runtime_seam_mod, "manual_test_request_stop_plan"):
+                try:
+                    plan = _manual_test_runtime_seam_mod.manual_test_request_stop_plan(payload)  # type: ignore[attr-defined]
+                except Exception:
+                    plan = None
+            js = str((plan or {}).get("js") or "")
+            if not js:
+                msg = "Stop requested (monitor)." if str((payload or {}).get("lang") or "").strip().lower() == "en" else "Stop angefordert (Monitor)."
+                js = (
+                    "(function(){"
+                    "try{"
+                    "if(!window.__manualTestRunner){return {ok:false,error:'manual_test_runner unavailable'};}"
+                    "window.__manualTestRunner.stop = true;"
+                    f"if(typeof _mtLog==='function'){{_mtLog({json.dumps(msg, ensure_ascii=False)});}}"
+                    "return {ok:true,running:!!window.__manualTestRunner.running};"
+                    "}catch(e){return {ok:false,error:String(e&&e.message?e.message:e)};}"
+                    "})();"
+                )
             out = win.evaluate_js(js)
             if isinstance(out, dict):
                 if bool(out.get("ok", True)):
@@ -14594,6 +14249,16 @@ class CSCRefiner:
             pass
 
     def _bind_manual_test_monitor_window_events(self, win):
+        try:
+            if _manual_test_monitor_runtime_mod is not None:
+                _manual_test_monitor_runtime_mod.bind_window_events(
+                    seam_mod=_manual_test_monitor_seam_mod,
+                    win=win,
+                    closed_handler=getattr(self, 'on_manual_test_monitor_closed', None),
+                )
+                return
+        except Exception:
+            pass
         if not win:
             return
         evs = getattr(win, 'events', None)
@@ -14612,24 +14277,31 @@ class CSCRefiner:
         except Exception:
             pass
         try:
-            self.manual_test_monitor_state = {
-                'scenario': '',
-                'status': 'idle',
-                'summary': '-',
-                'events': [],
-            }
-        except Exception:
-            pass
-        try:
+            plan = (
+                _manual_test_monitor_runtime_mod.build_create_window_plan(
+                    seam_mod=_manual_test_monitor_seam_mod,
+                    html_manual_test_monitor=HTML_MANUAL_TEST_MONITOR,
+                    js_api_obj=(getattr(self, 'panel_bridge', None) or self),
+                )
+                if _manual_test_monitor_runtime_mod is not None
+                else {}
+            )
+            if bool((plan or {}).get('reset_state_before_create', True)):
+                self.manual_test_monitor_state = (
+                    _manual_test_monitor_runtime_mod.build_initial_state(seam_mod=_manual_test_monitor_seam_mod)
+                    if _manual_test_monitor_runtime_mod is not None
+                    else {'scenario': '', 'status': 'idle', 'summary': '-', 'events': []}
+                )
+            kwargs = (plan or {}).get('kwargs') or {}
             self.manual_test_monitor_win = webview.create_window(
-                "Comm-SCI Manual Test Monitor",
-                html=HTML_MANUAL_TEST_MONITOR,
-                width=760,
-                height=700,
-                resizable=True,
-                hidden=True,
-                on_top=False,
-                js_api=(getattr(self, 'panel_bridge', None) or self),
+                str(kwargs.get('title') or "Comm-SCI Manual Test Monitor"),
+                html=str(kwargs.get('html') or HTML_MANUAL_TEST_MONITOR),
+                width=int(kwargs.get('width', 760) or 760),
+                height=int(kwargs.get('height', 700) or 700),
+                resizable=bool(kwargs.get('resizable', True)),
+                hidden=bool(kwargs.get('hidden', True)),
+                on_top=bool(kwargs.get('on_top', False)),
+                js_api=(kwargs.get('js_api') or (getattr(self, 'panel_bridge', None) or self)),
             )
             try:
                 self._bind_manual_test_monitor_window_events(self.manual_test_monitor_win)
@@ -14661,115 +14333,71 @@ class CSCRefiner:
                 pass
         return {'ok': True}
 
+    def _manual_test_monitor_apply_named_state_plan(self, fn_name: str, **kwargs):
+        try:
+            seam = _manual_test_monitor_seam_mod
+            if seam is None:
+                return {'ok': False, 'error': 'manual_test_monitor_seam unavailable'}
+            fn = getattr(seam, str(fn_name or ''), None)
+            if not callable(fn):
+                return {'ok': False, 'error': f'{str(fn_name or "").strip() or "state_plan"} unavailable'}
+            plan = fn(state=getattr(self, 'manual_test_monitor_state', None), **kwargs)
+            return self._manual_test_monitor_apply_seam_state_plan(plan)
+        except Exception as e:
+            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+
     def manual_test_monitor_show(self, payload=None):
         try:
+            win = getattr(self, 'manual_test_monitor_win', None)
             def _ensure_window():
-                _win = getattr(self, 'manual_test_monitor_win', None)
-                if _win is None:
+                _w = getattr(self, 'manual_test_monitor_win', None)
+                if _w is None:
                     self._create_manual_test_monitor()
-                    _win = getattr(self, 'manual_test_monitor_win', None)
-                return _win
-
-            win = _ensure_window()
-            if win is None:
-                return {'ok': False, 'error': 'manual_test_monitor_win unavailable'}
-
-            show_ok = False
-            try:
-                if hasattr(win, 'show'):
-                    win.show()
-                show_ok = True
-            except Exception as e:
-                show_ok = False
-
-            if not show_ok:
-                try:
-                    self.manual_test_monitor_win = None
-                except Exception:
-                    pass
-                win = _ensure_window()
-                if win is None:
-                    return {'ok': False, 'error': 'manual_test_monitor_win unavailable'}
-                try:
-                    if hasattr(win, 'show'):
-                        win.show()
-                    show_ok = True
-                except Exception as e2:
-                    return {'ok': False, 'error': f"{type(e2).__name__}: {e2}"}
-
-            try:
-                if hasattr(win, 'bring_to_front'):
-                    win.bring_to_front()
-            except Exception:
-                pass
-            # Push current state if available
-            try:
-                st = getattr(self, 'manual_test_monitor_state', None) or {}
-                import json as _json
-                self._manual_test_monitor_eval(f"mtmReplace({_json.dumps(st, ensure_ascii=False)});")
-            except Exception:
-                pass
-            return {'ok': True}
+                    _w = getattr(self, 'manual_test_monitor_win', None)
+                return _w
+            if _manual_test_monitor_runtime_mod is None:
+                return {'ok': False, 'error': 'manual_test_monitor_runtime unavailable'}
+            return _manual_test_monitor_runtime_mod.show_monitor(
+                seam_mod=_manual_test_monitor_seam_mod,
+                win=win,
+                ensure_window_fn=_ensure_window,
+                clear_window_fn=lambda: setattr(self, 'manual_test_monitor_win', None),
+                eval_fn=self._manual_test_monitor_eval,
+                state=(getattr(self, 'manual_test_monitor_state', None) or {}),
+            )
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
     def manual_test_monitor_hide(self):
         try:
             win = getattr(self, 'manual_test_monitor_win', None)
-            if win is None:
-                return {'ok': True, 'hidden': True, 'skipped': True}
-            try:
-                if hasattr(win, 'hide'):
-                    win.hide()
-                elif hasattr(win, 'minimize'):
-                    win.minimize()
-            except Exception:
-                pass
-            return {'ok': True, 'hidden': True}
+            if _manual_test_monitor_runtime_mod is None:
+                return {'ok': False, 'error': 'manual_test_monitor_runtime unavailable'}
+            return _manual_test_monitor_runtime_mod.hide_monitor(
+                seam_mod=_manual_test_monitor_seam_mod,
+                win=win,
+            )
         except Exception as e:
             return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
 
     def manual_test_monitor_reset(self, payload=None):
-        payload = payload or {}
-        try:
-            if _manual_test_monitor_seam_mod is None:
-                return {'ok': False, 'error': 'manual_test_monitor_seam unavailable'}
-            return self._manual_test_monitor_apply_seam_state_plan(
-                _manual_test_monitor_seam_mod.manual_test_monitor_reset_state_plan(
-                    state=getattr(self, 'manual_test_monitor_state', None),
-                    payload=payload,
-                )
-            )
-        except Exception as e:
-            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+        return self._manual_test_monitor_apply_named_state_plan(
+            'manual_test_monitor_reset_state_plan',
+            payload=(payload or {}),
+        )
 
     def manual_test_monitor_append(self, entry):
-        try:
-            if _manual_test_monitor_seam_mod is None:
-                return {'ok': False, 'error': 'manual_test_monitor_seam unavailable'}
-            return self._manual_test_monitor_apply_seam_state_plan(
-                _manual_test_monitor_seam_mod.manual_test_monitor_append_state_plan(
-                    state=getattr(self, 'manual_test_monitor_state', None),
-                    entry=entry,
-                    max_events=1000,
-                )
-            )
-        except Exception as ex:
-            return {'ok': False, 'error': f"{type(ex).__name__}: {ex}"}
+        return self._manual_test_monitor_apply_named_state_plan(
+            'manual_test_monitor_append_state_plan',
+            entry=entry,
+            max_events=1000,
+        )
 
     def manual_test_monitor_set_header(self, payload=None):
-        payload = payload or {}
-        try:
-            if _manual_test_monitor_seam_mod is None:
-                return {'ok': False, 'error': 'manual_test_monitor_seam unavailable'}
-            return self._manual_test_monitor_apply_seam_state_plan(
-                _manual_test_monitor_seam_mod.manual_test_monitor_set_header_state_plan(
-                    state=getattr(self, 'manual_test_monitor_state', None),
-                    payload=payload,
-                )
-            )
-        except Exception as e:
-            return {'ok': False, 'error': f"{type(e).__name__}: {e}"}
+        return self._manual_test_monitor_apply_named_state_plan(
+            'manual_test_monitor_set_header_state_plan',
+            payload=(payload or {}),
+        )
 
     def get_ui(self):
         """Return a UI snapshot for the Panel.
@@ -14925,34 +14553,18 @@ class CSCRefiner:
 
         Safe, local-only, and must not throw.
         """
-        try:
-            lim = int(limit) if limit is not None else 200
-        except Exception:
-            lim = 200
-        if lim <= 0:
-            lim = 200
-
-        try:
-            base = globals().get('CHAT_LOG_DIR')
-            if not base:
-                return {'ok': True, 'logs': []}
-            svc = getattr(self, 'storage_service', None)
-            if svc is not None and hasattr(svc, 'list_json_filenames'):
-                return {'ok': True, 'logs': svc.list_json_filenames(str(base), limit=lim)}
-
-            p = pathlib.Path(base)
-            if not p.exists() or not p.is_dir():
-                return {'ok': True, 'logs': []}
-            files = []
-            for f in p.iterdir():
-                if f.is_file() and f.name.lower().endswith('.json'):
-                    files.append(f.name)
-            files.sort(reverse=True)
-            if len(files) > lim:
-                files = files[:lim]
-            return {'ok': True, 'logs': files}
-        except Exception as e:
-            return {'ok': False, 'error': f'{type(e).__name__}: {e}', 'logs': []}
+        if _chat_log_access_runtime is not None:
+            try:
+                fn = getattr(_chat_log_access_runtime, 'list_chat_logs', None)
+                if callable(fn):
+                    return fn(
+                        self,
+                        limit=limit,
+                        chat_log_dir=str(globals().get('CHAT_LOG_DIR') or ''),
+                    )
+            except Exception:
+                pass
+        return {'ok': False, 'error': 'chat_log_access_runtime unavailable', 'logs': []}
 
     def load_chat_log(self, filename: str, fork: bool = True):
         """Load a chat log from Logs/Chats by filename.
@@ -14960,41 +14572,19 @@ class CSCRefiner:
         Prevents path traversal by resolving under CHAT_LOG_DIR.
         Delegates to load_log_from_path(..., fork=...).
         """
-        try:
-            name = str(filename or '').strip()
-            if not name:
-                return {'ok': False, 'error': 'missing_filename'}
-
-            base = globals().get('CHAT_LOG_DIR')
-            if not base:
-                return {'ok': False, 'error': 'chat_log_dir_missing'}
-
-            svc = getattr(self, 'storage_service', None)
-            candidate = None
-            if svc is not None and hasattr(svc, 'safe_resolve_in_dir'):
-                candidate = svc.safe_resolve_in_dir(str(base), name)
-            if not candidate:
-                import os
-                base_abs = os.path.abspath(base)
-                candidate = os.path.abspath(os.path.join(base_abs, os.path.basename(name)))
-                if not candidate.startswith(base_abs):
-                    return {'ok': False, 'error': 'path_traversal_blocked'}
-
-            exists = False
-            if svc is not None and hasattr(svc, 'exists'):
-                exists = bool(svc.exists(candidate))
-            else:
-                import os
-                exists = os.path.exists(candidate)
-            if not exists:
-                return {'ok': False, 'error': 'file_not_found'}
-
-            # Prefer bound method on self (unit tests), else call module helper.
-            if hasattr(self, 'load_log_from_path'):
-                return self.load_log_from_path(candidate, fork=bool(fork))
-            return {'ok': False, 'error': 'load_log_from_path_unavailable'}
-        except Exception as e:
-            return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+        if _chat_log_access_runtime is not None:
+            try:
+                fn = getattr(_chat_log_access_runtime, 'load_chat_log', None)
+                if callable(fn):
+                    return fn(
+                        self,
+                        filename=str(filename or ''),
+                        fork=bool(fork),
+                        chat_log_dir=str(globals().get('CHAT_LOG_DIR') or ''),
+                    )
+            except Exception:
+                pass
+        return {'ok': False, 'error': 'chat_log_access_runtime unavailable'}
 
 
     def _normalize_provider_id(self, provider: str) -> str:
@@ -15562,6 +15152,42 @@ class CSCRefiner:
             self._ui_refresh_panel()
         except Exception:
             pass
+
+    def set_hide_verification_route_lines(self, enabled=None, *, scope: str = "provider", provider: str = ""):
+        """Runtime toggle for verification-route display policy (manual-test seam).
+
+        - scope='provider': set/clear providers.<id>.hide_verification_route_lines
+        - scope='root': set/clear root hide_verification_route_lines
+        - enabled in {True,False}; None clears the key at the chosen scope
+        """
+        try:
+            conf = getattr(cfg, "config", None)
+            if not isinstance(conf, dict):
+                return {"ok": False, "error": "config_unavailable"}
+            p = str(provider or "").strip().lower() or str(self._active_provider() or "gemini").strip().lower() or "gemini"
+            p = self._normalize_provider_id(p)
+            if _output_verification_route_policy_renderer is None or not hasattr(
+                _output_verification_route_policy_renderer,
+                "update_hide_verification_route_lines_config",
+            ):
+                return {"ok": False, "error": "verification_route_policy_unavailable"}
+            updated = _output_verification_route_policy_renderer.update_hide_verification_route_lines_config(  # type: ignore[attr-defined]
+                conf,
+                enabled=enabled,
+                scope=str(scope or "provider"),
+                provider=str(p or "gemini"),
+            )
+            if not isinstance(updated, dict) or not bool(updated.get("ok", False)):
+                return updated if isinstance(updated, dict) else {"ok": False, "error": "policy_update_failed"}
+            effective = bool(self._hide_verification_route_lines_in_chat())
+            try:
+                self._ui_refresh_panel()
+            except Exception:
+                pass
+            updated["effective"] = effective
+            return updated
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     def _trigger_reconnect(self, msg):
         self.ready_status = {"status": False, "msg": msg}
@@ -16974,6 +16600,178 @@ class CSCRefiner:
 
         return chat_path, audit_path
 
+    def _render_export_preview_window_html(self, payload: dict | None) -> str:
+        """Render standalone HTML for the export-preview helper window."""
+        p = payload if isinstance(payload, dict) else {}
+        rel = str(p.get("relative_path") or p.get("name") or "").strip()
+        kind = str(p.get("kind") or "").strip()
+        preview = str(p.get("preview") or "")
+        truncated = bool(p.get("truncated", False))
+        trunc_note = (
+            "<div class='meta warn'>Vorschau gekürzt (max. Zeichen erreicht).</div>"
+            if truncated
+            else ""
+        )
+        safe_rel = html.escape(rel or "-")
+        safe_kind = html.escape(kind or "-")
+        safe_preview = html.escape(preview)
+        return (
+            "<!doctype html>"
+            "<html><head><meta charset='utf-8'>"
+            "<title>Log-Vorschau</title>"
+            "<style>"
+            "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;"
+            "margin:14px;background:#f7f7f7;color:#111;}"
+            ".card{border:1px solid #bbb;background:#fff;padding:12px;border-radius:10px;}"
+            ".head{font-weight:700;margin-bottom:8px;}"
+            ".meta{font-size:12px;color:#444;margin-bottom:4px;}"
+            ".warn{color:#8a5a00;}"
+            "pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-width:100%;"
+            "box-sizing:border-box;overflow-x:auto;background:#f6f8fa;padding:10px;border-radius:10px;"
+            "font-size:11px;border:1px solid #e0e0e0;margin-top:8px;}"
+            "</style></head><body>"
+            "<div class='card'>"
+            "<div class='head'>Datei-Vorschau</div>"
+            "<div class='meta'>Pfad: <code>" + safe_rel + "</code></div>"
+            "<div class='meta'>Typ: <code>" + safe_kind + "</code></div>"
+            + trunc_note
+            + "<pre>"
+            + safe_preview
+            + "</pre></div></body></html>"
+        )
+
+    def preview_export_file(self, path: str, max_chars: int = 24000):
+        """Return a safe in-app preview for exported chat/audit JSON files.
+
+        max_chars <= 0 means: no truncation, return full file content.
+        """
+        try:
+            raw = str(path or "").strip()
+            if not raw:
+                return {"ok": False, "error": "missing_path"}
+
+            try:
+                lim_raw = int(max_chars)
+            except Exception:
+                lim_raw = 24000
+            lim = None if int(lim_raw) <= 0 else max(1000, min(int(lim_raw), 5_000_000))
+
+            p = pathlib.Path(raw).expanduser()
+            if not p.is_absolute():
+                p = pathlib.Path(os.getcwd()) / p
+            p = p.resolve()
+            project_base = pathlib.Path(str(globals().get("PROJECT_DIR") or os.getcwd())).resolve()
+
+            roots = []
+            try:
+                roots.append(("chat", pathlib.Path(str(CHAT_LOG_DIR)).resolve()))
+            except Exception:
+                pass
+            try:
+                roots.append(("audit", pathlib.Path(str(AUDIT_LOG_DIR)).resolve()))
+            except Exception:
+                pass
+
+            kind = ""
+            for k, base in roots:
+                try:
+                    _ = p.relative_to(base)
+                    kind = k
+                    break
+                except Exception:
+                    continue
+            if not kind:
+                return {"ok": False, "error": "path_not_allowed"}
+            if not p.exists() or not p.is_file():
+                return {"ok": False, "error": "file_not_found"}
+
+            text = p.read_text(encoding="utf-8", errors="replace")
+            pretty = text
+            if str(p.suffix or "").lower() == ".json":
+                try:
+                    parsed = json.loads(text)
+                    pretty = json.dumps(parsed, indent=2, ensure_ascii=False)
+                except Exception:
+                    pretty = text
+
+            if lim is None:
+                truncated = False
+                preview = pretty
+            else:
+                truncated = len(pretty) > lim
+                preview = pretty[:lim]
+
+            try:
+                rel = os.path.relpath(str(p), start=str(project_base))
+                if str(rel).startswith(".."):
+                    if kind == "audit":
+                        rel = os.path.join("Logs", "Audit", p.name)
+                    else:
+                        rel = os.path.join("Logs", "Chats", p.name)
+            except Exception:
+                rel = p.name
+
+            return {
+                "ok": True,
+                "kind": kind,
+                "path": str(p),
+                "relative_path": str(rel),
+                "name": p.name,
+                "preview": preview,
+                "truncated": bool(truncated),
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def open_export_preview(self, path: str, max_chars: int = 0):
+        """Open exported chat/audit file preview in a dedicated helper window."""
+        try:
+            # Window preview must always show the complete file (no truncation).
+            _ = max_chars
+            out = self.preview_export_file(path, max_chars=0)
+            if not isinstance(out, dict):
+                return {"ok": False, "error": "preview_failed"}
+            if not bool(out.get("ok", False)):
+                return out
+
+            html_doc = self._render_export_preview_window_html(out)
+            rel = str(out.get("relative_path") or out.get("name") or "Log")
+
+            try:
+                old = getattr(self, "export_preview_win", None)
+                if old is not None and hasattr(old, "destroy"):
+                    old.destroy()
+            except Exception:
+                pass
+            self.export_preview_win = None
+
+            title = f"Comm-SCI Log-Vorschau · {os.path.basename(rel)}"
+            self.export_preview_win = webview.create_window(
+                title,
+                html=html_doc,
+                width=920,
+                height=760,
+                resizable=True,
+                hidden=False,
+                on_top=False,
+                js_api=(getattr(self, "main_bridge", None) or self),
+            )
+            try:
+                win = getattr(self, "export_preview_win", None)
+                if win is not None and hasattr(win, "bring_to_front"):
+                    win.bring_to_front()
+            except Exception:
+                pass
+
+            return {
+                "ok": True,
+                "relative_path": rel,
+                "kind": str(out.get("kind") or ""),
+                "truncated": bool(out.get("truncated", False)),
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     def _provider_snapshot(self) -> dict:
         """Sanitized provider config snapshot (no secrets). Best-effort."""
         try:
@@ -17358,6 +17156,14 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
     """B7: Load a legacy chat log JSON from disk into history.
     If fork=True, create a fresh session_id/session_start and keep loaded history.
     """
+    if _chat_log_loader_runtime is not None:
+        try:
+            fn = getattr(_chat_log_loader_runtime, 'load_log_from_path', None)
+            if callable(fn):
+                return fn(self, path, fork=bool(fork))
+        except Exception:
+            pass
+
     try:
         p = str(path)
         with open(p, 'r', encoding='utf-8') as f:
@@ -17441,97 +17247,6 @@ def load_log_from_path(self, path: str, *, fork: bool = False):
         return {'ok': True, 'history_len': len(self.history), 'forked': bool(fork)}
     except Exception as e:
         return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
-    def get_ui(self):
-        data = gov.get_ui_data()
-        # Enrich with provider/model lists for panel dropdowns
-        try:
-            pr = getattr(self, 'provider_router', None)
-            curp = 'gemini'
-            if pr is not None and hasattr(pr, 'get_active_provider'):
-                curp = (pr.get_active_provider() or 'gemini').strip().lower()
-            else:
-                curp = (getattr(cfg, 'get_active_provider', lambda: 'gemini')() or 'gemini').strip().lower()
-        except Exception:
-            curp = 'gemini'
-        try:
-            data['current_provider'] = curp
-            data['providers'] = ['gemini', 'openrouter', 'huggingface']
-            data['model_hint'] = ''
-        except Exception:
-            pass
-
-        # Determine model for current provider
-        try:
-            cm = ''
-            if hasattr(cfg, 'get_provider_model'):
-                cm = (cfg.get_provider_model(curp) or '').strip()
-            if not cm:
-                cm = (cfg_get_model() or '').strip()
-            data['current_model'] = cm
-        except Exception:
-            pass
-        # Available models list (must stay fast and local: no network here)
-        try:
-            models = []
-            if curp == 'gemini':
-                # Use warmed in-memory cache only; avoid live fetch in get_ui().
-                models = self.get_available_models(curp)
-            elif curp == 'openrouter':
-                # Use warmed in-memory cache only; avoid live fetch in get_ui().
-                models = self.get_available_models(curp)
-            elif curp == 'huggingface':
-                pr = getattr(self, 'provider_router', None)
-                models = []
-                # UI controls for HF catalog
-                data['hf_provider_filter_options'] = ['all', 'zai-org', 'novita', 'cerebras', 'together', 'groq', 'fireworks', 'sambanova', 'hyperbolic', 'hf-inference']
-                data['hf_catalog_default_top_n'] = int(getattr(self, 'hf_catalog_top_n', 200) or 200)
-                data['hf_catalog_default_provider_filter'] = (getattr(self, 'hf_catalog_provider_filter', 'all') or 'all')
-
-                # 1) Use warmed in-memory cache only; avoid live fetch in get_ui().
-                models = self.get_available_models(curp)
-
-                # 2) Fallback: configured HF models list (local config/key file)
-                if not models:
-                    try:
-                        if pr is not None and hasattr(pr, 'get_huggingface_models_from_config'):
-                            models = pr.get_huggingface_models_from_config() or []
-                            data['huggingface_models_meta'] = {'source': 'config', 'count': len(models)}
-                    except Exception:
-                        models = []
-
-                if not models:
-                    models = ['zai-org/GLM-4.7:cerebras']
-                    data['model_hint'] = ("Hugging Face: keine Modellliste konfiguriert oder abrufbar. "
-                                          "Nutze 'HF Catalog (Top N)' oder trage unter providers.huggingface.models "
-                                          "in Comm-SCI-API-Keys.json deine Wunschmodelle ein.")
-            data['available_models'] = models
-        except Exception:
-            data['available_models'] = []
-
-        return data
-    
-    def remote_cmd(self, cmd):
-        """Inject a command into the main UI input and trigger send() via JS."""
-        if not getattr(self, 'main_win', None):
-            return {'ok': False, 'error': 'no_main_win'}
-        try:
-            cmd_s = str(cmd or '')
-            if self._is_qc_override_modal_active():
-                if cmd_s.strip() == "QC Override":
-                    self._bring_qc_override_to_front()
-                    return {'ok': True, 'already_open': True}
-                self._bring_qc_override_to_front()
-                try:
-                    self.log_event('qc_override_modal_block', {'source': 'remote_cmd', 'cmd': cmd_s})
-                except Exception:
-                    pass
-                return {'ok': False, 'error': 'qc_override_modal_blocked'}
-            return {'ok': bool(self._ui_remote_input(cmd_s))}
-        except Exception as e:
-            return {'ok': False, 'error': str(e)}
-
-
-
 # ----------------------------
 
 # ----------------------------
@@ -17564,6 +17279,23 @@ def _control_layer_alert_html(
             msg = msg.replace("[[ACTION:SWITCH_FREE_MODEL]]", "").strip()
     except Exception:
         _action_switch_free = False
+    tip = ""
+    try:
+        tip = html.escape(_control_layer_tooltip_text(lang=lang, severity=severity), quote=True)
+    except Exception:
+        tip = ""
+    try:
+        if _output_control_layer_note_renderer is not None and hasattr(_output_control_layer_note_renderer, "render_control_layer_alert_html"):
+            return _output_control_layer_note_renderer.render_control_layer_alert_html(
+                message=str(msg or ""),
+                title=str(title or "CONTROL LAYER ALERT"),
+                severity=str(severity or "error"),
+                tooltip_text=str(tip or ""),
+                action_switch_free=bool(_action_switch_free),
+            )
+    except Exception:
+        pass
+
     safe = html.escape(msg)
     safe = safe.replace("\n", "<br>")
     # Use existing .csc-warning styling, but tint for errors.
@@ -17589,10 +17321,6 @@ def _control_layer_alert_html(
         t = html.escape(str(title or "CONTROL LAYER ALERT"))
     except Exception:
         t = "CONTROL LAYER ALERT"
-    try:
-        tip = html.escape(_control_layer_tooltip_text(lang=lang, severity=severity), quote=True)
-    except Exception:
-        tip = ""
     tip_attr = f" data-u-title='{tip}' style='cursor:help;'" if tip else ""
     return (
         f"<details class='csc-warning' open style='{style}'{tip_attr}>"
@@ -17664,10 +17392,338 @@ def _safe_html(self, context: str, fn):
 
 
 def _build_profile_switch_audit_line(command: str, from_profile: str, to_profile: str) -> str:
+    try:
+        if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "build_profile_switch_audit_line"):
+            out = _output_command_response_catalog.build_profile_switch_audit_line(  # type: ignore[attr-defined]
+                str(command or ""),
+                str(from_profile or ""),
+                str(to_profile or ""),
+            )
+            if isinstance(out, str) and out.strip():
+                return out
+    except Exception:
+        pass
     return (
         f"Profile-Switch-Audit: command={command} · from={from_profile} · "
         f"to={to_profile} · rule=explicit-standalone-only"
     )
+
+
+def _resolve_post_state_command_html(
+    self,
+    *,
+    cmd: str,
+    timestamp: str,
+    prev_profile_for_audit: str,
+) -> str:
+    """Resolve deterministic HTML output for commands after state mutation."""
+    cmd_s = str(cmd or "")
+    current_profile = str(getattr(self.gov_state, "active_profile", "") or "")
+
+    def _set_sci_pending() -> None:
+        try:
+            self.gov_state.sci_pending = True
+        except Exception:
+            pass
+
+    try:
+        if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "resolve_sci_on_command_html"):
+            out = _output_command_response_catalog.resolve_sci_on_command_html(  # type: ignore[attr-defined]
+                cmd=cmd_s,
+                lang=str(self._lang() or ""),
+                set_sci_pending_fn=_set_sci_pending,
+                render_sci_menu_html_fn=self._render_sci_menu_html,
+            )
+            if isinstance(out, dict):
+                html_content = out.get("html")
+                if isinstance(html_content, str) and html_content.strip():
+                    return html_content
+    except Exception:
+        pass
+
+    try:
+        if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "resolve_comm_overlay_command_html"):
+            out = _output_command_response_catalog.resolve_comm_overlay_command_html(  # type: ignore[attr-defined]
+                cmd=cmd_s,
+                current_profile=current_profile,
+                prev_profile_for_audit=str(prev_profile_for_audit or ""),
+                render_comm_state_html_fn=self._render_comm_state_html,
+            )
+            if isinstance(out, dict):
+                html_content = out.get("html")
+                if isinstance(html_content, str) and html_content.strip():
+                    return html_content
+    except Exception:
+        pass
+
+    try:
+        if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "resolve_comm_validate_command_html"):
+            out = _output_command_response_catalog.resolve_comm_validate_command_html(  # type: ignore[attr-defined]
+                cmd=cmd_s,
+                render_comm_state_html_fn=self._render_comm_state_html,
+            )
+            if isinstance(out, dict):
+                html_content = out.get("html")
+                if isinstance(html_content, str) and html_content.strip():
+                    return html_content
+    except Exception:
+        pass
+
+    try:
+        if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "resolve_comm_anchor_toggle_command_html"):
+            out = _output_command_response_catalog.resolve_comm_anchor_toggle_command_html(  # type: ignore[attr-defined]
+                cmd=cmd_s,
+                render_comm_state_html_fn=self._render_comm_state_html,
+            )
+            if isinstance(out, dict):
+                html_content = out.get("html")
+                if isinstance(html_content, str) and html_content.strip():
+                    return html_content
+    except Exception:
+        pass
+
+    try:
+        if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "resolve_dynamic_one_shot_command_html"):
+            out = _output_command_response_catalog.resolve_dynamic_one_shot_command_html(  # type: ignore[attr-defined]
+                cmd=cmd_s,
+                render_comm_state_html_fn=self._render_comm_state_html,
+            )
+            if isinstance(out, dict):
+                html_content = out.get("html")
+                if isinstance(html_content, str) and html_content.strip():
+                    return html_content
+    except Exception:
+        pass
+
+    try:
+        if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "resolve_post_state_command_html"):
+            out = _output_command_response_catalog.resolve_post_state_command_html(  # type: ignore[attr-defined]
+                cmd=cmd_s,
+                current_profile=current_profile,
+                prev_profile_for_audit=str(prev_profile_for_audit or ""),
+                timestamp=str(timestamp or ""),
+                lang=str(self._lang() or ""),
+                set_sci_pending_fn=_set_sci_pending,
+                render_profile_switch_control_html_fn=self._render_profile_switch_control_html,
+                render_sci_menu_html_fn=self._render_sci_menu_html,
+                render_comm_state_html_fn=self._render_comm_state_html,
+            )
+            if isinstance(out, dict):
+                html_content = out.get("html")
+                if isinstance(html_content, str):
+                    return html_content
+    except Exception:
+        pass
+
+    comm_start_audit_line = ""
+    if cmd_s == "Comm Start" and str(current_profile) != str(prev_profile_for_audit):
+        comm_start_audit_line = _build_profile_switch_audit_line(
+            "Comm Start",
+            str(prev_profile_for_audit),
+            str(current_profile),
+        )
+
+    profile_switch_audit_line = ""
+    if cmd_s.startswith("Profile "):
+        profile_switch_audit_line = _build_profile_switch_audit_line(
+            cmd_s,
+            str(prev_profile_for_audit),
+            str(current_profile),
+        )
+
+    if cmd_s.startswith("Profile "):
+        if current_profile in ["Expert", "Sparring"]:
+            _set_sci_pending()
+        html_content = self._render_profile_switch_control_html(
+            str(timestamp or ""),
+            audit_line=profile_switch_audit_line,
+        )
+        if current_profile in ["Expert", "Sparring"]:
+            menu_html = self._render_sci_menu_html(lang=self._lang())
+            html_content = html_content + "\n<div style='margin-top:12px'></div>\n" + menu_html
+        return html_content
+
+    triggered_sci = (cmd_s in ["SCI on", "SCI menu"])
+    if triggered_sci:
+        _set_sci_pending()
+        return self._render_sci_menu_html(lang=self._lang())
+
+    return self._render_comm_state_html(audit_line=comm_start_audit_line)
+
+
+def _resolve_comm_audit_command_result(self, *, cmd: str, timestamp: str):
+    """Delegate Comm-Audit command rendering to command catalog (preferred path)."""
+    try:
+        if _output_command_response_catalog is None or not hasattr(_output_command_response_catalog, "build_comm_audit_command_result"):
+            return None
+    except Exception:
+        return None
+
+    def _export_comm_audit(event_payload: dict):
+        try:
+            # ENONLY requirement: Comm Audit should export audit only.
+            return self.export(audit_event=event_payload, audit_only=True)
+        except Exception:
+            try:
+                try:
+                    if hasattr(self, 'export_audit_v2'):
+                        self.export_audit_v2(audit_event=event_payload, audit_only=True)
+                    else:
+                        self.export(audit_event=event_payload, audit_only=True)
+                except Exception:
+                    try:
+                        self.export(audit_event=event_payload)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return (None, None)
+
+    def _scan_rows(sample_msgs, hist_msgs):
+        if _compliance_scan is None:
+            return []
+        return _compliance_scan.scan_message_compliance_best_effort(
+            sample=sample_msgs,
+            history=hist_msgs,
+            build_route_ctx=_build_route_ctx,
+            api=self,
+            gov=gov,
+        )
+
+    def _append_audit_history(bot_text: str):
+        try:
+            self.history.append({
+                "role": "bot",
+                "content": str(bot_text or ""),
+                "ts": datetime.now().isoformat(),
+                "csc": None,
+            })
+        except Exception:
+            pass
+
+    try:
+        _audit_window = int((getattr(gov, 'data', {}) or {}).get('global_defaults', {}).get('comm_audit', {}).get('window', 5) or 5)
+    except Exception:
+        _audit_window = 5
+    _project_base = str(globals().get("PROJECT_DIR") or os.getcwd())
+
+    try:
+        return _output_command_response_catalog.build_comm_audit_command_result(  # type: ignore[attr-defined]
+            cmd=str(cmd or "Comm Audit"),
+            timestamp=str(timestamp or ""),
+            now_iso=datetime.now().isoformat(),
+            profile=getattr(getattr(self, 'gov_state', None), 'active_profile', '') or '',
+            overlay=getattr(getattr(self, 'gov_state', None), 'overlay', '') or '',
+            sci_pending=bool(getattr(getattr(self, 'gov_state', None), 'sci_pending', False)),
+            sci_variant=getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '',
+            sci_active=bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False)),
+            history=(getattr(self, 'history', []) or []),
+            last_call_info=(getattr(self, 'last_call_info', {}) or {}),
+            deps_status=(getattr(self, 'deps_status', {}) or {}),
+            comm_audit_window=int(_audit_window or 5),
+            export_audit_fn=_export_comm_audit,
+            scan_rows_fn=_scan_rows,
+            build_route_ctx_fn=lambda user_raw, is_command: _build_route_ctx(
+                self,
+                user_raw=str(user_raw or ""),
+                is_command=bool(is_command),
+            ),
+            check_self_debunking_fn=lambda text, profile_name: gov.check_self_debunking(text, profile_name),
+            check_verification_route_gate_fn=lambda text: gov.check_verification_route_gate(text),
+            append_history_fn=_append_audit_history,
+            cwd=_project_base,
+            session_tokens_in=int(getattr(self, "session_tokens_in", 0) or 0),
+            session_tokens_out=int(getattr(self, "session_tokens_out", 0) or 0),
+        )
+    except Exception:
+        return None
+
+
+def _build_comm_audit_fallback_result(self, *, timestamp: str):
+    """Clear fail-soft fallback when command-catalog path is unavailable."""
+    audit_event = {
+        "event": "comm_audit_called",
+        "ts": datetime.now().isoformat(),
+        "n_last": 25,
+        "profile": getattr(getattr(self, 'gov_state', None), 'active_profile', '') or '',
+        "overlay": getattr(getattr(self, 'gov_state', None), 'overlay', '') or '',
+        "sci": {
+            "pending": bool(getattr(getattr(self, 'gov_state', None), 'sci_pending', False)),
+            "variant": getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '',
+            "active": bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False)),
+        },
+        "last_call": getattr(self, 'last_call_info', {}) or {},
+    }
+
+    audit_path = None
+    try:
+        _chat_path, audit_path = self.export(audit_event=audit_event, audit_only=True)
+    except Exception:
+        try:
+            if hasattr(self, 'export_audit_v2'):
+                self.export_audit_v2(audit_event=audit_event, audit_only=True)
+            else:
+                self.export(audit_event=audit_event, audit_only=True)
+        except Exception:
+            try:
+                self.export(audit_event=audit_event)
+            except Exception:
+                pass
+
+    rel_audit = ""
+    detail = ""
+    _project_base = str(globals().get("PROJECT_DIR") or os.getcwd())
+    if audit_path:
+        try:
+            rel_audit = os.path.relpath(audit_path, start=_project_base)
+            if str(rel_audit).startswith(".."):
+                rel_audit = os.path.join("Logs", "Audit", os.path.basename(audit_path))
+        except Exception:
+            rel_audit = os.path.basename(audit_path)
+        detail = (
+            "<br><a href='#' class='export-file-link' data-export-path='"
+            + html.escape(str(audit_path), quote=True)
+            + "' onclick='return openExportFileFromAnchor(this);'><code>"
+            + html.escape(str(rel_audit))
+            + "</code></a>"
+        )
+
+    dep_warn_html = ""
+    try:
+        ds = getattr(self, 'deps_status', {}) or {}
+        missing = [k for k in ('auditstream', 'rendering_utils', 'compliance_scan') if not (ds.get(k, (False, ''))[0])]
+        if missing:
+            dep_warn_html = (
+                "<div style='margin-top:8px; padding:8px; border:1px solid #d77; background:#fff3f3; border-radius:8px;'>"
+                "<b>Warning:</b> Optional modules missing; fallback paths active: "
+                + html.escape(", ".join(missing))
+                + "</div>"
+            )
+    except Exception:
+        dep_warn_html = ""
+
+    html_content = (
+        "<div style='border:1px solid #bbb; background:#f7f7f7; padding:10px; border-radius:10px; margin:8px 0;'>"
+        f"<b>Comm Audit</b><br>Audit exported.{detail}{dep_warn_html}</div>"
+    )
+    html_content += f'<div class="ts-footer">Response at {html.escape(str(timestamp or ""))}</div>'
+
+    try:
+        bot_txt = "Comm Audit"
+        if rel_audit:
+            bot_txt += f"\nExportiert (Audit): {rel_audit}"
+        self.history.append({"role": "bot", "content": bot_txt, "ts": datetime.now().isoformat(), "csc": None})
+    except Exception:
+        pass
+
+    return {
+        "html": html_content,
+        "t_in": 0,
+        "t_out": 0,
+        "total_in": getattr(self, "session_tokens_in", 0),
+        "total_out": getattr(self, "session_tokens_out", 0),
+        "csc": None,
+    }
 
 
 def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
@@ -17682,256 +17738,23 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
             self.show_qc_override()
         except Exception:
             pass
+        try:
+            if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "build_qc_override_opened_result"):
+                out = _output_command_response_catalog.build_qc_override_opened_result()  # type: ignore[attr-defined]
+                if isinstance(out, dict):
+                    return out
+        except Exception:
+            pass
         return {"html": "<div class='sys'>QC Override dialog opened.</div>", "csc": None}
     if not cmd:
         return None
 
     # Comm Audit: deterministic audit export + lightweight compliance scan (no LLM)
-    if cmd in ("Comm Audit", "Comm Audi"):
-        # tolerate common typo: "Comm Audi"
-        ts_iso = datetime.now().isoformat()
-        audit_event = {
-            "event": "comm_audit_called",
-            "ts": ts_iso,
-            "n_last": 25,
-            "profile": getattr(getattr(self, 'gov_state', None), 'active_profile', '') or '',
-            "overlay": getattr(getattr(self, 'gov_state', None), 'overlay', '') or '',
-            "sci": {
-                "pending": bool(getattr(getattr(self, 'gov_state', None), 'sci_pending', False)),
-                "variant": getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or '',
-                "active": bool(getattr(getattr(self, 'gov_state', None), 'sci_active', False)),
-            },
-        }
-
-        chat_path, audit_path = (None, None)
-
-        # Include last provider call info (best-effort; does not trigger LLM)
-        try:
-            audit_event['last_call'] = getattr(self, 'last_call_info', {}) or {}
-        except Exception:
-            pass
-
-        try:
-            # ENONLY requirement: Comm Audit should export audit only.
-            chat_path, audit_path = self.export(audit_event=audit_event, audit_only=True)
-        except Exception:
-            try:
-                try:
-                    if hasattr(self, 'export_audit_v2'):
-                        self.export_audit_v2(audit_event=audit_event, audit_only=True)
-                    else:
-                        self.export(audit_event=audit_event, audit_only=True)
-                except Exception:
-                    try:
-                        self.export(audit_event=audit_event)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        # --- Deterministic compliance scan of last N bot answers (best-effort) ---
-        n = 5
-        try:
-            n = int((getattr(gov, 'data', {}) or {}).get('global_defaults', {}).get('comm_audit', {}).get('window', 5) or 5)
-        except Exception:
-            n = 5
-
-        bot_msgs = []
-        try:
-            bot_msgs = [h for h in (getattr(self, 'history', []) or []) if (h or {}).get('role') == 'bot']
-        except Exception:
-            bot_msgs = []
-
-        sample = bot_msgs[-n:] if n > 0 else []
-        # Build a best-effort mapping from each bot message to the immediately preceding user input.
-        # This allows the scan to reliably classify command responses without depending on model output text.
-        rows = []
-        if _compliance_scan is not None:
-            try:
-                _hist = (getattr(self, 'history', []) or [])
-                rows = _compliance_scan.scan_message_compliance_best_effort(
-                    sample=sample,
-                    history=_hist,
-                    build_route_ctx=_build_route_ctx,
-                    api=self,
-                    gov=gov,
-                )
-            except Exception:
-                rows = []
-        if not rows:
-            prev_user_by_bot_id = {}
-            try:
-                _hist = (getattr(self, 'history', []) or [])
-                for _ix, _m in enumerate(_hist):
-                    if (_m or {}).get('role') != 'bot':
-                        continue
-                    _prev_user = ''
-                    for _jx in range(_ix - 1, -1, -1):
-                        _pm = _hist[_jx] or {}
-                        if (_pm.get('role') or '') in ('user', 'human'):
-                            _prev_user = str(_pm.get('content', '') or '')
-                            break
-                    prev_user_by_bot_id[id(_m)] = _prev_user
-            except Exception:
-                prev_user_by_bot_id = {}
-
-
-            rows = []
-            for i, msg_obj in enumerate(sample, 1):
-                txt = (msg_obj or {}).get('content', '') or ''
-                vios = []
-
-                # Command responses are deterministic UI/control outputs; they must not be
-                # evaluated against Self-Debunking / QC footer / SCI Trace contracts.
-                # Classification is based primarily on the preceding user message (Comm ...),
-                # and only secondarily on the assistant's first line.
-                try:
-                    prev_user = (prev_user_by_bot_id.get(id(msg_obj), '') or '').lstrip()
-                    prev_user_first = ''
-                    for _ln in str(prev_user).splitlines():
-                        if _ln.strip():
-                            prev_user_first = _ln.strip()
-                            break
-                    first_line = ''
-                    for _ln in str(txt).splitlines():
-                        if _ln.strip():
-                            first_line = _ln.strip()
-                            break
-                    ctx_turn = _build_route_ctx(self, user_raw=prev_user_first, is_command=prev_user_first.startswith('Comm '))
-                    is_cmd_msg = bool(ctx_turn.get('is_command'))
-                    if not is_cmd_msg:
-                        is_cmd_msg = bool(re.match(r"^(?:Command executed:\s+)?(?:Comm\s+\w+|Profile\s+\w+|SCI\s+(?:on|off|menu)|QC\s+Override)\b", first_line))
-                except Exception:
-                    is_cmd_msg = False
-
-                # QC footer present? (skip for command responses)
-                if (not is_cmd_msg) and ('QC-Matrix:' not in txt and 'QC:' not in txt):
-                    vios.append('Missing QC footer')
-
-                # Self-Debunking required? (skip for command responses)
-                try:
-                    prof_now = getattr(getattr(self, 'gov_state', None), 'active_profile', '') or 'Standard'
-                    if not is_cmd_msg:
-                        sd_msg = gov.check_self_debunking(txt, prof_now)
-                        if sd_msg:
-                            vios.append(sd_msg)
-                except Exception:
-                    pass
-
-                # Verification Route Gate
-                try:
-                    vr_msg = gov.check_verification_route_gate(txt)
-                    if vr_msg:
-                        vios.append(vr_msg)
-                except Exception:
-                    pass
-
-                # SCI Trace contract (if a variant is active)
-                try:
-                    vk = getattr(getattr(self, 'gov_state', None), 'sci_variant', '') or ''
-                    if vk and not is_cmd_msg:
-                        if 'SCI Trace' not in txt:
-                            vios.append('Missing SCI Trace block')
-                except Exception:
-                    pass
-
-                status = '✓ Compliant' if not vios else '⚠ ' + '; '.join(vios)
-                rows.append((i, status))
-
-        # Render
-        msg = "Audit exported."
-
-        # Module dependency warnings (Stage 3d)
-        dep_warn_html = ""
-        try:
-            ds = getattr(self, 'deps_status', {}) or {}
-            missing = [k for k in ('auditstream','rendering_utils','compliance_scan') if not (ds.get(k, (False,''))[0])]
-            if missing:
-                dep_warn_html = (
-                    "<div style='margin-top:8px; padding:8px; border:1px solid #d77; background:#fff3f3; border-radius:8px;'>"
-                    "<b>Warning:</b> Optional modules missing; fallback paths active: "
-                    + html.escape(", ".join(missing))
-                    + "</div>"
-                )
-        except Exception:
-            dep_warn_html = ""
-
-        detail = ""
-        rel_audit = ""
-        if audit_path:
-            # Prefer a stable relative path for UI/logs; never require it.
-            try:
-                rel_audit = os.path.relpath(audit_path, start=os.getcwd())
-                if str(rel_audit).startswith(".."):
-                    rel_audit = os.path.join("Logs", "Audit", os.path.basename(audit_path))
-            except Exception:
-                rel_audit = os.path.basename(audit_path)
-            detail = f"<br><code>{html.escape(str(rel_audit))}</code>"
-
-        # Last call debug line (best-effort)
-        last_line = ""
-        try:
-            lc = getattr(self, 'last_call_info', {}) or {}
-            prov = (lc.get('provider') or '').strip()
-            modl = (lc.get('model') or '').strip()
-            ms = int(lc.get('ms') or 0)
-            usage = lc.get('usage') or {}
-            # normalize common usage keys
-            u_in = usage.get('prompt_tokens', usage.get('input_tokens', usage.get('input', usage.get('in', 0))))
-            u_out = usage.get('completion_tokens', usage.get('output_tokens', usage.get('output', usage.get('out', 0))))
-            if prov or modl or ms or usage:
-                last_line = (
-                    "<div style='margin-top:6px; font-size:12px; color:#444;'>"
-                    + f"Last call: <code>{html.escape(prov or 'n/a')}</code> · <code>{html.escape(modl or 'n/a')}</code> · {ms} ms"
-                    + (f" · usage in/out: {html.escape(str(u_in))}/{html.escape(str(u_out))}" if (u_in or u_out) else "")
-                    + "</div>"
-                )
-        except Exception:
-            last_line = ""
-
-        tbl = ""
-        if rows:
-            tr = "".join([
-                "<tr>"
-                f"<td style='padding:6px 8px; border-bottom:1px solid #ddd; width:80px;'>#{idx}</td>"
-                f"<td style='padding:6px 8px; border-bottom:1px solid #ddd;'>{html.escape(st)}</td>"
-                "</tr>" for idx, st in rows
-            ])
-            tbl = (
-                "<div style='margin-top:8px;'>"
-                "<table style='width:100%; border-collapse:collapse; font-size:13px;'>"
-                "<thead><tr>"
-                "<th style='text-align:left; padding:6px 8px; border-bottom:2px solid #bbb;'>Message</th>"
-                "<th style='text-align:left; padding:6px 8px; border-bottom:2px solid #bbb;'>Compliance scan (best-effort)</th>"
-                "</tr></thead>"
-                f"<tbody>{tr}</tbody></table></div>"
-            )
-
-        html_content = (
-            "<div style='border:1px solid #bbb; background:#f7f7f7; padding:10px; border-radius:10px; margin:8px 0;'>"
-            f"<b>Comm Audit</b><br>{msg}{detail}{dep_warn_html}{last_line}{tbl}</div>"
-        )
-        html_content += f'<div class="ts-footer">Response at {html.escape(str(timestamp))}</div>'
-
-        try:
-            bot_txt = "Comm Audit"
-            try:
-                if rel_audit:
-                    bot_txt += f"\nExportiert (Audit): {rel_audit}"
-            except Exception:
-                pass
-            self.history.append({"role": "bot", "content": bot_txt, "ts": datetime.now().isoformat(), "csc": None})
-        except Exception:
-            pass
-
-        return {
-            "html": html_content,
-            "t_in": 0,
-            "t_out": 0,
-            "total_in": getattr(self, "session_tokens_in", 0),
-            "total_out": getattr(self, "session_tokens_out", 0),
-            "csc": None,
-        }
+    if cmd == "Comm Audit":
+        out = _resolve_comm_audit_command_result(self, cmd=cmd, timestamp=str(timestamp or ""))
+        if isinstance(out, dict):
+            return out
+        return _build_comm_audit_fallback_result(self, timestamp=str(timestamp or ""))
 
     # Renderer lookup (deterministic)
     renderer_map = {
@@ -17942,6 +17765,34 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
     }
 
     if cmd in renderer_map:
+        try:
+            if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "resolve_renderer_map_command"):
+                def _inc_user_turn():
+                    try:
+                        self.gov_state.user_turns += 1
+                    except Exception:
+                        pass
+
+                def _append_history(raw_text: str):
+                    try:
+                        self.history.append({"role": "bot", "content": raw_text, "ts": datetime.now().isoformat(), "csc": None})
+                    except Exception:
+                        pass
+
+                out = _output_command_response_catalog.resolve_renderer_map_command(  # type: ignore[attr-defined]
+                    cmd=cmd,
+                    timestamp=str(timestamp or ""),
+                    renderer_map=renderer_map,
+                    safe_html_fn=lambda context, fn: _safe_html(self, context, fn),
+                    render_ts_footer_html_fn=_render_ts_footer_html,
+                    increment_user_turn_fn=_inc_user_turn,
+                    append_history_fn=_append_history,
+                )
+                if isinstance(out, dict):
+                    return out
+        except Exception:
+            pass
+
         label, raw_fn, html_fn = renderer_map[cmd]
 
         try:
@@ -17967,6 +17818,48 @@ def _handle_command_deterministic(self, canonical_cmd: str, timestamp: str):
 
     # SCI menu trigger (explicit only)
     if cmd in ("SCI on", "SCI menu"):
+        try:
+            if _output_command_response_catalog is not None and hasattr(_output_command_response_catalog, "build_sci_menu_command_result"):
+                def _set_sci_state():
+                    try:
+                        self.gov_state.sci_variant = ""
+                        self.gov_state.sci_pending = True
+                        self.gov_state.sci_active = False
+                    except Exception:
+                        pass
+
+                def _inc_user_turn():
+                    try:
+                        self.gov_state.user_turns += 1
+                    except Exception:
+                        pass
+
+                def _append_history_preview(fallback_txt: str):
+                    try:
+                        # Keep stable preview behavior for audit/history tooling.
+                        html_content = _safe_html(self, "SCI menu", getattr(self, "_render_sci_menu_html", lambda: ""))
+                        with_footer = str(html_content or "") + _render_ts_footer_html(str(timestamp))
+                        self.history.append({
+                            "role": "bot",
+                            "content": _safe_preview_text(re.sub(r"<[^>]+>", "", with_footer), 2000) or str(fallback_txt or "SCI menu"),
+                            "ts": datetime.now().isoformat(),
+                            "csc": None,
+                        })
+                    except Exception:
+                        pass
+
+                return _output_command_response_catalog.build_sci_menu_command_result(  # type: ignore[attr-defined]
+                    cmd=cmd,
+                    timestamp=str(timestamp or ""),
+                    render_sci_menu_html_fn=lambda: _safe_html(self, "SCI menu", getattr(self, "_render_sci_menu_html", lambda: "")),
+                    render_ts_footer_html_fn=_render_ts_footer_html,
+                    set_sci_state_fn=_set_sci_state,
+                    increment_user_turn_fn=_inc_user_turn,
+                    append_history_fn=_append_history_preview,
+                )
+        except Exception:
+            pass
+
         try:
             self.gov_state.sci_variant = ""
             self.gov_state.sci_pending = True
@@ -19578,6 +19471,7 @@ class Api(CSCRefiner):
                     enforce_qc_footer_fn=enforce_qc_footer_deltas,
                     ensure_qc_footer_present_fn=ensure_qc_footer_present,
                     normalize_evidence_tags_fn=normalize_evidence_tags,
+                    strip_empty_citation_placeholders_fn=strip_empty_citation_placeholders,
                 )
             else:
                 self.governance_service = None
@@ -19597,6 +19491,7 @@ class Api(CSCRefiner):
         # Window handles
         self.main_win = None
         self.panel_win = None
+        self.export_preview_win = None
         self.panel_hidden = False
         self._qc_override_open = False
         self._exit_confirm_open = False
@@ -19998,6 +19893,8 @@ else:
         "ask",
         "remote_cmd",
         "submit_cgi_feedback",
+        "preview_export_file",
+        "open_export_preview",
         "get_input_history",
         "append_input_history",
         "ui_qc_bar_enabled",
@@ -20022,6 +19919,17 @@ def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
     Uses window.resetChatFromHistory(history, statusMsg) when available; otherwise falls back
     to incremental replay to avoid a stuck/blank UI for large logs.
     """
+    if _ui_history_replay_runtime is not None:
+        try:
+            return _ui_history_replay_runtime.ui_replay_loaded_history(
+                api=self,
+                status_msg=status_msg,
+                sanitize_html_fn=sanitize_html,
+                markdown_mod=markdown,
+            )
+        except Exception:
+            pass
+
     try:
         win = getattr(self, 'main_win', None)
         if not win:
@@ -20046,51 +19954,6 @@ def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
                 role = 'user'
 
             if role == 'bot':
-
-                # If the loaded history contains a legacy plaintext 'Comm Config' dump (very large JSON),
-                # re-render it deterministically as collapsible HTML to keep the UI readable and within margins.
-                try:
-                    _c = str(content)
-                    if 'Loaded rules file:' in _c and ('QC-Matrix:' in _c or 'QC Matrix:' in _c):
-                        _lines = _c.splitlines()
-                        if _lines and 'Loaded rules file:' in _lines[0]:
-                            _json_i = None
-                            for _i in range(1, len(_lines)):
-                                _ls = _lines[_i].lstrip()
-                                if _ls.startswith('{') or _ls.startswith('['):
-                                    _json_i = _i
-                                    break
-                            _qc_i = None
-                            for _i in range(len(_lines)-1, -1, -1):
-                                _s = _lines[_i].strip()
-                                if _s.startswith('QC-Matrix:') or _s.startswith('QC Matrix:'):
-                                    _qc_i = _i
-                                    break
-                            if _json_i is not None:
-                                _status = _lines[0].strip()
-                                _qc = _lines[_qc_i].strip() if _qc_i is not None else ''
-                                _json_end = _qc_i if (_qc_i is not None and _qc_i > _json_i) else len(_lines)
-                                _raw_json = "\n".join(_lines[_json_i:_json_end]).strip()
-                                _ui_lang = self._lang()
-                                _summary = 'Raw JSON anzeigen' if _ui_lang == 'de' else 'Show raw JSON'
-                                _minor = (
-                                    'Read-only view of the full governance configuration (deterministic from JSON, no LLM).'
-                                    if _ui_lang != 'de'
-                                    else 'Nur-Lese-Ansicht der vollständigen Governance-Konfiguration (deterministisch aus JSON, ohne LLM).'
-                                )
-                                content = (
-                                    '<div class="comm-help comm-config">'
-                                    f'<div class="help-status">{html.escape(_status)}</div>'
-                                    f'<div class="minor">{html.escape(_minor)}</div>'
-                                    '<details class="config-details">'
-                                    f'<summary>{html.escape(_summary)}</summary>'
-                                    f'<pre class="raw-json">{html.escape(_raw_json)}</pre>'
-                                    '</details>'
-                                    + (f"<div style='margin-top:10px'>{html.escape(_qc)}</div>" if _qc else '')
-                                    + '</div>'
-                                )
-                except Exception:
-                    pass
                 try:
                     _c = str(content)
                     if _c.lstrip().startswith('<'):
@@ -20108,7 +19971,6 @@ def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
         payload = json.dumps(ui_hist, ensure_ascii=False)
         sm = json.dumps(str(status_msg or "Loaded chat log."), ensure_ascii=False)
 
-        # Bulk path
         try:
             js = (
                 "(function(){try{"
@@ -20122,7 +19984,6 @@ def _ui_replay_loaded_history(self, status_msg: str = "Loaded chat log."):
         except Exception:
             pass
 
-        # Fallback: incremental replay
         try:
             win.evaluate_js(f"resetChatToStatus({sm});")
         except Exception:

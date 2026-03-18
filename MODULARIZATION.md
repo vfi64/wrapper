@@ -32,6 +32,56 @@ This document is the **source of truth** for stepwise, regression‑safe modular
 
 ## Roadmap (stages)
 
+### Output/Rendering-Track A-H (active, 2026-03-11)
+This A-H track is the active migration plan for deterministic output/rendering modularization and runs in parallel to the historical S-stage roadmap.
+
+Hard constraints for this track:
+- UI visual structure stays unchanged.
+- No merge without green tests.
+- Mandatory gate after every relevant slice: `python3 scripts/quality_gate.py --mode all`.
+- Self-Debunking, uncertainty markers, header/footer, and command outputs remain deterministic.
+- No distributed regex end-state; target is a centralized output pipeline.
+
+Current completion estimate (2026-03-11):
+- Overall A-H progress: **~50-55%**.
+- Output-pipeline-only progress (without monolith shrink target): **~65-70%**.
+
+Phase status snapshot:
+- [x] **Phase A** (`src/output/state_snapshot.py`) mostly done and integrated.
+- [x] **Phase B** (`src/output/rules_registry.py`) mostly done and integrated.
+- [~] **Phase C** (`src/output/resolver.py`, `src/output/dispatcher.py`, `src/output/routing_runtime.py`) partially done; module routing is active, legacy fallback still present.
+- [~] **Phase D** (`src/output/response_model.py`, `src/output/pipeline.py`) partially done; post-render normalization is modularized, full structural parser/validator chain is not complete yet.
+- [x] **Phase E** (renderer modules) extracted behind fail-soft wrapper interfaces:
+  - done: `header.py`, `footer_qc.py`, `sci_trace.py`, `uncertainty.py`
+  - done: `csc_warning.py`, `control_layer_note.py`, `cgi_line.py`, `color_markers.py`
+- [~] **Phase F** (`src/output/commands/*.py`) started:
+  - `output.commands.response_catalog` introduced for deterministic post-state command outputs
+    (Profile switch audit line + post-command profile/comm-state response selection, fail-soft delegated).
+  - deterministic command responses now delegated for:
+    `QC Override`, `SCI on/menu`, and static renderer-map commands (`Comm Help/State/Config/Anchor`).
+  - basic legacy command transitions delegated (`Strict/Explore/Color/SCI/Comm/Anchor/Dynamic one-shot`) via
+    `apply_basic_command_state` (fail-soft fallback remains in monolith).
+- [ ] **Phase G** (legacy path removal / monolith thinning) open; `src/Comm-SCI-Control-App.py` still contains substantial output logic and fail-open fallbacks.
+- [~] **Phase H** (hardening + docs) partially done; replay contract exists, but matrix expansion is still open.
+
+Acceptance criteria (DoD) for this track:
+- Self-Debunking labels are bold, with `:`, one label per line, stable in DE/EN.
+- Uncertainty markers appear only in content context, with tooltip; never on header/status/control-layer notes.
+- Color off removes visual color markers/signal dots from final output.
+- Profile Briefing output keeps one deterministic format including audit line.
+- Exactly one final QC-Matrix footer line remains.
+- No visible UI regression.
+
+Execution order for next slices:
+1. **E-complete**: extract missing renderer modules behind stable interfaces.
+2. **F-start**: introduce `src/output/commands/` and move deterministic command responses there.
+3. **G-start**: remove now-redundant output logic from monolith (keep wrapper as orchestration/fallback only).
+4. **H-expand**: replay/test hardening for DE/EN, SCI off/A/B, profile transitions, color on/off, tooltip presence, and exactly-one QC footer.
+
+Per-slice quality gate:
+- targeted tests for touched surface
+- `python3 scripts/quality_gate.py --mode all`
+
 ### S0 — Baseline hardening (no functional change)
 **Goal:** make the current behavior reproducible and easy to verify.
 - Document a “Golden Run” manual checklist (startup, panel lifecycle, provider/model switch, log export/load/fork, QC override apply/clear).

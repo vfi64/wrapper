@@ -3,6 +3,7 @@ from intents import (
     EnterSciRecursion,
     ProcessModelResponse,
     SelectProfile,
+    ToggleColor,
     ToggleComm,
     intent_from_command,
 )
@@ -54,6 +55,36 @@ def test_apply_intent_comm_start_enforces_ruleset_default_profile():
     assert out.sci_active is False
     assert out.sci_pending is False
     assert out.sci_variant == ""
+
+
+def test_apply_intent_comm_start_applies_profile_color_default():
+    ruleset = {
+        "default_profile": "Briefing",
+        "profiles": {
+            "Briefing": {"mode_overlay": "Strict", "color_default": "off"},
+            "Expert": {"mode_overlay": "None", "color_default": "on"},
+        },
+    }
+    before = WrapperState(active_profile="Expert", color="on")
+    out = apply_intent(before, ToggleComm(turn_on=True), ruleset).state
+    assert out.active_profile == "Briefing"
+    assert out.color == "off"
+
+
+def test_apply_intent_profile_switch_sets_profile_color_default_but_toggle_can_override():
+    ruleset = {
+        "profiles": {
+            "Sandbox": {"mode_overlay": "Explore", "color_default": "off"},
+            "Expert": {"mode_overlay": "Strict", "color_default": "on"},
+        },
+    }
+    before = WrapperState(active_profile="Expert", color="on")
+    switched = apply_intent(before, SelectProfile(profile="Sandbox"), ruleset).state
+    assert switched.active_profile == "Sandbox"
+    assert switched.color == "off"
+
+    toggled = apply_intent(switched, ToggleColor(turn_on=True), ruleset).state
+    assert toggled.color == "on"
 
 
 def test_apply_intent_sci_recurse_honors_max_depth():

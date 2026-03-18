@@ -4,7 +4,7 @@ Deterministische Python-Runtime fuer Comm-SCI-Governance-Workflows.
 
 Aktuelle Versionslinie der App: **1.0.x (aktuell: 1.0.11)**  
 Neueste Wrapper-Release-Seite: **https://github.com/vfi64/wrapper/releases/latest**  
-Standardmaessig geladenes Regelwerk beim Start: **`JSON/Comm-SCI-v20.2.2.json`**
+Standardmaessig geladenes Regelwerk beim Start: **`JSON/Comm-SCI-v20.2.5.json`**
 
 ## Positionierung
 
@@ -16,7 +16,7 @@ Der Wrapper existiert, weil ein Regelwerk ohne technische Ausfuehrung leicht nur
 
 ## Warum dieser Wrapper existiert
 
-Comm-SCI-Control definiert normative Governance-Regeln. Die Wrapper-Linie fokussiert den operativen Vollzug und Wiederholbarkeit: Command-Contracts, SCI-State-Handling, QC/Verification-Vertraege und panel-auditierbares Runtime-Verhalten.
+Comm-SCI-Control definiert normative Governance-Regeln. Die private Wrapper-Linie fokussiert den operativen Vollzug und Wiederholbarkeit: Command-Contracts, SCI-State-Handling, QC/Verification-Vertraege und panel-auditierbares Runtime-Verhalten.
 
 ## Praktische Orientierung
 
@@ -35,7 +35,7 @@ Vertiefungsseiten:
 
 ## Zweck dieses Repos
 
-Dieses Repository enthaelt die Entwicklungslinie der Python-Runtime, die Comm-SCI-Governance deterministisch ausfuehrt.
+Dieses Repository enthaelt die private Entwicklungslinie der Python-Runtime, die Comm-SCI-Governance deterministisch ausfuehrt.
 Es ist die Implementierungsseite zum oeffentlichen Regelwerk.
 
 - Oeffentliches Regelwerk: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
@@ -117,7 +117,7 @@ bash scripts/setup_venv.sh --dry-run
 bash scripts/setup_venv.sh --python python3.12 --venv .venc --extras local-dev
 ```
 
-2. Dry-Run-Sync vom Quell-Repo in den lokalen `vfi64/wrapper`-Klon:
+2. Dry-Run-Sync vom privaten Repo in den lokalen `vfi64/wrapper`-Klon:
 
 ```bash
 bash scripts/sync_to_wrapper_local.sh --target /pfad/zu/wrapper
@@ -160,6 +160,12 @@ python -m pytest -q tests/test_app_bootstrap.py
 python -m pytest -q tests/test_app.py -k "panel_asset_static_selftest or panel_runtime_selftest_payload_ok_rejects_loaded_without_dynamic_sections or panel_action_accepts_panel_bootstrap_selftest_callback or on_panel_closed_ignores_stale_close_after_fallback_recreate"
 ```
 
+Vertrags-Gate fuer Self-Debunking-/Unsicherheits-Rendering (fuer jede Aenderung empfohlen):
+
+```bash
+python scripts/quality_gate.py --mode all
+```
+
 ## Repository-Struktur (vollstaendige Top-Level-Liste, versionierte Eintraege)
 
 ```text
@@ -198,8 +204,10 @@ Hinweis: Lokale Artefakte wie `.git/`, `.venc/`, `.pytest_cache/` oder `.DS_Stor
 | `src/ui_assets/` | Externe UI-Assets (Panel/Chat/Manual-Test-Monitor) mit S7-Fallback-Unterstuetzung. |
 | `tests/test_app.py` | Groesste Regressions-/Vertragstests fuer Runtime- und Panel-Verhalten. |
 | `tests/test_app_bootstrap.py` | Gezielte S8-Tests fuer Bootstrap-/Window-Lifecycle-Reihenfolge und Guards. |
+| `tests/test_render_contract_replay.py` | Replay-Contract-Gate fuer Self-Debunking-/Unsicherheits-Rendering (inkl. Statuszeilen-Marker-Checks). |
 | `scripts/setup_venv.sh` | Reproduzierbares lokales Setup (`.venc`, `pip install -e ".[local-dev]"`). |
 | `scripts/run_local_tests.sh` | Lokaler Test-Runner mit venv-Erkennung/-Erzeugung. |
+| `scripts/quality_gate.py` | Ausfuehrbarer Contract-Gate-Entry-Point (core/replay/all). |
 | `pyproject.toml` | Packaging-/Installationskonfiguration und pytest-Basisoptionen. |
 | `requirements.txt` | Kompatibilitaets-/Referenzliste fuer Runtime-Abhaengigkeiten. |
 | `MODULARIZATION.md` | Stufenplan S0-S8 und Akzeptanzkriterien. |

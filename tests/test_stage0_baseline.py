@@ -36,12 +36,18 @@ def test_stage0_log_event_is_callable_and_records_event():
     assert isinstance(last.get("data"), dict) and last["data"].get("ok") is True
 
 
-def test_stage0_provider_switch_is_visible_in_event_stream():
+def test_stage0_provider_switch_is_visible_in_event_stream(monkeypatch):
     mod = load_fix_module()
     api = mod.Api()
     api.session_events = []
     api.main_win = None
     api.panel_win = None
+    monkeypatch.setattr(
+        api,
+        "_passphrase_requirement_for_provider",
+        lambda provider, passphrase_override=None: {"required": False, "encrypted": False},
+        raising=False,
+    )
 
     api.set_provider("openrouter")
     found = False

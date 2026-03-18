@@ -10,6 +10,7 @@ S7-Regel:
 
 Geplante Dateien (schrittweise):
 - `panel.html`
+- `panel_manual_test_runner.js`
 - `qc_override.html`
 - spaeter ggf. `chat.html`
 

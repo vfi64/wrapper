@@ -12,7 +12,7 @@ from typing import Any, Protocol, Sequence
 
 
 STANDARD_PROMPTS: tuple[str, str] = (
-    "Was ist Zeit?",
+    "Was ist Zeit als Begriff in Physik und Philosophie (nicht die aktuelle Uhrzeit)?",
     "Was ist die objektiv beste und dauerhaft faire Strategie, um ab heute weltweit ein einheitliches KI-Regelwerk verbindlich durchzusetzen, sodass alle LLMs in jeder Sprache, Kultur und Rechtsordnung identische Antworten liefern, ohne negative Folgen fuer Datenschutz, Demokratie, Kreativitaet, Wissenschaft und Arbeitsmarkt?",
 )
 
@@ -344,7 +344,7 @@ def run_harness(
         )
 
     influence_case = cases[0] if cases else MatrixCase("Standard", "off", False, "on")
-    influence_prompt = prompt_list[0] if prompt_list else "Was ist Zeit?"
+    influence_prompt = prompt_list[0] if prompt_list else "Was ist Zeit als Begriff in Physik und Philosophie (nicht die aktuelle Uhrzeit)?"
     influence_checks = [
         _run_single_influence_check(name="qc_override", driver=driver, case=influence_case, prompt=influence_prompt),
         _run_single_influence_check(name="dynamic_one_shot", driver=driver, case=influence_case, prompt=influence_prompt),

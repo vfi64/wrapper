@@ -321,6 +321,27 @@ def test_governance_manager_loads_operational_v20_2_min_ruleset_with_schema_adap
     assert ((sd_mod.get("block") or {}).get("title") or "") == "Self-Debunking"
 
 
+def test_operational_v20_2_2_adapter_merges_contract_output_contract_into_global_defaults():
+    mod = load_fix_module()
+    gm = mod.GovernanceManager()
+    p = ROOT / "JSON" / "Comm-SCI-v20.2.2.json"
+    assert p.exists(), "Comm-SCI-v20.2.2.json not found"
+
+    ok = gm.load_file(str(p))
+    assert ok is True
+
+    gd = gm.data.get("global_defaults") or {}
+    oc = gd.get("output_contract") or {}
+    sdc = oc.get("self_debunking_contract") or {}
+
+    assert isinstance(sdc, dict)
+    assert bool(sdc.get("enabled")) is True
+
+    sd_mod = gd.get("self_debunking") or {}
+    assert bool(sd_mod.get("enabled")) is True
+    assert ((sd_mod.get("block") or {}).get("title") or "") == "Self-Debunking"
+
+
 def test_operational_v20_adapter_preserves_variant_b_steps_for_runtime_resolution():
     mod = load_fix_module()
     gm = mod.GovernanceManager()
@@ -357,6 +378,83 @@ def test_operational_v20_self_debunking_is_injected_before_qc_footer_when_missin
     out = mod.enforce_self_debunking_contract(raw, gm, "Expert", is_command=False, lang="en")
     assert "Self-Debunking" in out
     assert out.find("Self-Debunking") < out.find("QC-Matrix:")
+
+
+def test_enforce_self_debunking_contract_drops_redundant_uncertainty_tail_point():
+    mod = load_fix_module()
+    gm = mod.GovernanceManager()
+    p = ROOT / "JSON" / "Comm-SCI-v20.2.5.json"
+    if not p.exists():
+        p = ROOT / "JSON" / "Comm-SCI-v20.2.2.json"
+    assert gm.load_file(str(p)) is True
+
+    raw = (
+        "Antwortkern.\n\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: Punkt eins.\n"
+        "   Warum das wichtig ist: Relevanz eins.\n"
+        "   Was würde verifizieren/falsifizieren (nächster Check): Check eins.\n\n"
+        "2. Schwäche: Punkt zwei.\n"
+        "   Warum das wichtig ist: Relevanz zwei.\n"
+        "   Was würde verifizieren/falsifizieren (nächster Check): Check zwei.\n\n"
+        "3. Schwäche: U1 – Data gap. Needed: Source/current context from the user or external verification.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 1 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+    )
+
+    out = mod.enforce_self_debunking_contract(raw, gm, "Expert", is_command=False, lang="de")
+    sd_match = re.search(r"(?is)Self-Debunking:\s*(.*?)\n\s*QC-Matrix:", out)
+    assert sd_match is not None
+    sd_block = sd_match.group(1)
+    assert len(re.findall(r"(?m)^\s*\d+\.\s+", sd_block)) == 2
+    assert "Data gap. Needed:" not in sd_block
+    assert re.search(r"(?i)\bU1\b", sd_block) is None
+
+
+def test_enforce_self_debunking_contract_strips_embedded_uncertainty_tail_fragment():
+    mod = load_fix_module()
+    gm = mod.GovernanceManager()
+    p = ROOT / "JSON" / "Comm-SCI-v20.2.5.json"
+    if not p.exists():
+        p = ROOT / "JSON" / "Comm-SCI-v20.2.2.json"
+    assert gm.load_file(str(p)) is True
+
+    raw = (
+        "Antwortkern.\n\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: Punkt eins. Schwäche: U1 – Data gap. Needed: Source/current context from the user or external verification.\n"
+        "   Warum das wichtig ist: Relevanz eins.\n"
+        "   Was würde verifizieren/falsifizieren (nächster Check): Check eins.\n\n"
+        "2. Schwäche: Punkt zwei. Schwäche: U1 – Data gap. Needed: Source/current context from the user or external verification.\n"
+        "   Warum das wichtig ist: Relevanz zwei.\n"
+        "   Was würde verifizieren/falsifizieren (nächster Check): Check zwei.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 1 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+    )
+
+    out = mod.enforce_self_debunking_contract(raw, gm, "Expert", is_command=False, lang="de")
+    sd_match = re.search(r"(?is)Self-Debunking:\s*(.*?)\n\s*QC-Matrix:", out)
+    assert sd_match is not None
+    sd_block = sd_match.group(1)
+    assert len(re.findall(r"(?m)^\s*\d+\.\s+", sd_block)) == 2
+    assert "Data gap. Needed:" not in sd_block
+    assert re.search(r"(?i)\bU1\b", sd_block) is None
+    assert "Punkt eins." in sd_block
+    assert "Punkt zwei." in sd_block
+
+
+def test_inject_minimal_self_debunking_de_keeps_compact_core_fields():
+    mod = load_fix_module()
+    raw = (
+        "Antwortsatz.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 3 (Δ0) · Evidence 3 (Δ0)\n"
+    )
+    out = mod.inject_minimal_self_debunking(raw, title="Self-Debunking", lang="de")
+    assert out.count("**Schwäche**:") == 2
+    assert "**Warum das wichtig ist**:" in out
+    assert "**Was würde verifizieren/falsifizieren (nächster Check)**:" in out
+    assert "**Vereinfachung**:" not in out
+    assert "**Subjektivität**:" not in out
+    assert "**Nächster Schritt**:" not in out
+    assert "**Prüfen/Widerlegen (nächster Schritt)**:" not in out
 
 
 def test_system_instruction_uses_conversation_language_not_hard_english():
@@ -488,6 +586,77 @@ def test_sci_pending_timeout_assumes_variant_A_after_two_non_selections():
     # Should have made two model calls total (one per prompt) in this non-contextual path.
     assert len(dummy.calls) == 2
     assert isinstance(_extract_text(out1), str) and isinstance(_extract_text(out2), str)
+
+
+def test_strip_sci_trace_line_when_pending_without_variant():
+    mod = load_fix_module()
+
+    raw = (
+        "Antwortsatz.\n"
+        "SCI Trace:\n"
+        "1. Plan: X\n"
+        "2. Check: Y\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: A\n"
+        "2. Schwäche: B\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.strip_sci_trace_line_when_inactive(
+        raw,
+        sci_active=False,
+        sci_variant="",
+        sci_pending=True,
+    )
+    assert "SCI Trace" not in out
+    assert "Self-Debunking" in out
+
+
+def test_apply_csc_strict_pending_without_variant_strips_sci_trace_and_keeps_self_debunking_boxed():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None
+    api.gov_state.sci_active = False
+    api.gov_state.sci_variant = ""
+    api.gov_state.sci_pending = True
+    api.gov_state.answer_language = "de"
+
+    raw = (
+        "Antwortsatz.\n\n"
+        "SCI Trace:\n"
+        "1. Plan: Untersuche die Frage.\n"
+        "2. Solution: Erkläre den Kern knapp.\n"
+        "3. Check: Prüfe auf Gegenargumente.\n\n"
+        "Self-Debunking:\n"
+        "- Schwäche: Zu stark vereinfacht.\n"
+        "- Schwäche: Gegenpositionen fehlen.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)\n"
+    )
+    html_out, meta = api._apply_csc_strict(raw_response=raw, user_raw="Was ist Zeit?", is_command=False)
+    plain = re.sub(r"<[^>]+>", " ", str(html_out or ""))
+
+    assert "SCI: PENDING" in plain
+    assert "SCI Trace" not in plain
+    assert "self-debunking" in str(html_out or "")
+    assert "raw-output" not in str(html_out or "")
+    assert mod.detect_self_debunking_numbered_html(str(html_out or "")) is True
+    assert bool(((meta or {}).get("normalization") or {}).get("self_debunking_boxed")) is True
+    assert bool(((meta or {}).get("normalization") or {}).get("self_debunking_numbered")) is True
+
+
+def test_profile_expert_command_sets_pending_and_shows_pending_header():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None
+
+    out = api.ask("Profile Expert")
+    html_out = out.get("html") if isinstance(out, dict) else str(out)
+    assert "SCI: PENDING" in html_out
+    assert "SCI variants (selection)" in html_out or "SCI-Varianten" in html_out
+    assert api.gov_state.sci_pending is True
 
 
 # -----------------------------
@@ -1032,11 +1201,52 @@ def test_evidence_tagging_leaves_already_normalized_tags_unchanged():
     out = mod.normalize_evidence_tags(raw)
     assert out == raw
 
+
+def test_strip_empty_citation_placeholders_removes_only_empty_markers():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    raw = "Alpha [cite: ] Beta [cite:] Gamma [cite: 1] Delta [cite: doi:10.1000/test]"
+    out = mod.strip_empty_citation_placeholders(raw)
+
+    assert "[cite: ]" not in out
+    assert "[cite:]" not in out
+    assert "[cite: 1]" in out
+    assert "[cite: doi:10.1000/test]" in out
+
+
+def test_strip_empty_citation_placeholders_skips_fenced_code_blocks():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    raw = "Outside [cite: ]\n```text\ninside [cite: ]\n```\nTail [cite: 2]"
+    out = mod.strip_empty_citation_placeholders(raw)
+
+    assert "Outside [cite: ]" not in out
+    assert "inside [cite: ]" in out
+    assert "[cite: 2]" in out
+
+
+def test_api_normalize_raw_output_contracts_strips_empty_cite_placeholders():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    raw = "Alpha [cite: ] Beta [cite: 7]"
+    out = api._normalize_raw_output_contracts(
+        raw,
+        governance_enabled=False,
+        is_command=False,
+    )
+
+    assert "[cite: ]" not in out
+    assert "[cite: 7]" in out
+
 # -------------------------
 # New: Comm Audit + Anchor Snapshot tests
 # -------------------------
 
-def test_comm_audit_reports_missing_qc_without_llm_call():
+def test_comm_audit_is_ui_only_without_llm_call():
     mod = load_fix_module()
     _prime_module_gov(mod)
 
@@ -1059,7 +1269,8 @@ def test_comm_audit_reports_missing_qc_without_llm_call():
     html = _extract_html(out)
 
     assert "Comm Audit" in html
-    assert "Missing QC footer" in html
+    assert "Missing QC footer" not in html
+    assert "Compliance scan (best-effort)" not in html
     assert len(dummy.calls) == 0
 
 def test_comm_audit_does_not_flag_missing_sd_or_qc_for_command_responses():
@@ -1171,6 +1382,99 @@ def test_html_number_self_debunking_merges_split_secondary_paragraphs_in_ol():
     assert "<br><strong>Prüfen/Widerlegen (nächster Schritt)</strong>:" in out
     # Keep two logical list items (no accidental extra numbering rows).
     assert out.lower().count("<li") == 2
+
+
+def test_html_number_self_debunking_flattens_p_wrappers_inside_li_for_uniform_spacing():
+    """Regression: paragraph wrappers inside SD <li> must be flattened to avoid
+    browser paragraph margins causing uneven line spacing.
+    """
+    mod = load_fix_module()
+
+    html_in = (
+        '<div class="self-debunking"><div>Self-Debunking:</div><ol>\n'
+        '<li><p><strong>Weakness</strong>: A.</p><p><strong>Why it matters</strong>: B.</p>'
+        '<p><strong>What would verify/falsify (next check)</strong>: C.</p></li>\n'
+        '<li><strong>Weakness</strong>: D.<br><strong>Why it matters</strong>: E.'
+        '<br><strong>What would verify/falsify (next check)</strong>: F.</li>\n'
+        '</ol></div>'
+    )
+
+    out = mod.html_number_self_debunking(html_in, lang="en")
+
+    # No paragraph wrappers must remain inside SD ordered lists.
+    assert re.search(r"(?is)<ol[^>]*>.*?<p\\b", out) is None
+    # Secondary lines must be kept as inline line breaks in the first item.
+    assert "<br><strong>Why it matters</strong>: B." in out
+    assert "<br><strong>What would verify/falsify (next check)</strong>: C." in out
+    # Keep two logical list items.
+    assert out.lower().count("<li") == 2
+
+
+def test_html_number_self_debunking_merges_fragmented_ol_chunks_with_secondary_paragraphs():
+    """Regression: weak HTML conversion may split SD points into multiple <ol> chunks with
+    secondary paragraphs in between. These fragments must be merged into stable list items.
+    """
+    mod = load_fix_module()
+
+    html_in = (
+        '<div class="self-debunking"><div>Selbst-Debunking:</div>\n'
+        '<ol><li><strong>Schwäche</strong>: A.</li></ol>\n'
+        '<p><strong>Warum das wichtig ist</strong>: B.</p>\n'
+        '<p><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: C.</p>\n'
+        '<ol><li><strong>Schwäche</strong>: D.</li></ol>\n'
+        '<p><strong>Warum das wichtig ist</strong>: E.</p>\n'
+        '<p><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: F.</p>\n'
+        '</div>'
+    )
+
+    out = mod.html_number_self_debunking(html_in, lang="de")
+
+    # Fragmented ordered lists must be merged into one logical list.
+    assert out.lower().count("<ol") == 1
+    assert out.lower().count("<li") == 2
+    # Secondary rows must be in-item line breaks, not standalone paragraphs.
+    assert len(
+        re.findall(r"(?is)<br\s*/?>\s*<strong>Warum das wichtig ist</strong>:", out)
+    ) >= 2
+    assert len(
+        re.findall(
+            r"(?is)<br\s*/?>\s*<strong>Was würde verifizieren/falsifizieren \(nächster Check\)</strong>:",
+            out,
+        )
+    ) >= 2
+    assert re.search(r"(?is)<p[^>]*>\s*<strong>Warum das wichtig ist</strong>\s*:", out) is None
+    assert re.search(
+        r"(?is)<p[^>]*>\s*<strong>Was würde verifizieren/falsifizieren \(nächster Check\)</strong>\s*:",
+        out,
+    ) is None
+
+
+def test_html_number_self_debunking_normalizes_italic_secondary_labels_and_forces_new_line():
+    """Regression: secondary labels must not remain italic and must start on a new line
+    in every SD point (including problematic '<em><strong>Label</strong>:</em>:' variants).
+    """
+    mod = load_fix_module()
+
+    html_in = (
+        '<div class="self-debunking"><div>Selbst-Debunking:</div><ol>\n'
+        '<li><strong>Schwäche</strong>: Punkt 1.'
+        '<br><strong>Warum das wichtig ist</strong>: A.'
+        '<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: B.</li>\n'
+        '<li><strong>Schwäche</strong>: Punkt 2.\n'
+        '   <em><strong>Warum das wichtig ist</strong>:</em>: C.\n'
+        '   <em><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:</em>: D.\n'
+        '</li>\n'
+        '</ol></div>'
+    )
+
+    out = mod.html_number_self_debunking(html_in, lang="de")
+
+    # No italicized secondary labels should remain.
+    assert "<em><strong>Warum das wichtig ist</strong>:</em>:" not in out
+    assert "<em><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:</em>:" not in out
+    # Secondary labels must be bold and line-broken in both points.
+    assert len(re.findall(r"(?is)<br\s*/?>\s*<strong>Warum das wichtig ist</strong>:", out)) >= 2
+    assert len(re.findall(r"(?is)<br\s*/?>\s*<strong>Was würde verifizieren/falsifizieren \(nächster Check\)</strong>:", out)) >= 2
 
 
 def test_apply_color_spans_handles_white_circle_and_multi_suffix():
@@ -1503,6 +1807,116 @@ def test_b7_load_log_from_path_and_fork(tmp_path):
     assert getattr(api2, 'session_id', None) != sid2_before
 
 
+def test_preview_export_file_returns_in_app_preview_for_audit_log(tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    mod.CHAT_LOG_DIR = str(tmp_path / "Logs" / "Chats")
+    mod.AUDIT_LOG_DIR = str(tmp_path / "Logs" / "Audit")
+    Path(mod.CHAT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+    Path(mod.AUDIT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+
+    audit_path = Path(mod.AUDIT_LOG_DIR) / "Audit_demo.json"
+    audit_path.write_text(json.dumps({"ok": True, "n": 7}, ensure_ascii=False), encoding="utf-8")
+
+    api = mod.Api()
+    out = api.preview_export_file(str(audit_path), max_chars=4000)
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    assert out.get("kind") == "audit"
+    assert out.get("relative_path") == "Logs/Audit/Audit_demo.json"
+    assert '"ok": true' in str(out.get("preview") or "").lower()
+
+
+def test_preview_export_file_blocks_paths_outside_logs(tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    mod.CHAT_LOG_DIR = str(tmp_path / "Logs" / "Chats")
+    mod.AUDIT_LOG_DIR = str(tmp_path / "Logs" / "Audit")
+    Path(mod.CHAT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+    Path(mod.AUDIT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"x":1}', encoding="utf-8")
+
+    api = mod.Api()
+    out = api.preview_export_file(str(outside), max_chars=4000)
+    assert isinstance(out, dict)
+    assert out.get("ok") is False
+    assert out.get("error") == "path_not_allowed"
+
+
+def test_open_export_preview_creates_helper_window_with_preview_payload(monkeypatch, tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    mod.CHAT_LOG_DIR = str(tmp_path / "Logs" / "Chats")
+    mod.AUDIT_LOG_DIR = str(tmp_path / "Logs" / "Audit")
+    Path(mod.CHAT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+    Path(mod.AUDIT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+    audit_path = Path(mod.AUDIT_LOG_DIR) / "Audit_demo.json"
+    audit_path.write_text(json.dumps({"ok": True}, ensure_ascii=False), encoding="utf-8")
+
+    created = {}
+
+    class _Win:
+        def destroy(self):
+            created["destroyed"] = True
+
+        def bring_to_front(self):
+            created["front"] = True
+
+    def _create_window(title, **kwargs):
+        created["title"] = title
+        created["kwargs"] = dict(kwargs or {})
+        return _Win()
+
+    monkeypatch.setattr(mod.webview, "create_window", _create_window, raising=True)
+
+    api = mod.Api()
+    out = api.open_export_preview(str(audit_path), max_chars=1234)
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    assert out.get("relative_path") == "Logs/Audit/Audit_demo.json"
+    assert "Comm-SCI Log-Vorschau" in str(created.get("title") or "")
+    html_doc = str((created.get("kwargs") or {}).get("html") or "")
+    assert "Datei-Vorschau" in html_doc
+    assert "Logs/Audit/Audit_demo.json" in html_doc
+    assert "&quot;ok&quot;: true" in html_doc.lower()
+
+
+def test_open_export_preview_ignores_max_chars_and_shows_full_file(monkeypatch, tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    mod.CHAT_LOG_DIR = str(tmp_path / "Logs" / "Chats")
+    mod.AUDIT_LOG_DIR = str(tmp_path / "Logs" / "Audit")
+    Path(mod.CHAT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+    Path(mod.AUDIT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+    audit_path = Path(mod.AUDIT_LOG_DIR) / "Audit_big.json"
+    payload = {"blob": "X" * 25000}
+    audit_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    captured = {}
+
+    class _Win:
+        def bring_to_front(self):
+            return None
+
+    def _create_window(title, **kwargs):
+        captured["title"] = title
+        captured["html"] = str((kwargs or {}).get("html") or "")
+        return _Win()
+
+    monkeypatch.setattr(mod.webview, "create_window", _create_window, raising=True)
+
+    api = mod.Api()
+    out = api.open_export_preview(str(audit_path), max_chars=10)
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    assert out.get("truncated") is False
+    html_doc = str(captured.get("html") or "")
+    assert "Vorschau gekürzt" not in html_doc
+    assert "XXXXXXXXXXXXXXXXXXXXXXXX" in html_doc
+
+
 def test_load_chat_log_uses_storage_service_safe_resolve(tmp_path):
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -1534,6 +1948,19 @@ def test_load_chat_log_uses_storage_service_safe_resolve(tmp_path):
     assert res.get("ok") is True
     assert spy.safe_called is True
     assert spy.exists_called is True
+
+
+def test_load_chat_log_rejects_path_traversal_filename(tmp_path):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    mod.CHAT_LOG_DIR = str(tmp_path / "Logs" / "Chats")
+    Path(mod.CHAT_LOG_DIR).mkdir(parents=True, exist_ok=True)
+
+    api = mod.Api()
+    res = api.load_chat_log("../outside.json", fork=True)
+    assert isinstance(res, dict)
+    assert res.get("ok") is False
+    assert res.get("error") == "path_traversal_blocked"
 
 
 def test_panel_ping_exists_and_returns_ok():
@@ -1719,6 +2146,7 @@ def test_chat_header_uses_compact_controls_without_redundant_wrapper_label():
     assert '__WRAPPER_LABEL__' not in html
     assert 'load_rule_file()' in html
     assert 'id="rulefile"' in html
+    assert 'onclick="exportLogs()"' in html
     assert 'onclick="openExitConfirm()"' in html
     assert 'onclick="window.pywebview.api.close_app()"' not in html
 
@@ -1762,6 +2190,23 @@ def test_chat_send_path_queues_requests_serially():
     assert "async function _drainSendQueue()" in html
     assert "while(_sendQueue.length)" in html
     assert "_enqueueSend(txt)" in html
+
+
+def test_chat_export_button_renders_clickable_file_links_after_export():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_CHAT", "")
+    assert isinstance(html, str) and html
+    assert "function _displayExportPath(path)" in html
+    assert "function _fileLink(path)" in html
+    assert "function _renderExportCard(title, bodyHtml)" in html
+    assert "async function exportLogs()" in html
+    assert "async function _openExportPreviewViaApi(api, raw)" in html
+    assert "function openExportFileFromAnchor(anchor)" in html
+    assert "async function openExportFile(path)" in html
+    assert "open_export_preview(raw, 0)" in html
+    assert "panel_action('open_export_preview', {path: raw, max_chars: 0})" in html
+    assert "window.pywebview.api.export()" in html
+    assert "addMsg('bot', _renderExportNotice(chatPath, auditPath), false, null);" in html
 
 
 def test_chat_uncertainty_tooltip_supports_mouse_hold():
@@ -1817,6 +2262,8 @@ def test_main_bridge_exposes_submit_cgi_feedback():
     bridge = getattr(api, "main_bridge", None)
     assert bridge is not None
     assert hasattr(bridge, "submit_cgi_feedback")
+    assert hasattr(bridge, "preview_export_file")
+    assert hasattr(bridge, "open_export_preview")
 
 
 def test_panel_cmd_handles_qc_override_modal_block_with_info_status():
@@ -1871,6 +2318,26 @@ def test_append_uncertainty_explanation_skips_profile_header_and_keeps_footer():
     assert "ts-footer" in out
 
 
+def test_append_uncertainty_explanation_skips_german_profil_header_and_keeps_footer():
+    mod = load_fix_module()
+    api = mod.Api()
+    src = (
+        "<p>Profil: Standard · Overlay: Strict · SCI: off · Control Layer: on · Color: on</p>"
+        "<p>Der Hauptinhalt ist in Teilen mehrdeutig und interpretationsoffen.</p>"
+        "<div class='ts-footer'>Response at 2026-02-27 14:00:00</div>"
+    )
+    out = api._append_uncertainty_explanation_if_needed(
+        src,
+        user_text="Bitte beantworte ohne feste Annahmen; mehrere Deutungen sind moeglich.",
+    )
+    blocks = re.findall(r"(?is)<p[^>]*>.*?</p>", out)
+    assert len(blocks) >= 2
+    assert "uncertainty-inline-marker" not in blocks[0]
+    assert "uncertainty-inline-marker" in blocks[1]
+    assert "uncertainty-legend" not in out
+    assert "ts-footer" in out
+
+
 def test_append_uncertainty_explanation_skips_control_layer_note_and_marks_content():
     mod = load_fix_module()
     api = mod.Api()
@@ -1891,6 +2358,52 @@ def test_append_uncertainty_explanation_skips_control_layer_note_and_marks_conte
     assert "uncertainty-inline-marker" not in note.group(0)
     assert "data-u-code='U1'" in body.group(0)
     assert "data-u-code='U6'" not in out
+
+
+def test_append_uncertainty_explanation_does_not_treat_sci_trace_u_marker_as_content_u_marker():
+    mod = load_fix_module()
+    api = mod.Api()
+    src = (
+        "<div class='control-layer-note csc-warning'>"
+        "<b>CONTROL LAYER NOTE</b>"
+        "<ul class='control-layer-violations'>"
+        "<li class='control-layer-violation'>Verification Route Gate: RED claim requires uncertainty label (U1-U8).</li>"
+        "</ul>"
+        "</div>"
+        "<div class='sci-trace'>"
+        "<div>SCI Trace</div>"
+        "<ol>"
+        "<li>Critic: Punkt mit vorhandenem Marker "
+        "<span class='uncertainty-inline-marker' data-u-code='U6' data-u-title='U6 - x' title='U6 - x'>U6</span></li>"
+        "</ol>"
+        "</div>"
+        "<p><span class='signal-dot-marker'><span style='color:#c62828; font-weight:600;'>🔴</span></span> "
+        "Kritische Aussage im Inhaltsblock mit starkem Anspruch und ohne belastbaren Nachweis; "
+        "dieser Satz bleibt absichtlich laenger als vierzig Zeichen.</p>"
+    )
+    out = api._append_uncertainty_explanation_if_needed(src)
+    body = re.search(r"(?is)<p[^>]*>.*?</p>", out)
+    assert body is not None
+    body_html = body.group(0)
+    assert re.search(r"data-u-code='U[1-8]'", body_html)
+
+
+def test_append_uncertainty_explanation_keeps_red_span_closed_when_replacing_explicit_u_code():
+    mod = load_fix_module()
+    api = mod.Api()
+    src = (
+        "<p>"
+        "<span style=\"color:#c62828; font-weight:600;\">🔴</span>(U1) "
+        "Kritische Aussage ohne belastbaren Nachweis."
+        "</p>"
+    )
+    out = api._append_uncertainty_explanation_if_needed(src)
+    assert "uncertainty-inline-marker" in out
+    assert "color:#c62828; font-weight:600;\">🔴<span class='uncertainty-inline-wrap'" not in out
+    assert re.search(
+        r"color:#c62828; font-weight:600;\">🔴</span>\s*(?:</span>\s*)?<span class='uncertainty-inline-wrap'",
+        out,
+    )
 
 
 def test_uncertainty_tooltip_uses_answer_language_english():
@@ -1939,6 +2452,1146 @@ def test_control_layer_alert_tooltip_uses_language_german():
         lang="de",
     )
     assert "data-u-title='Control-Layer-Hinweis: deterministische Sicherheits-/Vertragspruefung hat Ausgabe angepasst." in out
+
+
+def test_control_layer_alert_prefers_modular_renderer(monkeypatch):
+    mod = load_fix_module()
+
+    def _render(**kwargs):
+        assert kwargs.get("message") == "Contract adjusted."
+        assert kwargs.get("title") == "CONTROL LAYER NOTE"
+        assert kwargs.get("severity") == "warn"
+        assert "Control Layer note" in str(kwargs.get("tooltip_text") or "")
+        return "ALERT-FROM-MODULE"
+
+    monkeypatch.setattr(
+        mod,
+        "_output_control_layer_note_renderer",
+        types.SimpleNamespace(render_control_layer_alert_html=_render),
+        raising=False,
+    )
+    out = mod._control_layer_alert_html(
+        "Contract adjusted.",
+        title="CONTROL LAYER NOTE",
+        severity="warn",
+        lang="en",
+    )
+    assert out == "ALERT-FROM-MODULE"
+
+
+def test_render_control_layer_block_html_prefers_modular_renderer(monkeypatch):
+    mod = load_fix_module()
+
+    def _render(msg, *, suffix_html=""):
+        assert msg == "blocked"
+        assert suffix_html == "<br>hint"
+        return "BLOCK-FROM-MODULE"
+
+    monkeypatch.setattr(
+        mod,
+        "_output_csc_warning_renderer",
+        types.SimpleNamespace(render_control_layer_block_html=_render),
+        raising=False,
+    )
+
+    out = mod._render_control_layer_block_html("blocked", suffix_html="<br>hint")
+    assert out == "BLOCK-FROM-MODULE"
+
+
+def test_build_profile_switch_audit_line_prefers_command_catalog(monkeypatch):
+    mod = load_fix_module()
+
+    def _render(command, from_profile, to_profile):
+        assert command == "Profile Expert"
+        assert from_profile == "Standard"
+        assert to_profile == "Expert"
+        return "AUDIT-FROM-CATALOG"
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(build_profile_switch_audit_line=_render),
+        raising=False,
+    )
+    out = mod._build_profile_switch_audit_line("Profile Expert", "Standard", "Expert")
+    assert out == "AUDIT-FROM-CATALOG"
+
+
+def test_resolve_post_state_command_html_prefers_command_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Expert"
+    api.gov_state.sci_pending = False
+
+    def _resolve(**kwargs):
+        assert kwargs.get("cmd") == "Profile Expert"
+        assert kwargs.get("current_profile") == "Expert"
+        assert kwargs.get("prev_profile_for_audit") == "Standard"
+        assert kwargs.get("timestamp") == "2026-03-11 07:00:00"
+        kwargs["set_sci_pending_fn"]()
+        return {"html": "POST-CMD-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(resolve_post_state_command_html=_resolve),
+        raising=False,
+    )
+    monkeypatch.setattr(api, "_render_profile_switch_control_html", lambda *a, **k: "LOCAL", raising=True)
+    monkeypatch.setattr(api, "_render_sci_menu_html", lambda *a, **k: "MENU", raising=True)
+    monkeypatch.setattr(api, "_render_comm_state_html", lambda *a, **k: "STATE", raising=True)
+    monkeypatch.setattr(api, "_lang", lambda: "de", raising=True)
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="Profile Expert",
+        timestamp="2026-03-11 07:00:00",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "POST-CMD-FROM-CATALOG"
+    assert api.gov_state.sci_pending is True
+
+
+def test_resolve_post_state_command_html_prefers_sci_on_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+    api.gov_state.sci_pending = False
+
+    calls = {"sci_on": 0, "overlay": 0, "generic": 0}
+
+    def _resolve_sci_on(**kwargs):
+        calls["sci_on"] += 1
+        assert kwargs.get("cmd") == "SCI on"
+        assert callable(kwargs.get("set_sci_pending_fn"))
+        kwargs["set_sci_pending_fn"]()
+        return {"html": "SCI-ON-FROM-CATALOG"}
+
+    def _resolve_overlay(**kwargs):
+        calls["overlay"] += 1
+        return {"html": "OVERLAY-FROM-CATALOG"}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_sci_on_command_html=_resolve_sci_on,
+            resolve_comm_overlay_command_html=_resolve_overlay,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="SCI on",
+        timestamp="2026-03-11 07:04:00",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "SCI-ON-FROM-CATALOG"
+    assert calls["sci_on"] == 1
+    assert calls["overlay"] == 0
+    assert calls["generic"] == 0
+    assert api.gov_state.sci_pending is True
+
+
+def test_resolve_post_state_command_html_sci_on_catalog_falls_back_to_generic_on_empty_html(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"sci_on": 0, "generic": 0}
+
+    def _resolve_sci_on(**kwargs):
+        calls["sci_on"] += 1
+        return {"html": "  "}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        assert kwargs.get("cmd") == "SCI on"
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_sci_on_command_html=_resolve_sci_on,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="SCI on",
+        timestamp="2026-03-11 07:04:30",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "GENERIC-FROM-CATALOG"
+    assert calls["sci_on"] == 1
+    assert calls["generic"] == 1
+
+
+def test_resolve_post_state_command_html_prefers_comm_overlay_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"overlay": 0, "generic": 0}
+
+    def _resolve_overlay(**kwargs):
+        calls["overlay"] += 1
+        assert kwargs.get("cmd") == "Strict on"
+        assert kwargs.get("current_profile") == "Standard"
+        assert kwargs.get("prev_profile_for_audit") == "Standard"
+        assert callable(kwargs.get("render_comm_state_html_fn"))
+        return {"html": "OVERLAY-FROM-CATALOG"}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_comm_overlay_command_html=_resolve_overlay,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="Strict on",
+        timestamp="2026-03-11 07:05:00",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "OVERLAY-FROM-CATALOG"
+    assert calls["overlay"] == 1
+    assert calls["generic"] == 0
+
+
+def test_resolve_post_state_command_html_comm_overlay_catalog_falls_back_to_generic_on_empty_html(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"overlay": 0, "generic": 0}
+
+    def _resolve_overlay(**kwargs):
+        calls["overlay"] += 1
+        return {"html": "  "}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        assert kwargs.get("cmd") == "Explore off"
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_comm_overlay_command_html=_resolve_overlay,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="Explore off",
+        timestamp="2026-03-11 07:06:00",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "GENERIC-FROM-CATALOG"
+    assert calls["overlay"] == 1
+    assert calls["generic"] == 1
+
+
+def test_resolve_post_state_command_html_prefers_comm_overlay_catalog_for_color_toggle(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"overlay": 0, "generic": 0}
+
+    def _resolve_overlay(**kwargs):
+        calls["overlay"] += 1
+        assert kwargs.get("cmd") == "Color off"
+        return {"html": "COLOR-FROM-CATALOG"}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_comm_overlay_command_html=_resolve_overlay,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="Color off",
+        timestamp="2026-03-11 07:07:00",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "COLOR-FROM-CATALOG"
+    assert calls["overlay"] == 1
+    assert calls["generic"] == 0
+
+
+def test_resolve_post_state_command_html_prefers_comm_overlay_catalog_for_sci_off(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"overlay": 0, "generic": 0}
+
+    def _resolve_overlay(**kwargs):
+        calls["overlay"] += 1
+        assert kwargs.get("cmd") == "SCI off"
+        return {"html": "SCI-OFF-FROM-CATALOG"}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_comm_overlay_command_html=_resolve_overlay,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="SCI off",
+        timestamp="2026-03-11 07:08:00",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "SCI-OFF-FROM-CATALOG"
+    assert calls["overlay"] == 1
+    assert calls["generic"] == 0
+
+
+def test_resolve_post_state_command_html_prefers_comm_overlay_catalog_for_sci_recurse(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"overlay": 0, "generic": 0}
+
+    def _resolve_overlay(**kwargs):
+        calls["overlay"] += 1
+        assert kwargs.get("cmd") == "SCI recurse"
+        return {"html": "SCI-RECURSE-FROM-CATALOG"}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_comm_overlay_command_html=_resolve_overlay,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="SCI recurse",
+        timestamp="2026-03-11 07:09:00",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "SCI-RECURSE-FROM-CATALOG"
+    assert calls["overlay"] == 1
+    assert calls["generic"] == 0
+
+
+def test_resolve_post_state_command_html_prefers_comm_validate_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"validate": 0, "generic": 0}
+
+    def _resolve_validate(**kwargs):
+        calls["validate"] += 1
+        assert kwargs.get("cmd") == "Comm Validate"
+        return {"html": "VALIDATE-FROM-CATALOG"}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_comm_validate_command_html=_resolve_validate,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="Comm Validate",
+        timestamp="2026-03-11 07:09:30",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "VALIDATE-FROM-CATALOG"
+    assert calls["validate"] == 1
+    assert calls["generic"] == 0
+
+
+def test_resolve_post_state_command_html_prefers_comm_anchor_toggle_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"anchor": 0, "generic": 0}
+
+    def _resolve_anchor(**kwargs):
+        calls["anchor"] += 1
+        assert kwargs.get("cmd") == "Comm Anchor on"
+        return {"html": "ANCHOR-TOGGLE-FROM-CATALOG"}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_comm_anchor_toggle_command_html=_resolve_anchor,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="Comm Anchor on",
+        timestamp="2026-03-11 07:09:40",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "ANCHOR-TOGGLE-FROM-CATALOG"
+    assert calls["anchor"] == 1
+    assert calls["generic"] == 0
+
+
+def test_resolve_post_state_command_html_prefers_dynamic_one_shot_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"dyn": 0, "generic": 0}
+
+    def _resolve_dyn(**kwargs):
+        calls["dyn"] += 1
+        assert kwargs.get("cmd") == "Dynamic one-shot on"
+        return {"html": "DYNAMIC-FROM-CATALOG"}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_dynamic_one_shot_command_html=_resolve_dyn,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="Dynamic one-shot on",
+        timestamp="2026-03-11 07:09:50",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "DYNAMIC-FROM-CATALOG"
+    assert calls["dyn"] == 1
+    assert calls["generic"] == 0
+
+
+def test_resolve_post_state_command_html_dynamic_one_shot_catalog_falls_back_to_generic_on_empty_html(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    calls = {"dyn": 0, "generic": 0}
+
+    def _resolve_dyn(**kwargs):
+        calls["dyn"] += 1
+        return {"html": " "}
+
+    def _resolve_generic(**kwargs):
+        calls["generic"] += 1
+        assert kwargs.get("cmd") == "Dynamic one-shot on"
+        return {"html": "GENERIC-FROM-CATALOG"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            resolve_dynamic_one_shot_command_html=_resolve_dyn,
+            resolve_post_state_command_html=_resolve_generic,
+        ),
+        raising=False,
+    )
+
+    out = mod._resolve_post_state_command_html(
+        api,
+        cmd="Dynamic one-shot on",
+        timestamp="2026-03-11 07:10:00",
+        prev_profile_for_audit="Standard",
+    )
+    assert out == "GENERIC-FROM-CATALOG"
+    assert calls["dyn"] == 1
+    assert calls["generic"] == 1
+
+
+def test_response_catalog_resolve_comm_overlay_command_html_builds_comm_start_audit_line():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    out = cmdcat.resolve_comm_overlay_command_html(
+        cmd="Comm Start",
+        current_profile="Standard",
+        prev_profile_for_audit="Expert",
+        render_comm_state_html_fn=lambda audit_line="": f"COMM-STATE::{audit_line}",
+    )
+    assert isinstance(out, dict)
+    audit = str(out.get("comm_start_audit_line") or "")
+    html_out = str(out.get("html") or "")
+    assert "Profile-Switch-Audit: command=Comm Start · from=Expert · to=Standard" in audit
+    assert audit in html_out
+
+
+def test_response_catalog_resolve_comm_overlay_command_html_handles_color_commands_without_audit():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    out = cmdcat.resolve_comm_overlay_command_html(
+        cmd="Color on",
+        current_profile="Standard",
+        prev_profile_for_audit="Standard",
+        render_comm_state_html_fn=lambda audit_line="": f"COMM-STATE::{audit_line}",
+    )
+    assert isinstance(out, dict)
+    assert str(out.get("comm_start_audit_line") or "") == ""
+    assert str(out.get("html") or "") == "COMM-STATE::"
+
+
+def test_response_catalog_resolve_comm_overlay_command_html_handles_sci_off_without_audit():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    out = cmdcat.resolve_comm_overlay_command_html(
+        cmd="SCI off",
+        current_profile="Standard",
+        prev_profile_for_audit="Standard",
+        render_comm_state_html_fn=lambda audit_line="": f"COMM-STATE::{audit_line}",
+    )
+    assert isinstance(out, dict)
+    assert str(out.get("comm_start_audit_line") or "") == ""
+    assert str(out.get("html") or "") == "COMM-STATE::"
+
+
+def test_response_catalog_resolve_comm_overlay_command_html_handles_sci_recurse_without_audit():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    out = cmdcat.resolve_comm_overlay_command_html(
+        cmd="SCI recurse",
+        current_profile="Standard",
+        prev_profile_for_audit="Standard",
+        render_comm_state_html_fn=lambda audit_line="": f"COMM-STATE::{audit_line}",
+    )
+    assert isinstance(out, dict)
+    assert str(out.get("comm_start_audit_line") or "") == ""
+    assert str(out.get("html") or "") == "COMM-STATE::"
+
+
+def test_response_catalog_resolve_sci_on_command_html_sets_pending_and_renders_menu():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    calls = {"pending": 0}
+
+    def _set_pending():
+        calls["pending"] += 1
+
+    out = cmdcat.resolve_sci_on_command_html(
+        cmd="SCI on",
+        lang="de",
+        set_sci_pending_fn=_set_pending,
+        render_sci_menu_html_fn=lambda lang="de": f"SCI-MENU::{lang}",
+    )
+    assert isinstance(out, dict)
+    assert str(out.get("html") or "") == "SCI-MENU::de"
+    assert bool(out.get("triggered_sci")) is True
+    assert calls["pending"] == 1
+
+
+def test_response_catalog_resolve_comm_validate_command_html_renders_comm_state():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    out = cmdcat.resolve_comm_validate_command_html(
+        cmd="Comm Validate",
+        render_comm_state_html_fn=lambda audit_line="": f"COMM-STATE::{audit_line}",
+    )
+    assert isinstance(out, dict)
+    assert str(out.get("html") or "") == "COMM-STATE::"
+
+
+def test_response_catalog_resolve_comm_anchor_toggle_command_html_renders_comm_state():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    out = cmdcat.resolve_comm_anchor_toggle_command_html(
+        cmd="Comm Anchor off",
+        render_comm_state_html_fn=lambda audit_line="": f"COMM-STATE::{audit_line}",
+    )
+    assert isinstance(out, dict)
+    assert str(out.get("html") or "") == "COMM-STATE::"
+
+
+def test_response_catalog_resolve_dynamic_one_shot_command_html_renders_comm_state():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    out = cmdcat.resolve_dynamic_one_shot_command_html(
+        cmd="Dynamic one-shot on",
+        render_comm_state_html_fn=lambda audit_line="": f"COMM-STATE::{audit_line}",
+    )
+    assert isinstance(out, dict)
+    assert str(out.get("html") or "") == "COMM-STATE::"
+
+
+def test_handle_command_deterministic_qc_override_prefers_command_catalog(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+
+    called = {"show": False}
+
+    def _show():
+        called["show"] = True
+
+    def _payload():
+        return {"html": "QC-OVERRIDE-FROM-CATALOG", "csc": None}
+
+    monkeypatch.setattr(api, "show_qc_override", _show, raising=True)
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(build_qc_override_opened_result=_payload),
+        raising=False,
+    )
+
+    out = mod._handle_command_deterministic(api, "QC Override", "2026-03-11 08:00:00")
+    assert called["show"] is True
+    assert isinstance(out, dict)
+    assert out.get("html") == "QC-OVERRIDE-FROM-CATALOG"
+
+
+def test_handle_command_deterministic_sci_menu_prefers_command_catalog(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.user_turns = 0
+    api.gov_state.sci_pending = False
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+
+    def _payload(**kwargs):
+        assert kwargs.get("cmd") == "SCI menu"
+        assert kwargs.get("timestamp") == "2026-03-11 08:01:00"
+        kwargs["set_sci_state_fn"]()
+        kwargs["increment_user_turn_fn"]()
+        kwargs["append_history_fn"]("SCI menu")
+        return {"html": "SCI-MENU-FROM-CATALOG", "csc": None}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(build_sci_menu_command_result=_payload),
+        raising=False,
+    )
+
+    out = mod._handle_command_deterministic(api, "SCI menu", "2026-03-11 08:01:00")
+    assert isinstance(out, dict)
+    assert out.get("html") == "SCI-MENU-FROM-CATALOG"
+    assert api.gov_state.sci_pending is True
+    assert api.gov_state.sci_active is False
+    assert api.gov_state.sci_variant == ""
+    assert int(api.gov_state.user_turns) == 1
+    assert bool(api.history) is True
+
+
+def test_handle_command_deterministic_renderer_map_prefers_command_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    def _resolve(**kwargs):
+        assert kwargs.get("cmd") == "Comm State"
+        assert kwargs.get("timestamp") == "2026-03-11 08:02:00"
+        assert callable(kwargs.get("safe_html_fn"))
+        assert callable(kwargs.get("append_history_fn"))
+        return {"html": "CMD-MAP-FROM-CATALOG", "csc": None}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(resolve_renderer_map_command=_resolve),
+        raising=False,
+    )
+
+    out = mod._handle_command_deterministic(api, "Comm State", "2026-03-11 08:02:00")
+    assert isinstance(out, dict)
+    assert out.get("html") == "CMD-MAP-FROM-CATALOG"
+
+
+def test_response_catalog_build_comm_audit_command_result_reports_missing_qc_and_appends_history():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    appended = {"txt": ""}
+
+    out = cmdcat.build_comm_audit_command_result(
+        cmd="Comm Audit",
+        timestamp="2026-03-11 08:02:30",
+        now_iso="2026-03-11T08:02:30",
+        profile="Standard",
+        overlay="Strict",
+        sci_pending=False,
+        sci_variant="",
+        sci_active=False,
+        history=[{"role": "bot", "content": "Antwort ohne QC Footer"}],
+        comm_audit_window=5,
+        export_audit_fn=lambda event: (None, "/tmp/Audit_20260311_080230.json"),
+        scan_rows_fn=lambda sample, history: [],
+        build_route_ctx_fn=lambda user_raw, is_command: {"is_command": False},
+        check_self_debunking_fn=lambda txt, profile_name: "",
+        check_verification_route_gate_fn=lambda txt: "",
+        append_history_fn=lambda txt: appended.__setitem__("txt", str(txt or "")),
+        cwd="/tmp",
+    )
+    assert isinstance(out, dict)
+    html_out = str(out.get("html") or "")
+    assert "Comm Audit" in html_out
+    assert "Missing QC footer" not in html_out
+    assert "Compliance scan (best-effort)" not in html_out
+    assert "Audit_20260311_080230.json" in html_out
+    assert "data-export-path=" in html_out
+    assert "openExportFileFromAnchor(this)" in html_out
+    assert "Exportiert (Audit):" in appended["txt"]
+
+
+def test_response_catalog_build_comm_audit_command_result_omits_compliance_table_rows():
+    mod = load_fix_module()
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+    assert cmdcat is not None
+
+    rows = [(1, "✓ Compliant"), (2, "✓ Compliant"), (3, "✓ Compliant")]
+    out = cmdcat.build_comm_audit_command_result(
+        cmd="Comm Audit",
+        timestamp="2026-03-11 08:02:30",
+        now_iso="2026-03-11T08:02:30",
+        profile="Standard",
+        overlay="Strict",
+        sci_pending=False,
+        sci_variant="",
+        sci_active=False,
+        history=[{"role": "bot", "content": "Antwort 1"}, {"role": "bot", "content": "Antwort 2"}, {"role": "bot", "content": "Antwort 3"}],
+        comm_audit_window=5,
+        export_audit_fn=lambda event: (None, "/tmp/Audit_20260311_080230.json"),
+        scan_rows_fn=lambda sample, history: list(rows),
+        build_route_ctx_fn=lambda user_raw, is_command: {"is_command": False},
+        check_self_debunking_fn=lambda txt, profile_name: "",
+        check_verification_route_gate_fn=lambda txt: "",
+        append_history_fn=lambda txt: None,
+        cwd="/tmp",
+    )
+    assert isinstance(out, dict)
+    html_out = str(out.get("html") or "")
+    assert "Compliance scan (best-effort)" not in html_out
+    assert "#1" not in html_out
+    assert "#2" not in html_out
+    assert "#3" not in html_out
+
+
+def test_handle_command_deterministic_comm_audit_prefers_command_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    called = {"cat": 0, "export": 0}
+
+    def _cat_payload(**kwargs):
+        called["cat"] += 1
+        assert kwargs.get("cmd") == "Comm Audit"
+        kwargs["append_history_fn"]("Comm Audit\nExportiert (Audit): Logs/Audit/Audit_test.json")
+        return {"html": "COMM-AUDIT-FROM-CATALOG", "csc": None}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(build_comm_audit_command_result=_cat_payload),
+        raising=False,
+    )
+
+    def _export(*args, **kwargs):
+        called["export"] += 1
+        return (None, None)
+
+    monkeypatch.setattr(api, "export", _export, raising=True)
+
+    out = mod._handle_command_deterministic(api, "Comm Audit", "2026-03-11 08:03:00")
+    assert isinstance(out, dict)
+    assert out.get("html") == "COMM-AUDIT-FROM-CATALOG"
+    assert called["cat"] == 1
+    assert called["export"] == 0, "Legacy export path must not run when catalog handled Comm Audit"
+    hist = getattr(api, "history", []) or []
+    assert hist and "Comm Audit" in str((hist[-1] or {}).get("content") or "")
+
+
+def test_handle_command_deterministic_comm_audit_falls_back_when_catalog_missing(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    monkeypatch.setattr(mod, "_output_command_response_catalog", None, raising=False)
+
+    called = {"export": 0}
+
+    def _export(*args, **kwargs):
+        called["export"] += 1
+        return (None, "/tmp/Audit_20260311_080310.json")
+
+    monkeypatch.setattr(api, "export", _export, raising=True)
+
+    out = mod._handle_command_deterministic(api, "Comm Audit", "2026-03-11 08:03:10")
+    assert isinstance(out, dict)
+    html_out = str(out.get("html") or "")
+    assert "Comm Audit" in html_out
+    assert "Audit exported." in html_out
+    assert "data-export-path=" in html_out
+    assert "openExportFileFromAnchor(this)" in html_out
+    assert called["export"] == 1
+    hist = getattr(api, "history", []) or []
+    assert hist and "Comm Audit" in str((hist[-1] or {}).get("content") or "")
+
+
+def test_handle_command_deterministic_no_longer_accepts_comm_audi_alias():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    out = mod._handle_command_deterministic(api, "Comm Audi", "2026-03-11 08:03:00")
+    assert out is None
+
+
+def test_execute_legacy_command_prefers_command_catalog_for_basic_state(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.overlay = ""
+
+    monkeypatch.setattr(mod, "_controller_dispatch", None, raising=False)
+    monkeypatch.setattr(mod, "_intent_from_command", None, raising=False)
+    monkeypatch.setattr(mod, "_state_from_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_state_apply_to_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_apply_intent", None, raising=False)
+
+    def _apply_basic(**kwargs):
+        assert kwargs.get("cmd") == "Strict on"
+        st = kwargs.get("state")
+        st.overlay = "ModuleStrict"
+        return True
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(apply_basic_command_state=_apply_basic),
+        raising=False,
+    )
+
+    api._execute_legacy_command("Strict on")
+    assert api.gov_state.overlay == "ModuleStrict"
+
+
+def test_execute_legacy_command_skips_basic_fallback_when_catalog_exists(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.overlay = ""
+
+    monkeypatch.setattr(mod, "_controller_dispatch", None, raising=False)
+    monkeypatch.setattr(mod, "_intent_from_command", None, raising=False)
+    monkeypatch.setattr(mod, "_state_from_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_state_apply_to_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_apply_intent", None, raising=False)
+
+    def _apply_basic(**kwargs):
+        assert kwargs.get("cmd") == "Strict on"
+        # Simulate catalog no-op. Phase G expects no monolith fallback mutation.
+        return False
+
+    def _is_supported(cmd):
+        return str(cmd or "").strip() == "Strict on"
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(
+            apply_basic_command_state=_apply_basic,
+            is_basic_command_supported=_is_supported,
+        ),
+        raising=False,
+    )
+
+    api._execute_legacy_command("Strict on")
+    assert api.gov_state.overlay == ""
+
+
+def test_execute_legacy_command_keeps_basic_fallback_on_catalog_error(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.overlay = ""
+
+    monkeypatch.setattr(mod, "_controller_dispatch", None, raising=False)
+    monkeypatch.setattr(mod, "_intent_from_command", None, raising=False)
+    monkeypatch.setattr(mod, "_state_from_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_state_apply_to_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_apply_intent", None, raising=False)
+
+    def _apply_basic(**kwargs):
+        raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(apply_basic_command_state=_apply_basic),
+        raising=False,
+    )
+
+    api._execute_legacy_command("Strict on")
+    assert api.gov_state.overlay == "Strict"
+
+
+def test_execute_legacy_command_prefers_command_catalog_for_profile_switch(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    monkeypatch.setattr(mod, "_controller_dispatch", None, raising=False)
+    monkeypatch.setattr(mod, "_intent_from_command", None, raising=False)
+    monkeypatch.setattr(mod, "_state_from_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_state_apply_to_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_apply_intent", None, raising=False)
+
+    def _apply_profile(**kwargs):
+        assert kwargs.get("cmd") == "Profile Expert"
+        st = kwargs.get("state")
+        st.active_profile = "ExpertFromCatalog"
+        cb = kwargs.get("on_profile_qc_reset_fn")
+        if callable(cb):
+            cb()
+        return True
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(apply_profile_switch_state=_apply_profile),
+        raising=False,
+    )
+
+    api._execute_legacy_command("Profile Expert")
+    assert api.gov_state.active_profile == "ExpertFromCatalog"
+
+
+def test_execute_legacy_command_skips_profile_fallback_when_catalog_exists(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Standard"
+
+    monkeypatch.setattr(mod, "_controller_dispatch", None, raising=False)
+    monkeypatch.setattr(mod, "_intent_from_command", None, raising=False)
+    monkeypatch.setattr(mod, "_state_from_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_state_apply_to_runtime", None, raising=False)
+    monkeypatch.setattr(mod, "_apply_intent", None, raising=False)
+
+    def _apply_profile(**kwargs):
+        assert kwargs.get("cmd") == "Profile Expert"
+        # Simulate a catalog no-op. Phase G expects no monolith fallback mutation.
+        return False
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(apply_profile_switch_state=_apply_profile),
+        raising=False,
+    )
+
+    api._execute_legacy_command("Profile Expert")
+    assert api.gov_state.active_profile == "Standard"
+
+
+def test_handle_sci_selection_prefers_command_catalog(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.history = []
+
+    def _build(**kwargs):
+        assert kwargs.get("letter") == "B"
+        return {
+            "char": "B",
+            "html": "SCI-SELECTION-FROM-CATALOG",
+            "history_text": "SCI Variant B activated.",
+        }
+
+    monkeypatch.setattr(
+        mod,
+        "_output_command_response_catalog",
+        types.SimpleNamespace(build_sci_selection_result=_build),
+        raising=False,
+    )
+
+    out = api._handle_sci_selection("b")
+    assert isinstance(out, dict)
+    assert out.get("html") == "SCI-SELECTION-FROM-CATALOG"
+    assert api.gov_state.sci_variant == "B"
+    assert bool(api.gov_state.sci_active) is True
+    assert bool(api.gov_state.sci_pending) is False
+    assert any(isinstance(h, dict) and "SCI Variant B activated." in str(h.get("content", "")) for h in api.history)
+
+
+def test_apply_color_spans_prefers_modular_renderer(monkeypatch):
+    mod = load_fix_module()
+
+    def _render(text, *, enabled=True, evidence_color=None, evidence_icon=None):
+        assert text == "[GREEN] 🟢"
+        assert enabled is True
+        assert isinstance(evidence_color, dict)
+        assert isinstance(evidence_icon, dict)
+        return "COLOR-FROM-MODULE"
+
+    monkeypatch.setattr(
+        mod,
+        "_output_color_markers_renderer",
+        types.SimpleNamespace(apply_color_spans=_render),
+        raising=False,
+    )
+
+    out = mod.apply_color_spans("[GREEN] 🟢", enabled=True)
+    assert out == "COLOR-FROM-MODULE"
+
+
+def test_cgi_ui_texts_prefers_modular_renderer(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+
+    def _texts(*, lang="de"):
+        assert lang == "en"
+        return {
+            "saved": "S {c},{i},{e}",
+            "applied": "A {c},{i},{e}",
+            "no_prompt": "N",
+            "invalid": "I",
+            "repeat_failed": "R",
+        }
+
+    monkeypatch.setattr(
+        mod,
+        "_output_cgi_line_renderer",
+        types.SimpleNamespace(get_cgi_ui_texts=_texts),
+        raising=False,
+    )
+
+    out = api._cgi_ui_texts(lang="en")
+    assert out["saved"] == "S {c},{i},{e}"
+    assert out["applied"] == "A {c},{i},{e}"
+
+
+def test_build_cgi_feedback_prompt_blocks_prefers_modular_renderer(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+
+    def _feedback(*, user_feedback_triplet="", process_feedback=""):
+        assert user_feedback_triplet == "3,2,1"
+        assert process_feedback == "SCI: 1,1,1"
+        return "[CGI Feedback]\nMODULE-LINE"
+
+    def _constraints(lines):
+        assert list(lines) == ["- alpha", "- beta"]
+        return "[CGI One-Shot Rewrite Constraints]\nMODULE-CONSTRAINTS"
+
+    monkeypatch.setattr(
+        mod,
+        "_output_cgi_line_renderer",
+        types.SimpleNamespace(
+            render_cgi_feedback_block=_feedback,
+            render_cgi_constraints_block=_constraints,
+        ),
+        raising=False,
+    )
+
+    out = api._build_cgi_feedback_prompt_blocks(
+        user_feedback_triplet="3,2,1",
+        process_feedback="SCI: 1,1,1",
+        one_shot_constraints=["- alpha", "- beta"],
+    )
+    assert out == [
+        "[CGI Feedback]\nMODULE-LINE",
+        "[CGI One-Shot Rewrite Constraints]\nMODULE-CONSTRAINTS",
+    ]
 
 
 def test_csc_meta_tooltip_uses_answer_language_english():
@@ -2046,6 +3699,228 @@ def test_signal_dot_marker_count_follows_llm_output_without_wrapper_capping():
     assert out.count("signal-dot-marker") == 3
 
 
+def test_signal_dot_helper_functions_delegate_to_output_color_renderer(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubRenderer:
+        def annotate_signal_dot_tooltips_html(self, html_text, **kwargs):
+            return f"ANN::{html_text}::{kwargs.get('lang')}"
+
+        def inject_fallback_signal_dots_html(self, html_text, **kwargs):
+            return f"INJECT::{html_text}::{kwargs.get('lang')}"
+
+        def limit_signal_dot_marker_density_html(self, html_text, **kwargs):
+            return f"LIMIT::{html_text}::{kwargs.get('max_per_block')}"
+
+        def strip_signal_dots_from_heading_only_blocks_html(self, html_text):
+            return f"STRIP::{html_text}"
+
+    monkeypatch.setattr(mod, "_output_color_markers_renderer", _StubRenderer())
+
+    assert mod.annotate_signal_dot_tooltips_html("<p>z</p>", lang="en") == "ANN::<p>z</p>::en"
+    assert mod.inject_fallback_signal_dots_html("<p>a</p>", lang="en") == "INJECT::<p>a</p>::en"
+    assert mod.limit_signal_dot_marker_density_html("<p>b</p>", max_per_block=2) == "LIMIT::<p>b</p>::2"
+    assert mod.strip_signal_dots_from_heading_only_blocks_html("<p>c</p>") == "STRIP::<p>c</p>"
+
+
+def test_signal_dot_helper_functions_are_fail_soft_when_renderer_unavailable(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_color_markers_renderer", None)
+
+    src = "<p>kein marker</p>"
+    assert mod.annotate_signal_dot_tooltips_html(src, lang="de") == src
+    assert mod.inject_fallback_signal_dots_html(src, lang="de") == src
+    assert mod.limit_signal_dot_marker_density_html(src, max_per_block=1) == src
+    assert mod.strip_signal_dots_from_heading_only_blocks_html(src) == src
+
+
+def test_auto_embed_image_urls_delegates_to_output_renderer(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubImageEmbedRenderer:
+        def auto_embed_image_urls(self, text):
+            return f"IMG::{text}"
+
+    monkeypatch.setattr(mod, "_output_image_embed_renderer", _StubImageEmbedRenderer())
+    assert mod.auto_embed_image_urls("https://example.com/a.png") == "IMG::https://example.com/a.png"
+
+
+def test_auto_embed_image_urls_is_fail_soft_and_handles_single_url_code_fences(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_image_embed_renderer", None)
+    src = (
+        "Bild: https://example.com/live.png\n\n"
+        "```txt\n"
+        "https://example.com/code.jpg\n"
+        "```\n"
+    )
+    out = mod.auto_embed_image_urls(src)
+    assert '<img src="https://example.com/live.png"' in out
+    assert '<img src="https://example.com/code.jpg"' in out
+    assert out.count("<img ") == 2
+    assert "https://example.com/code.jpg" in out
+
+
+def test_auto_embed_image_urls_handles_trailing_sentence_punctuation(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_image_embed_renderer", None)
+    src = "Bild: https://example.com/trailing.png."
+    out = mod.auto_embed_image_urls(src)
+    assert "https://example.com/trailing.png." in out
+    assert '<img src="https://example.com/trailing.png"' in out
+    assert out.count("<img ") == 1
+
+
+def test_auto_embed_image_urls_adds_image_tag_for_inline_code_wrapped_url(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_image_embed_renderer", None)
+    src = "`https://example.com/inline.png`"
+    out = mod.auto_embed_image_urls(src)
+    assert "`https://example.com/inline.png`" in out
+    assert '<img src="https://example.com/inline.png"' in out
+    assert out.count("<img ") == 1
+
+
+def test_auto_embed_image_urls_handles_angle_wrapped_url(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_image_embed_renderer", None)
+    src = "<https://example.com/angle.png>"
+    out = mod.auto_embed_image_urls(src)
+    assert "<https://example.com/angle.png>" in out
+    assert '<img src="https://example.com/angle.png"' in out
+    assert out.count("<img ") == 1
+
+
+def test_auto_embed_image_urls_survives_markdown_render_for_inline_code_and_single_fence(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_image_embed_renderer", None)
+    raw_inline = "`https://example.com/comm-sci-manual-test.png`"
+    prepared_inline = mod.auto_embed_image_urls(raw_inline)
+    html_inline = mod.markdown.markdown(prepared_inline, extensions=['extra', 'codehilite'])
+    assert re.search(r'<img[^>]+src="https://example.com/comm-sci-manual-test\.png"', str(html_inline or ""))
+
+    raw_fence = "```txt\nhttps://example.com/comm-sci-manual-test.png\n```"
+    prepared_fence = mod.auto_embed_image_urls(raw_fence)
+    html_fence = mod.markdown.markdown(prepared_fence, extensions=['extra', 'codehilite'])
+    assert re.search(r'<img[^>]+src="https://example.com/comm-sci-manual-test\.png"', str(html_fence or ""))
+
+
+def test_evaluate_strict_enforcement_delegates_to_output_renderer(monkeypatch):
+    mod = load_fix_module()
+    seen = {}
+
+    class _StubStrictGateRenderer:
+        def evaluate_strict_enforcement(self, **kwargs):
+            seen.update(kwargs)
+            return {
+                "blocked": False,
+                "blocked_html": "",
+                "strict_banner_html": "STRICT::WARN",
+                "meta": {"strict_enforcement": "warned"},
+            }
+
+    monkeypatch.setattr(mod, "_output_strict_gate_renderer", _StubStrictGateRenderer())
+    out = mod.evaluate_strict_enforcement(
+        raw_for_render="A",
+        user_raw="U",
+        profile_name="Standard",
+        override_violations=["x"],
+        settings={"policy": "strict_warn", "enabled": True},
+        validator_obj=None,
+        runtime_state=None,
+        append_system_message_fn=None,
+    )
+    assert out.get("strict_banner_html") == "STRICT::WARN"
+    assert seen.get("raw_for_render") == "A"
+    assert callable(seen.get("render_strict_block_warning_html_fn"))
+    assert callable(seen.get("render_strict_warn_banner_html_fn"))
+
+
+def test_evaluate_strict_enforcement_fallback_warn_and_block(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_strict_gate_renderer", None)
+
+    class _DummyValidator:
+        def validate(self, text=None, **kwargs):
+            return (["hard_violation"], [])
+
+    warn = mod.evaluate_strict_enforcement(
+        raw_for_render="Antwort",
+        user_raw="Prompt",
+        profile_name="Standard",
+        override_violations=[],
+        settings={"policy": "strict_warn", "enabled": True},
+        validator_obj=_DummyValidator(),
+        runtime_state=types.SimpleNamespace(),
+        append_system_message_fn=None,
+    )
+    assert warn.get("blocked") is False
+    assert "RULE VIOLATION DETECTED" in str(warn.get("strict_banner_html") or "")
+
+    block = mod.evaluate_strict_enforcement(
+        raw_for_render="Antwort",
+        user_raw="Prompt",
+        profile_name="Standard",
+        override_violations=[],
+        settings={"policy": "strict_block", "enabled": True},
+        validator_obj=_DummyValidator(),
+        runtime_state=types.SimpleNamespace(),
+        append_system_message_fn=None,
+    )
+    assert block.get("blocked") is True
+    assert "STRICT BLOCK" in str(block.get("blocked_html") or "")
+
+
+def test_render_quality_helpers_delegate_to_output_renderer(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubRenderQualityRenderer:
+        def looks_like_rendered_html(self, html_text):
+            return str(html_text) == "ok"
+
+        def build_normalization_summary(self, **kwargs):
+            return {"qc_footer_raw_count": 7, "custom": True}
+
+    monkeypatch.setattr(mod, "_output_render_quality_renderer", _StubRenderQualityRenderer())
+    assert mod._looks_like_rendered_html_runtime("ok") is True
+    assert mod._looks_like_rendered_html_runtime("bad") is False
+    out = mod._build_render_normalization_summary("raw", "<p>html</p>")
+    assert out.get("qc_footer_raw_count") == 7
+    assert out.get("custom") is True
+
+
+def test_render_quality_helpers_are_fail_soft_when_renderer_unavailable(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_render_quality_renderer", None)
+    assert mod._looks_like_rendered_html_runtime("<p>x</p>") is True
+    out = mod._build_render_normalization_summary("QC-Matrix: X", "<p>QC-Matrix: X</p>")
+    assert isinstance(out, dict)
+    assert out.get("qc_footer_raw_count") == 1
+    assert "self_debunking_boxed" in out
+
+
+def test_append_uncertainty_explanation_delegates_to_output_uncertainty_renderer(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.answer_language = "en"
+
+    class _StubUncertaintyRenderer:
+        def append_uncertainty_explanation_if_needed(self, html_text, **kwargs):
+            return f"U-DELEGATE::{html_text}::{kwargs.get('lang')}::{bool(kwargs.get('uncertainty_codes_mod') is not None)}"
+
+    monkeypatch.setattr(mod, "_output_uncertainty_renderer", _StubUncertaintyRenderer())
+    out = api._append_uncertainty_explanation_if_needed("<p>x</p>", user_text="u")
+    assert out == "U-DELEGATE::<p>x</p>::en::True"
+
+
+def test_append_uncertainty_explanation_is_fail_soft_when_renderer_unavailable(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+    monkeypatch.setattr(mod, "_output_uncertainty_renderer", None)
+    src = "<p>x</p>"
+    assert api._append_uncertainty_explanation_if_needed(src, user_text="u") == src
+
+
 def test_append_uncertainty_explanation_marks_plain_explicit_u_code():
     mod = load_fix_module()
     api = mod.Api()
@@ -2081,6 +3956,32 @@ def test_append_uncertainty_explanation_does_not_inject_fallback_signal_dots_whe
     assert "signal-dot-marker" not in out
 
 
+def test_color_off_strips_visual_markers_and_textual_evidence_tags():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.validator = None
+    api.gov_state.color = "off"
+
+    api.chat_session = DummySession([
+        "Antwortsatz.\n[GREEN] 🟢 Behauptung A.\nSelf-Debunking:\n1. Weakness: x\n2. Weakness: y\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+    ])
+
+    out = api.ask("Testfrage")
+    html_out = out.get("html") if isinstance(out, dict) else str(out)
+    plain = re.sub(r"(?is)<[^>]+>", " ", html_out)
+    plain = re.sub(r"\s+", " ", plain)
+
+    assert "[GREEN]" not in plain
+    assert "[YELLOW]" not in plain
+    assert "[RED]" not in plain
+    assert "🟢" not in plain
+    assert "🟡" not in plain
+    assert "🔴" not in plain
+    assert "⚪" not in plain
+
+
 def test_append_uncertainty_explanation_keeps_existing_llm_signal_markers():
     mod = load_fix_module()
     api = mod.Api()
@@ -2114,12 +4015,12 @@ def test_startup_default_provider_and_model_are_gemini():
     assert getattr(cfg, 'get_provider_model', lambda _p=None: '')('gemini') == 'gemini-2.0-flash'
 
 
-def test_default_ruleset_prefers_v20_2_2_when_available():
+def test_default_ruleset_prefers_v20_2_5_when_available():
     mod = load_fix_module()
     default_json = Path(str(getattr(mod, 'DEFAULT_JSON', '') or ''))
-    target = ROOT / 'JSON' / 'Comm-SCI-v20.2.2.json'
+    target = ROOT / 'JSON' / 'Comm-SCI-v20.2.5.json'
     if target.exists():
-        assert default_json.name == 'Comm-SCI-v20.2.2.json'
+        assert default_json.name == 'Comm-SCI-v20.2.5.json'
 
 def test_can_switch_back_to_gemini_after_other_provider():
     """Regression: switching back to gemini must not be blocked by a broken no-op guard."""
@@ -2221,6 +4122,15 @@ def test_panel_html_section_defaults_and_provider_header():
     assert "_bindPanelTooltipEvents();" in html
 
 
+def test_panel_passphrase_modal_uses_border_box_width_rules():
+    mod = load_fix_module()
+    html = getattr(mod, "HTML_PANEL", "")
+    assert isinstance(html, str) and html
+    assert ".setting-select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box;" in html
+    assert ".modal-card { width: min(420px, calc(100vw - 24px)); max-width: calc(100vw - 24px); box-sizing: border-box;" in html
+    assert ".modal-card .setting-select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; display: block; }" in html
+
+
 def test_panel_tooltips_use_custom_overlay_and_strip_native_title():
     mod = load_fix_module()
     html = getattr(mod, 'HTML_PANEL', '')
@@ -2240,13 +4150,20 @@ def test_chat_template_tooltip_overlay_disables_native_title_tooltips():
     assert 'data-u-title="${escHtml(t.help)}" title=' not in txt
     assert 'onclick="copyToClipboard(this)" data-u-title=' in txt
     assert 'onclick="copyToClipboard(this)" title="Copy"' not in txt
-    assert "_decorateQcMatrixTooltips(d, (opts && opts.answerLang) ? opts.answerLang : '');" in txt
+    assert "function _applyResponseTooltips(root, answerLang){" in txt
+    assert "_decorateQcMatrixTooltips(root, answerLang);" in txt
+    assert "_normalizeCustomTooltipTargets(root);" in txt
+    assert "_applyResponseTooltips(d, answerLang);" in txt
+    assert "requestAnimationFrame(() => {" in txt
+    assert "MathJax.typesetPromise().then(() => {" in txt
+    assert "_restoreProtectedQcDimTips(" in txt
+    assert "__QC_DIM_TIP_PROTECT_" in txt
+    assert "const qcMarker = /(?:QC(?:\\s*-\\s*Matrix)?\\s*:)/i;" in txt
     assert "_qcDimScaleRows(dimKey, lang)" in txt
     assert "Scale 0-3 (table):" in txt
     assert "Skala 0-3 (Tabelle):" in txt
     assert "tip.style.whiteSpace = 'pre-line';" in txt
     assert "const txt = String(target.getAttribute('data-u-title') || '').trim();" in txt
-    assert "_normalizeCustomTooltipTargets(d);" in txt
     assert "el.removeAttribute('title');" in txt
 
 
@@ -3059,8 +4976,102 @@ def test_comm_state_shows_effective_qc_values_and_optional_override_line():
     assert "QC-Overrides:" in html and "Brevity=1" in html
 
 
+def test_comm_state_shows_verification_route_display_policy_state():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
 
-def test_chat_export_includes_provider_model_metadata_and_history(tmp_path):
+    api = mod.Api()
+    api.validator = None
+    api.chat_session = DummySession(["SHOULD NOT BE USED"])
+
+    cfg_obj = getattr(mod, "cfg", None)
+    old_root = None
+    old_provider = None
+    try:
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            old_root = cfg_obj.config.get("hide_verification_route_lines")
+            cfg_obj.config.pop("hide_verification_route_lines", None)
+            provs = cfg_obj.config.setdefault("providers", {})
+            g = provs.setdefault("gemini", {})
+            old_provider = g.get("hide_verification_route_lines")
+            g.pop("hide_verification_route_lines", None)
+
+        html_visible = _extract_html(api.ask("Comm State"))
+        assert "Verification route lines" in html_visible
+        assert "visible" in html_visible
+
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            provs = cfg_obj.config.setdefault("providers", {})
+            g = provs.setdefault("gemini", {})
+            g["hide_verification_route_lines"] = True
+
+        html_hidden = _extract_html(api.ask("Comm State"))
+        assert "Verification route lines" in html_hidden
+        assert "hidden" in html_hidden
+    finally:
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            if old_root is None:
+                cfg_obj.config.pop("hide_verification_route_lines", None)
+            else:
+                cfg_obj.config["hide_verification_route_lines"] = old_root
+            provs = cfg_obj.config.setdefault("providers", {})
+            g = provs.setdefault("gemini", {})
+            if old_provider is None:
+                g.pop("hide_verification_route_lines", None)
+            else:
+                g["hide_verification_route_lines"] = old_provider
+
+
+def test_panel_action_can_toggle_verification_route_display_policy_runtime():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+
+    api = mod.Api()
+    api.validator = None
+    api.chat_session = DummySession(["SHOULD NOT BE USED"])
+
+    cfg_obj = getattr(mod, "cfg", None)
+    old_root = None
+    old_provider = None
+    try:
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            old_root = cfg_obj.config.get("hide_verification_route_lines")
+            cfg_obj.config.pop("hide_verification_route_lines", None)
+            provs = cfg_obj.config.setdefault("providers", {})
+            g = provs.setdefault("gemini", {})
+            old_provider = g.get("hide_verification_route_lines")
+            g.pop("hide_verification_route_lines", None)
+
+        on = api.panel_action(
+            "set_hide_verification_route_lines",
+            {"scope": "provider", "provider": "gemini", "enabled": True},
+        )
+        assert isinstance(on, dict) and bool(on.get("ok")) is True
+        assert bool(on.get("effective")) is True
+        assert "hidden" in _extract_html(api.ask("Comm State"))
+
+        reset = api.panel_action(
+            "set_hide_verification_route_lines",
+            {"scope": "provider", "provider": "gemini", "clear": True},
+        )
+        assert isinstance(reset, dict) and bool(reset.get("ok")) is True
+        assert bool(reset.get("effective")) is False
+        assert "visible" in _extract_html(api.ask("Comm State"))
+    finally:
+        if cfg_obj is not None and isinstance(getattr(cfg_obj, "config", None), dict):
+            if old_root is None:
+                cfg_obj.config.pop("hide_verification_route_lines", None)
+            else:
+                cfg_obj.config["hide_verification_route_lines"] = old_root
+            provs = cfg_obj.config.setdefault("providers", {})
+            g = provs.setdefault("gemini", {})
+            if old_provider is None:
+                g.pop("hide_verification_route_lines", None)
+            else:
+                g["hide_verification_route_lines"] = old_provider
+
+
+def test_chat_export_includes_provider_model_metadata_and_history(tmp_path, monkeypatch):
     mod = load_fix_module()
     _prime_module_gov(mod)
     api = mod.Api()
@@ -3073,6 +5084,14 @@ def test_chat_export_includes_provider_model_metadata_and_history(tmp_path):
     mod.CHAT_LOG_DIR = str(tmp_path / 'Logs' / 'Chats')
     for d in [mod.CONFIG_DIR, mod.LOGS_DIR, mod.AUDIT_LOG_DIR, mod.CHAT_LOG_DIR]:
         os.makedirs(d, exist_ok=True)
+
+    # Keep test deterministic even when local encrypted keys exist.
+    monkeypatch.setattr(
+        api,
+        "_passphrase_requirement_for_provider",
+        lambda provider, passphrase_override=None: {"required": False, "encrypted": False},
+        raising=False,
+    )
 
     # Ensure we can switch without triggering network (OpenRouter path is stateless)
     api.set_provider('openrouter')
@@ -3320,6 +5339,60 @@ def test_profile_switch_emits_profile_switch_audit_line():
     assert "Profile-Switch-Audit: command=Profile Expert · from=Standard · to=Expert · rule=explicit-standalone-only" in html_out
 
 
+def test_profile_switch_repeated_command_keeps_audit_line_deterministic():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.validator = None
+
+    first = api.ask("Profile Briefing")
+    first_html = first.get("html") if isinstance(first, dict) else str(first)
+    assert "Profile-Switch-Audit: command=Profile Briefing · from=Standard · to=Briefing · rule=explicit-standalone-only" in first_html
+
+    second = api.ask("Profile Briefing")
+    second_html = second.get("html") if isinstance(second, dict) else str(second)
+    assert "Profile-Switch-Audit: command=Profile Briefing · from=Briefing · to=Briefing · rule=explicit-standalone-only" in second_html
+
+
+def test_profile_sandbox_and_briefing_initialize_color_off_but_color_toggle_can_override():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    try:
+        rules = mod.gov.data if isinstance(mod.gov.data, dict) else {}
+        profiles = rules.get("profiles")
+        if not isinstance(profiles, dict):
+            profiles = {}
+            rules["profiles"] = profiles
+        for _p in ("Sandbox", "Briefing"):
+            pdef = profiles.get(_p)
+            if not isinstance(pdef, dict):
+                pdef = {}
+                profiles[_p] = pdef
+            pdef["color_default"] = "off"
+    except Exception:
+        pass
+    api = mod.Api()
+    api.validator = None
+
+    out_sandbox = api.ask("Profile Sandbox")
+    html_sandbox = out_sandbox.get("html") if isinstance(out_sandbox, dict) else str(out_sandbox)
+    plain_sandbox = re.sub(r"<[^>]+>", " ", html_sandbox)
+    assert "Color: off" in plain_sandbox
+    assert api.gov_state.color == "off"
+
+    out_briefing = api.ask("Profile Briefing")
+    html_briefing = out_briefing.get("html") if isinstance(out_briefing, dict) else str(out_briefing)
+    plain_briefing = re.sub(r"<[^>]+>", " ", html_briefing)
+    assert "Color: off" in plain_briefing
+    assert api.gov_state.color == "off"
+
+    api.ask("Color on")
+    assert api.gov_state.color == "on"
+    reminder = api._state_reminder_line()
+    assert "Profile=Briefing" in reminder
+    assert "Color=on" in reminder
+
+
 def test_comm_start_emits_profile_switch_audit_line_when_resetting_profile():
     mod = load_fix_module()
     _prime_module_gov(mod)
@@ -3442,6 +5515,139 @@ def test_apply_csc_strict_collapses_mixed_qc_and_qc_matrix_footers_to_single_can
 
     assert sum(1 for ln in qc_lines if re.match(r"(?i)^QC-Matrix\s*:", ln)) == 1
     assert not any(re.match(r"(?i)^QC\s*:", ln) for ln in qc_lines)
+
+
+def test_apply_csc_strict_rebuilds_localized_qc_matrix_without_deltas_to_canonical_en_footer_with_tooltips():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    api.gov_state.comm_active = True
+    api.gov_state.color = "off"
+
+    raw = (
+        "Antworttext\n\n"
+        "Self-Debunking:\n"
+        "1. Weakness: A.\n"
+        "2. Weakness: B.\n\n"
+        "QC-Matrix: Klarheit 3 · Kürze 2 · Evidenz 3 · Empathie 2 · Konsistenz 3 · Neutralität 3"
+    )
+
+    html_out, _ = api._apply_csc_strict(raw_response=raw, user_raw="Was ist Zeit?", is_command=False)
+
+    assert "QC detected but no deltas found." not in html_out
+    plain = re.sub(r"<[^>]+>", " ", str(html_out or ""))
+    plain = re.sub(r"\s+", " ", plain).strip()
+    for lbl in ("Clarity", "Brevity", "Evidence", "Empathy", "Consistency", "Neutrality"):
+        assert re.search(rf"{lbl}\s+[0-3]\s*\(Δ[+\-]?\d+\)", plain), plain
+    assert "Klarheit " not in plain
+    assert "Kürze " not in plain
+    assert "Evidenz " not in plain
+    assert "Empathie " not in plain
+    assert "Konsistenz " not in plain
+    assert "Neutralität " not in plain
+    assert html_out.count('class="qc-dim-tip"') == 6
+    assert html_out.find("Self-Debunking") < html_out.find("QC-Matrix:")
+    assert html_out.find("QC-Matrix:") < html_out.find("Response at")
+
+
+def test_apply_csc_strict_rebuilds_localized_qc_without_delta_and_keeps_trace_sd_qc_timestamp_order():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    api.validator = None
+    api.gov_state.comm_active = True
+    api.gov_state.color = "off"
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+    api.gov_state.sci_pending = False
+    api.gov_state.answer_language = "de"
+    api._sci_variant_def = lambda _v: ({}, ["Plan", "Solution", "Check"], None)  # type: ignore[assignment]
+
+    raw = (
+        "Antwortteil.\n\n"
+        "SCI Trace:\n"
+        "1. Plan: Vorgehen.\n"
+        "2. Solution: Ergebnis.\n"
+        "3. Check: Konsistenz.\n\n"
+        "Self-Debunking:\n"
+        "1. Weakness: A.\n"
+        "2. Weakness: B.\n\n"
+        "QC-Matrix: Klarheit 3 · Kürze 2 · Evidenz 3 · Empathie 2 · Konsistenz 3 · Neutralität 3"
+    )
+
+    html_out, _ = api._apply_csc_strict(raw_response=raw, user_raw="Was ist Zeit?", is_command=False)
+    plain = re.sub(r"<[^>]+>", " ", str(html_out or ""))
+    plain = re.sub(r"\s+", " ", plain).strip()
+
+    for lbl in ("Clarity", "Brevity", "Evidence", "Empathy", "Consistency", "Neutrality"):
+        assert re.search(rf"{lbl}\s+[0-3]\s*\(Δ[+\-]?\d+\)", plain), plain
+    assert "Klarheit " not in plain
+    assert "Kürze " not in plain
+    assert "Evidenz " not in plain
+    assert "Empathie " not in plain
+    assert "Konsistenz " not in plain
+    assert "Neutralität " not in plain
+    assert html_out.count('class="qc-dim-tip"') == 6
+
+    idx_trace = plain.find("SCI Trace")
+    idx_sd = max(plain.find("Self-Debunking"), plain.find("Selbst-Debunking"))
+    idx_qc = plain.find("QC-Matrix:")
+    idx_ts = plain.find("Response at")
+    assert idx_trace >= 0
+    assert idx_sd >= 0
+    assert idx_qc >= 0
+    assert idx_ts >= 0
+    assert idx_trace < idx_sd < idx_qc < idx_ts
+
+
+def test_apply_csc_strict_footer_regression_no_localized_delta_less_footer_keeps_tooltips_and_order():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    api.validator = None
+    api.gov_state.comm_active = True
+    api.gov_state.color = "off"
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "B"
+    api.gov_state.sci_pending = False
+    api.gov_state.answer_language = "de"
+    api._sci_variant_def = lambda _v: ({}, ["Plan", "Solution", "Check"], None)  # type: ignore[assignment]
+
+    raw = (
+        "Antwortteil.\n\n"
+        "SCI Trace:\n"
+        "1. Plan: Vorgehen.\n"
+        "2. Solution: Ergebnis.\n"
+        "3. Check: Konsistenz.\n\n"
+        "Self-Debunking:\n"
+        "1. Weakness: A.\n"
+        "2. Weakness: B.\n\n"
+        "QC-Matrix: Klarheit 3 · Kürze 2 · Evidenz 3 · Empathie 2 · Konsistenz 3 · Neutralität 3"
+    )
+
+    html_out, _ = api._apply_csc_strict(raw_response=raw, user_raw="Was ist Zeit?", is_command=False)
+    plain = re.sub(r"<[^>]+>", " ", str(html_out or ""))
+    plain = re.sub(r"\s+", " ", plain).strip()
+
+    idx_qc = plain.rfind("QC-Matrix:")
+    idx_ts = plain.find("Response at")
+    assert idx_qc >= 0
+    assert idx_ts > idx_qc
+
+    qc_tail = plain[idx_qc:idx_ts]
+    assert not re.search(r"\b(Klarheit|Kürze|Kuerze|Evidenz|Empathie|Konsistenz|Neutralität|Neutralitaet)\b", qc_tail)
+    for lbl in ("Clarity", "Brevity", "Evidence", "Empathy", "Consistency", "Neutrality"):
+        assert re.search(rf"{lbl}\s+[0-3]\s*\(Δ[+\-]?\d+\)", qc_tail), qc_tail
+    assert html_out.count('class="qc-dim-tip"') == 6
+
+    idx_trace = plain.find("SCI Trace")
+    idx_sd = max(plain.find("Self-Debunking"), plain.find("Selbst-Debunking"))
+    assert idx_trace >= 0
+    assert idx_sd >= 0
+    assert idx_trace < idx_sd < idx_qc < idx_ts
 
 
 def test_session_render_counters_increment_on_fallback():
@@ -3714,6 +5920,82 @@ def test_self_debunking_numbered_points_have_indented_continuations():
     assert re.search(r"(?m)^\s{3}\*\*Was würde verifizieren/falsifizieren \(nächster Check\)\*\*:", out)
 
 
+def test_enforce_self_debunking_contract_adds_missing_secondary_fields_de():
+    mod = load_fix_module()
+
+    class GM:
+        loaded = True
+        data = {
+            "global_defaults": {
+                "output_contract": {
+                    "self_debunking_contract": {
+                        "enabled": True,
+                        "required_block_title": "Self-Debunking",
+                        "required_min_points": 2,
+                        "required_max_points": 3,
+                    }
+                },
+                "self_debunking": {
+                    "enabled": True,
+                    "exceptions": [],
+                    "block": {"title": "Self-Debunking"},
+                },
+            }
+        }
+
+    txt = (
+        "Antworttext.\n\n"
+        "Self-Debunking:\n\n"
+        "1. Schwäche: Punkt eins ist zu knapp.\n\n"
+        "2. Schwäche: Punkt zwei ist ebenfalls zu knapp.\n\n"
+        "QC-Matrix: Klarheit 3 (Δ0) · Kürze 2 (Δ0) · Evidenz 2 (Δ0) · Empathie 2 (Δ0) · Konsistenz 3 (Δ0) · Neutralität 3 (Δ0)\n"
+    )
+
+    out = mod.enforce_self_debunking_contract(txt, GM(), "Expert", is_command=False, lang="de")
+    assert out.count("**Warum das wichtig ist**:") >= 2
+    assert out.count("**Was würde verifizieren/falsifizieren (nächster Check)**:") >= 2
+    assert re.search(r"(?m)^\s*1\.\s+\*\*Schwäche\*\*:", out)
+    assert re.search(r"(?m)^\s*2\.\s+\*\*Schwäche\*\*:", out)
+
+
+def test_enforce_self_debunking_contract_adds_missing_secondary_fields_en():
+    mod = load_fix_module()
+
+    class GM:
+        loaded = True
+        data = {
+            "global_defaults": {
+                "output_contract": {
+                    "self_debunking_contract": {
+                        "enabled": True,
+                        "required_block_title": "Self-Debunking",
+                        "required_min_points": 2,
+                        "required_max_points": 3,
+                    }
+                },
+                "self_debunking": {
+                    "enabled": True,
+                    "exceptions": [],
+                    "block": {"title": "Self-Debunking"},
+                },
+            }
+        }
+
+    txt = (
+        "Answer text.\n\n"
+        "Self-Debunking:\n\n"
+        "1. Weakness: First point is too terse.\n\n"
+        "2. Weakness: Second point is too terse.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+    )
+
+    out = mod.enforce_self_debunking_contract(txt, GM(), "Expert", is_command=False, lang="en")
+    assert out.count("**Why it matters**:") >= 2
+    assert out.count("**What would verify/falsify (next check)**:") >= 2
+    assert re.search(r"(?m)^\s*1\.\s+\*\*Weakness\*\*:", out)
+    assert re.search(r"(?m)^\s*2\.\s+\*\*Weakness\*\*:", out)
+
+
 def test_sanitize_self_debunking_markdown_in_html_converts_bold_markers():
     mod = load_fix_module()
     html_in = (
@@ -3782,6 +6064,31 @@ def test_normalize_known_markdown_control_headings_converts_generic_subheadings(
     assert "<strong>Another one:</strong>" in out
 
 
+def test_normalize_markdown_list_spacing_handles_star_with_multiple_spaces():
+    mod = load_fix_module()
+    raw = (
+        "Einleitungssatz.\n"
+        "*   **Physikalische Definition:** Zeit beschreibt Dauer und Reihenfolge.\n"
+        "*   Zweiter Punkt."
+    )
+    out = mod.normalize_markdown_list_spacing(raw)
+    assert "Einleitungssatz.\n\n*   **Physikalische Definition:**" in out
+    assert "Einleitungssatz.\n*   **Physikalische Definition:**" not in out
+
+
+def test_normalize_markdown_list_spacing_enables_markdown_list_rendering():
+    mod = load_fix_module()
+    raw = (
+        "<strong>Definitionen und Perspektiven:</strong>\n"
+        "*   <strong>Physikalische Definition:</strong> In der Physik ist Zeit ...\n"
+        "*   Zweiter Punkt."
+    )
+    norm = mod.normalize_markdown_list_spacing(raw)
+    html_out = mod.markdown.markdown(norm, extensions=['extra', 'codehilite'])
+    assert "<ul>" in html_out and "<li>" in html_out
+    assert "*   <strong>Physikalische Definition:</strong>" not in html_out
+
+
 def test_unwrap_accidental_full_text_codefence_unwraps_governance_output():
     mod = load_fix_module()
     raw = (
@@ -3834,6 +6141,28 @@ def test_cgi_user_feedback_triplet_is_intercepted_without_llm_call(tmp_path):
     # Monkeypatch LLM call to fail if invoked
     def boom(*a, **k):
         raise AssertionError("LLM should not be called for CGI feedback triplets")
+
+    api._llm_call = boom  # type: ignore[assignment]
+
+    res = api.ask("3,3,3")
+    assert "CGI feedback recorded" in (res.get("html") or "")
+
+
+def test_cgi_user_feedback_triplet_works_without_explicit_ruleset_block():
+    mod = load_fix_module()
+    data = _prime_module_gov(mod)
+    api = mod.Api()
+
+    # Simulate operational files where the optional block is absent.
+    if isinstance(data, dict):
+        gd = data.get("global_defaults")
+        if isinstance(gd, dict):
+            gd.pop("user_feedback_triplet", None)
+
+    api.ask("Comm Start")
+
+    def boom(*a, **k):
+        raise AssertionError("LLM should not be called when CGI triplet fallback is active")
 
     api._llm_call = boom  # type: ignore[assignment]
 
@@ -3983,6 +6312,40 @@ def test_stage1_color_on_applies_spans_in_command_and_inactive_paths_ci_safe():
     # Must include spans and a known green palette entry (either is acceptable).
     assert "span" in html_out.lower()
     assert ("#137333" in html_out) or ("#2e7d32" in html_out)
+
+
+def test_color_off_strips_textual_evidence_tags_and_marker_icons():
+    mod = load_fix_module()
+    raw = "A [GREEN] 🟢 claim. B [YELLOW] 🟡 maybe. C [RED] 🔴 unknown."
+    out = mod.strip_color_markers_for_color_off_text(raw)
+    assert "[GREEN]" not in out and "[YELLOW]" not in out and "[RED]" not in out
+    assert "🟢" not in out and "🟡" not in out and "🔴" not in out
+    assert "claim" in out and "maybe" in out and "unknown" in out
+
+
+def test_color_off_strips_textual_evidence_tags_from_rendered_html():
+    mod = load_fix_module()
+    html_in = (
+        "<p>[GREEN] 🟢 Aussage A.</p>"
+        "<p><span class='signal-dot-marker'><span style=\"color:#c62828; font-weight:600;\">🔴</span></span> [RED] 🔴 Aussage B.</p>"
+    )
+    out = mod.strip_color_markers_for_color_off_html(html_in)
+    assert "[GREEN]" not in out and "[RED]" not in out
+    assert "🟢" not in out and "🔴" not in out
+    assert "signal-dot-marker" not in out
+    assert "Aussage A" in out and "Aussage B" in out
+
+
+def test_color_off_strip_works_without_policy_module_via_renderer_fallback(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_color_marker_policy", None, raising=False)
+    raw = "x [GREEN] 🟢 y [RED] 🔴 z"
+    out_txt = mod.strip_color_markers_for_color_off_text(raw)
+    out_html = mod.strip_color_markers_for_color_off_html(f"<p>{raw}</p>")
+    assert "[GREEN]" not in out_txt and "[RED]" not in out_txt
+    assert "🟢" not in out_txt and "🔴" not in out_txt
+    assert "[GREEN]" not in out_html and "[RED]" not in out_html
+    assert "🟢" not in out_html and "🔴" not in out_html
 
 
 def test_apply_csc_strict_keeps_verification_route_lines_visible_by_default():
@@ -4241,6 +6604,32 @@ def test_strip_sci_variantenmenue_echo_from_content_answer():
     out = mod.strip_sci_menu_from_answer(raw)
     assert "SCI-Variantenmenü" not in out
     assert "Final Answer:" in out
+
+
+def test_strip_sci_varianten_table_echo_without_title_from_content_answer():
+    mod = load_fix_module()
+    raw = (
+        "Intro line.\n"
+        "| Variante | Name | Fokus / Methode |\n"
+        "| --- | --- | --- |\n"
+        "| A | Standard | Plan → Solution → Check (classic) |\n"
+        "| B | Deep-Dive | Dialectics++ (13 steps; former SCIplus) |\n"
+        "| C | Branch Evaluation | Tree-of-Thoughts: branching solution paths |\n"
+        "| D | Axiomatic Reduction | First Principles: axiomatic reduction |\n"
+        "| E | Confidence Tracker | Confidence + update via counterarguments |\n"
+        "| F | Impact Projection | Second-order: downstream consequences |\n"
+        "| G | Failure Mode Analysis | Pre-mortem/inversion: reason from failure |\n"
+        "| H | Multi-Agent Simulation | Ensemble roles / expert simulation |\n\n"
+        "Final Answer: Time is a measure of change.\n"
+        "Self-Debunking:\n"
+        "1. **Schwäche**: ...\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.strip_sci_menu_from_answer(raw)
+    assert "Variante | Name | Fokus / Methode" not in out
+    assert "| A | Standard |" not in out
+    assert "Final Answer:" in out
+    assert "Self-Debunking:" in out
 
 # ---------------------------
 # Additional tests for v192 DOM rendering pipeline
@@ -4555,6 +6944,18 @@ def test_strip_verification_route_display_lines_hides_html_wrapped_marker_line()
     assert "Selbst-Debunking:" in out
 
 
+def test_strip_verification_route_display_lines_prefers_central_policy_module(monkeypatch):
+    mod = load_fix_module()
+
+    stub = types.SimpleNamespace(
+        strip_verification_route_display_lines=lambda txt: "CENTRALIZED_STRIP",
+    )
+    monkeypatch.setattr(mod, "_output_verification_route_policy_renderer", stub, raising=False)
+
+    out = mod.strip_verification_route_display_lines("Verification Route:\nSource: TRAIN")
+    assert out == "CENTRALIZED_STRIP"
+
+
 def test_strip_pathological_repetition_display_noise_replaces_long_cjk_run_for_german():
     mod = load_fix_module()
     raw = "Antwort " + ("算法和" * 80) + " Ende."
@@ -4626,6 +7027,19 @@ def test_strip_internal_scaffolding_status_lines_removes_profile_without_colon()
     assert "Hier startet der eigentliche Inhalt." in out
 
 
+def test_strip_internal_scaffolding_status_lines_removes_german_profil_status_line():
+    mod = load_fix_module()
+    raw = (
+        "Active profile: Standard · SCI: off · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on\n"
+        "Profil: Standard · Overlay: Strict · SCI: off · Control Layer: on · Color: on\n"
+        "Hier startet der eigentliche Inhalt.\n"
+    )
+    out = mod.strip_internal_scaffolding_status_lines(raw)
+    assert "Active profile:" in out
+    assert "Profil: Standard · Overlay: Strict · SCI: off · Control Layer: on · Color: on" not in out
+    assert "Hier startet der eigentliche Inhalt." in out
+
+
 def test_strip_internal_scaffolding_status_html_removes_profile_block():
     mod = load_fix_module()
     html_in = (
@@ -4636,6 +7050,19 @@ def test_strip_internal_scaffolding_status_html_removes_profile_block():
     out = mod.strip_internal_scaffolding_status_html(html_in)
     assert "Active profile:" in out
     assert "Profile: Expert · Overlay: Strict · SCI: B · Color: on" not in out
+    assert "Inhalt bleibt sichtbar." in out
+
+
+def test_strip_internal_scaffolding_status_html_removes_german_profil_block():
+    mod = load_fix_module()
+    html_in = (
+        "<p>Active profile: Expert · SCI: B · Overlay: Strict · Control Layer: on · QC: on · CGI: on · Color: on</p>"
+        "<p>Profil: Expert · Overlay: Strict · SCI: B · Control Layer: on · Color: on</p>"
+        "<p>Inhalt bleibt sichtbar.</p>"
+    )
+    out = mod.strip_internal_scaffolding_status_html(html_in)
+    assert "Active profile:" in out
+    assert "Profil: Expert · Overlay: Strict · SCI: B · Control Layer: on · Color: on" not in out
     assert "Inhalt bleibt sichtbar." in out
 
 
@@ -4755,6 +7182,49 @@ def test_normalize_self_debunking_numbering_text_strips_numbered_field_labels_in
     assert "Was würde verifizieren/falsifizieren (nächster Check):" in out
 
 
+def test_normalize_self_debunking_numbering_text_drops_verification_route_rows_and_repairs_trailing_md_stars():
+    mod = load_fix_module()
+    raw = (
+        "Selbst-Debunking:\n"
+        "1. Schwäche: Punkt eins.\n"
+        "Warum das wichtig ist**: Relevanz eins.\n"
+        "Was würde verifizieren/falsifizieren (nächster Check)**: Check eins.\n"
+        "2. Schwäche: Punkt zwei.\n"
+        "Verification Route:\n"
+        "Source: TRAIN (Allgemeines Hintergrundwissen)\n"
+        "Warum das wichtig ist**: Relevanz zwei.\n"
+        "Was würde verifizieren/falsifizieren (nächster Check)**: Check zwei.\n"
+        "\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.normalize_self_debunking_numbering_text(raw, lang="de")
+    assert "Verification Route" not in out
+    assert "Source: TRAIN" not in out
+    assert "Warum das wichtig ist**:" not in out
+    assert "Was würde verifizieren/falsifizieren (nächster Check)**:" not in out
+    assert "Warum das wichtig ist:" in out
+    assert "Was würde verifizieren/falsifizieren (nächster Check):" in out
+
+
+def test_self_debunking_extended_labels_are_bold_and_on_new_lines():
+    mod = load_fix_module()
+    raw = (
+        "Self-Debunking:\n"
+        "1. Schwäche: Punkt. Vereinfachung: Kurzschluss. Nächster Schritt: Test.\n"
+        "Warum relevant: Wichtig. Prüfen/Widerlegen (nächster Schritt): Route. Subjektivität: mittel.\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.normalize_self_debunking_field_linebreaks(raw, lang="de")
+    out = mod.bold_self_debunking_labels(out, "de")
+
+    assert "1. **Schwäche**: Punkt." in out
+    assert "\n   **Vereinfachung**: Kurzschluss." in out
+    assert "\n   **Nächster Schritt**: Test." in out
+    assert "\n   **Warum relevant**: Wichtig." in out
+    assert "\n   **Prüfen/Widerlegen (nächster Schritt)**: Route." in out
+    assert "\n   **Subjektivität**: mittel." in out
+
+
 def test_strip_sci_trace_line_when_inactive_removes_leaked_inline_trace():
     mod = load_fix_module()
     raw = (
@@ -4792,11 +7262,67 @@ def test_strip_sci_trace_line_when_inactive_removes_section_with_variant_heading
     assert "Antworttext." in out
 
 
+def test_strip_sci_trace_line_when_inactive_removes_markdown_bold_trace_heading_block():
+    mod = load_fix_module()
+    raw = (
+        "Antworttext.\n"
+        "**SCI Trace:**\n"
+        "1. Plan: Erste Fassung.\n"
+        "2. Solution: Zweite Fassung.\n"
+        "3. Check: Dritte Fassung.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = mod.strip_sci_trace_line_when_inactive(raw, sci_active=False, sci_variant="", sci_pending=False)
+    assert "SCI Trace" not in out
+    assert "Plan:" not in out
+    assert "Self-Debunking:" in out
+    assert "Antworttext." in out
+
+
+def test_strip_sci_trace_line_when_inactive_removes_html_strong_trace_heading_block():
+    mod = load_fix_module()
+    raw = (
+        "Einleitung.\n"
+        "Um das Konzept der Zeit weiter zu untersuchen, schlage ich folgende SCI Trace vor (Variante A):\n"
+        "<strong>SCI Trace</strong>\n"
+        "1. Plan: Erste Fassung.\n"
+        "2. Solution: Zweite Fassung.\n"
+        "3. Check: Dritte Fassung.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = mod.strip_sci_trace_line_when_inactive(raw, sci_active=False, sci_variant="", sci_pending=False)
+    assert "SCI Trace</strong>" not in out
+    assert "<strong>SCI Trace</strong>" not in out
+    assert "Plan:" not in out
+    assert "Self-Debunking:" in out
+    assert "Einleitung." in out
+    assert "schlage ich folgende SCI Trace vor" in out
+
+
 def test_strip_sci_trace_line_when_inactive_keeps_trace_when_variant_active():
     mod = load_fix_module()
     raw = "SCI Trace: Plan\n1. Plan: ...\n"
     out = mod.strip_sci_trace_line_when_inactive(raw, sci_active=True, sci_variant="B", sci_pending=False)
     assert out == raw
+
+
+def test_strip_sci_trace_line_when_inactive_strips_when_active_flag_set_but_variant_unset():
+    mod = load_fix_module()
+    raw = (
+        "Antworttext.\n"
+        "SCI Trace:\n"
+        "Plan: A\n"
+        "Solution: B\n"
+        "Check: C\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = mod.strip_sci_trace_line_when_inactive(raw, sci_active=True, sci_variant="", sci_pending=False)
+    assert "SCI Trace" not in out
+    assert "Plan:" not in out
+    assert "Self-Debunking:" in out
 
 
 def test_openai_compatible_http_error_uses_hf_provider_label_when_requested():
@@ -4930,6 +7456,241 @@ def test_render_sci_trace_runtime_moves_final_answer_out_of_last_step_block():
     final_pos = out.find("Zeit beschreibt die Ordnung von Ereignissen")
     assert trace_end >= 0
     assert final_pos > trace_end
+
+
+def test_render_sci_trace_runtime_drops_final_answer_marker_label_from_trace_block():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+
+    def _variant_def(_v):
+        return ({}, ["Plan", "Solution", "Check"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "SCI Trace:\n"
+        "- Plan\n"
+        "- Solution\n"
+        "- Check\n\n"
+        "Plan: Vorgehen festlegen.\n"
+        "Solution: Struktur aufbauen.\n"
+        "Check: Abschlusskriterium formulieren.\n"
+        "\n"
+        "Final Answer:\n"
+        "Zeit ist eine Ordnungsdimension fuer Ereignisse.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "Zeit ist eine Ordnungsdimension fuer Ereignisse." in out
+    assert "Final Answer:" not in out
+
+    m = re.search(r"Check:</div>(.*?)</li>", out, flags=re.DOTALL)
+    assert m is not None
+    assert "Final Answer:" not in m.group(1)
+    assert "Zeit ist eine Ordnungsdimension fuer Ereignisse." not in m.group(1)
+
+
+@pytest.mark.parametrize(
+    "answer_marker, expected_sentence",
+    [
+        ("Final Answer: Time is an ordering dimension of events.", "Time is an ordering dimension of events."),
+        ("Antwort: Zeit ist eine Ordnungsdimension fuer Ereignisse.", "Zeit ist eine Ordnungsdimension fuer Ereignisse."),
+    ],
+)
+def test_render_sci_trace_runtime_strips_inline_answer_markers_from_last_step(answer_marker, expected_sentence):
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+
+    def _variant_def(_v):
+        return ({}, ["Plan", "Solution", "Check"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "SCI Trace:\n"
+        "- Plan\n"
+        "- Solution\n"
+        "- Check\n\n"
+        "Plan: Vorgehen festlegen.\n"
+        "Solution: Struktur aufbauen.\n"
+        "Check: Abschlusskriterium formulieren.\n"
+        f"{answer_marker}\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert expected_sentence in out
+    assert "Final Answer:" not in out
+    assert "Antwort:" not in out
+
+    m = re.search(r"Check:</div>(.*?)</li>", out, flags=re.DOTALL)
+    assert m is not None
+    assert "Final Answer:" not in m.group(1)
+    assert "Antwort:" not in m.group(1)
+    assert expected_sentence not in m.group(1)
+
+
+def test_render_sci_trace_runtime_strips_numbered_final_answer_marker_from_last_step():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "B"
+
+    def _variant_def(_v):
+        return ({}, ["Plan", "Solution", "Critic", "Learn"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "SCI Trace:\n"
+        "- Plan\n"
+        "- Solution\n"
+        "- Critic\n"
+        "- Learn\n\n"
+        "Plan: Vorgehen festlegen.\n"
+        "Solution: Antwort aufbauen.\n"
+        "Critic: Risiken und Luecken markieren.\n"
+        "Learn: Synthese der Punkte.\n"
+        "14. Final Answer:\n"
+        "Zeit ist eine Ordnungsdimension fuer Ereignisse.\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "Zeit ist eine Ordnungsdimension fuer Ereignisse." in out
+    assert "Final Answer:" not in out
+
+    m = re.search(r"Learn:</div>(.*?)</li>", out, flags=re.DOTALL)
+    assert m is not None
+    assert "Final Answer:" not in m.group(1)
+    assert "Zeit ist eine Ordnungsdimension fuer Ereignisse." not in m.group(1)
+
+
+def test_render_sci_trace_runtime_moves_trace_before_narrative_when_model_places_trace_late():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+
+    def _variant_def(_v):
+        return ({}, ["Plan", "Solution", "Check"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "Antwortteil vor dem Trace.\n"
+        "Noch eine Satzzeile.\n\n"
+        "SCI Trace:\n"
+        "1. Plan: Vorgehen.\n"
+        "2. Solution: Ergebnis.\n"
+        "3. Check: Konsistenz.\n\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    idx_trace = out.find("class='sci-trace'")
+    idx_answer = out.find("Antwortteil vor dem Trace.")
+    idx_sd = out.find("Self-Debunking:")
+    assert idx_trace >= 0
+    assert idx_answer >= 0
+    assert idx_sd >= 0
+    assert idx_trace < idx_answer < idx_sd
+
+
+def test_apply_csc_strict_places_trace_before_answer_and_self_debunking_for_sci_answers():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.validator = None
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+    api.gov_state.sci_pending = False
+    api.gov_state.answer_language = "de"
+    api._sci_variant_def = lambda _v: ({}, ["Plan", "Solution", "Check"], None)  # type: ignore[assignment]
+
+    raw = (
+        "Antwortteil vor dem Trace.\n\n"
+        "SCI Trace:\n"
+        "1. Plan: Vorgehen.\n"
+        "2. Solution: Ergebnis.\n"
+        "3. Check: Konsistenz.\n\n"
+        "Self-Debunking:\n"
+        "- Schwäche: zu knapp.\n"
+        "- Schwäche: ohne Quellen.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)\n"
+    )
+    html_out, _meta = api._apply_csc_strict(raw_response=raw, user_raw="Was ist Zeit?", is_command=False)
+    plain = re.sub(r"<[^>]+>", " ", str(html_out or ""))
+
+    idx_header = plain.find("Active profile:")
+    idx_trace = plain.find("SCI Trace")
+    idx_answer = plain.find("Antwortteil vor dem Trace.")
+    idx_sd = max(plain.find("Selbst-Debunking"), plain.find("Self-Debunking"))
+    assert idx_header >= 0
+    assert idx_trace >= 0
+    assert idx_answer >= 0
+    assert idx_sd >= 0
+    assert idx_header < idx_trace < idx_answer < idx_sd
+    assert "raw-output" not in str(html_out or "")
+
+
+def test_render_sci_trace_runtime_strips_leaked_markdown_edge_emphasis_tokens_in_step_content():
+    mod = load_fix_module()
+    api = mod.Api()
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+
+    def _variant_def(_v):
+        return ({}, ["Plan", "Solution", "Check"], None)
+
+    api._sci_variant_def = _variant_def  # type: ignore[assignment]
+    raw = (
+        "SCI Trace:\n"
+        "1. Plan: ** Definiere den Begriff Zeit.\n"
+        "2. Solution: ** Erkläre physikalische und philosophische Perspektiven.\n"
+        "3. Check: ** Prüfe Grenzen der Definition **\n"
+        "Self-Debunking:\n"
+        "1. Schwäche: x\n"
+    )
+    out = api._render_sci_trace_as_html_runtime(raw)
+    assert "<div class='sci-trace'" in out
+    assert "** Definiere" not in out
+    assert "** Erkläre" not in out
+    assert "Definition **" not in out
+    assert "Definiere den Begriff Zeit." in out
+    assert "Erkläre physikalische und philosophische Perspektiven." in out
+    assert "Prüfe Grenzen der Definition" in out
+
+
+def test_apply_csc_strict_sci_trace_does_not_render_leading_double_asterisk_fragments():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.validator = None
+    api.gov_state.sci_active = True
+    api.gov_state.sci_variant = "A"
+    api.gov_state.sci_pending = False
+    api.gov_state.answer_language = "de"
+    api._sci_variant_def = lambda _v: ({}, ["Plan", "Solution", "Check"], None)  # type: ignore[assignment]
+
+    raw = (
+        "Antwortteil.\n\n"
+        "SCI Trace:\n"
+        "1. Plan: ** Definiere Zeit.\n"
+        "2. Solution: ** Gib zwei Perspektiven.\n"
+        "3. Check: ** Prüfe Konsistenz.\n\n"
+        "Self-Debunking:\n"
+        "- Schwäche: zu knapp.\n"
+        "- Schwäche: ohne Quellen.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 2 (Δ0)\n"
+    )
+    html_out, _meta = api._apply_csc_strict(raw_response=raw, user_raw="Was ist Zeit?", is_command=False)
+    assert "<div class=\"sci-trace\"" in str(html_out or "") or "<div class='sci-trace'" in str(html_out or "")
+    assert ">** " not in str(html_out or "")
 
 
 def test_render_sci_trace_runtime_handles_complex_step_labels_variant_g():
@@ -5236,6 +7997,1855 @@ def test_html_number_self_debunking_ol_bolds_lowercase_secondary_labels_and_brea
     assert "<br><strong>Warum das wichtig ist</strong>:" in out or "<br><strong>Warum das wichtig ist</strong>" in out
 
 
+def test_ensure_self_debunking_box_html_reboxes_list_leak_and_keeps_qc_footer():
+    mod = load_fix_module()
+    html_in = (
+        "<ul>"
+        "<li><p><strong>Heidegger:</strong> Text. <strong>Self-Debunking:</strong></p></li>"
+        "<li><p>1. <strong>Schwäche</strong>: Punkt eins."
+        "<br><strong>Warum das wichtig ist</strong>: A.</p></li>"
+        "<li><p>2. <strong>Schwäche</strong>: Punkt zwei."
+        "<br><strong>Warum das wichtig ist</strong>: B.</p></li>"
+        "</ul>"
+        "<p>QC-Matrix: Clarity 3 (Δ0)</p>"
+    )
+    out = mod.ensure_self_debunking_box_html(html_in, lang="de")
+    assert 'class="self-debunking"' in out
+    assert "Selbst-Debunking:" in out
+    assert "<ol>" in out and "</ol>" in out
+    assert "<strong>Self-Debunking:</strong>" not in out
+    assert re.search(r"(?is)<ol>.*?<li>\s*1\.", out) is None
+    assert "<p>QC-Matrix: Clarity 3 (Δ0)</p>" in out
+
+
+def test_self_debunking_formatter_fallback_import_works_without_src_on_syspath(monkeypatch):
+    src_str = str(SRC.resolve())
+    filtered = [p for p in sys.path if str(Path(p).resolve()) != src_str] if sys.path else []
+    monkeypatch.setattr(sys, "path", filtered)
+    mod = load_fix_module()
+    fmt = getattr(mod, "_sd_formatter", None)
+    assert fmt is not None
+    assert callable(getattr(fmt, "ensure_self_debunking_box_html", None))
+
+
+def test_uncertainty_codes_fallback_import_works_without_src_on_syspath(monkeypatch):
+    src_str = str(SRC.resolve())
+    filtered = [p for p in sys.path if str(Path(p).resolve()) != src_str] if sys.path else []
+    monkeypatch.setattr(sys, "path", filtered)
+    mod = load_fix_module()
+    uc = getattr(mod, "_uncertainty_codes_mod", None)
+    assert uc is not None
+    assert callable(getattr(uc, "ensure_uncertainty_annotations_html", None))
+
+
+def test_output_renderers_fallback_import_work_without_src_on_syspath(monkeypatch):
+    src_str = str(SRC.resolve())
+    filtered = [p for p in sys.path if str(Path(p).resolve()) != src_str] if sys.path else []
+    monkeypatch.setattr(sys, "path", filtered)
+    mod = load_fix_module()
+
+    u = getattr(mod, "_output_uncertainty_renderer", None)
+    h = getattr(mod, "_output_header_renderer", None)
+    f = getattr(mod, "_output_footer_renderer", None)
+    s = getattr(mod, "_output_sci_trace_renderer", None)
+    cscw = getattr(mod, "_output_csc_warning_renderer", None)
+    cln = getattr(mod, "_output_control_layer_note_renderer", None)
+    cgil = getattr(mod, "_output_cgi_line_renderer", None)
+    colm = getattr(mod, "_output_color_markers_renderer", None)
+    iem = getattr(mod, "_output_image_embed_renderer", None)
+    sg = getattr(mod, "_output_strict_gate_renderer", None)
+    rq = getattr(mod, "_output_render_quality_renderer", None)
+    cmdcat = getattr(mod, "_output_command_response_catalog", None)
+
+    assert u is not None
+    assert callable(getattr(u, "append_uncertainty_explanation_if_needed", None))
+    assert h is not None
+    assert callable(getattr(h, "render_profile_switch_control_html", None))
+    assert callable(getattr(h, "normalize_sci_display", None))
+    assert callable(getattr(h, "build_active_profile_status_line", None))
+    assert callable(getattr(h, "build_comm_status_line", None))
+    assert f is not None
+    assert callable(getattr(f, "render_ts_footer_html", None))
+    assert callable(getattr(f, "ensure_qc_footer_html_consistency", None))
+    assert callable(getattr(f, "finalize_qc_footer_html", None))
+    assert callable(getattr(f, "annotate_qc_matrix_tooltips_html", None))
+    assert s is not None
+    assert callable(getattr(s, "render_sci_trace_as_html_runtime", None))
+    assert cscw is not None
+    assert callable(getattr(cscw, "render_control_layer_block_html", None))
+    assert callable(getattr(cscw, "render_strict_block_html", None))
+    assert callable(getattr(cscw, "render_strict_warn_banner_html", None))
+    assert callable(getattr(cscw, "render_cross_version_guard_html", None))
+    assert cln is not None
+    assert callable(getattr(cln, "render_control_layer_alert_html", None))
+    assert callable(getattr(cln, "render_repair_pass_banner_html", None))
+    assert cgil is not None
+    assert callable(getattr(cgil, "get_cgi_ui_texts", None))
+    assert callable(getattr(cgil, "render_cgi_feedback_block", None))
+    assert callable(getattr(cgil, "render_cgi_constraints_block", None))
+    assert colm is not None
+    assert callable(getattr(colm, "apply_color_spans", None))
+    assert callable(getattr(colm, "reapply_color_styles_if_stripped", None))
+    assert callable(getattr(colm, "strip_color_markers_for_color_off_text", None))
+    assert callable(getattr(colm, "strip_color_markers_for_color_off_html", None))
+    assert callable(getattr(colm, "annotate_signal_dot_tooltips_html", None))
+    assert callable(getattr(colm, "inject_fallback_signal_dots_html", None))
+    assert callable(getattr(colm, "limit_signal_dot_marker_density_html", None))
+    assert callable(getattr(colm, "strip_signal_dots_from_heading_only_blocks_html", None))
+    assert iem is not None
+    assert callable(getattr(iem, "auto_embed_image_urls", None))
+    assert sg is not None
+    assert callable(getattr(sg, "evaluate_strict_enforcement", None))
+    assert rq is not None
+    assert callable(getattr(rq, "looks_like_rendered_html", None))
+    assert callable(getattr(rq, "build_normalization_summary", None))
+    assert cmdcat is not None
+    assert callable(getattr(cmdcat, "build_profile_switch_audit_line", None))
+    assert callable(getattr(cmdcat, "resolve_sci_on_command_html", None))
+    assert callable(getattr(cmdcat, "resolve_comm_overlay_command_html", None))
+    assert callable(getattr(cmdcat, "resolve_comm_validate_command_html", None))
+    assert callable(getattr(cmdcat, "resolve_comm_anchor_toggle_command_html", None))
+    assert callable(getattr(cmdcat, "resolve_dynamic_one_shot_command_html", None))
+    assert callable(getattr(cmdcat, "resolve_post_state_command_html", None))
+    assert callable(getattr(cmdcat, "build_qc_override_opened_result", None))
+    assert callable(getattr(cmdcat, "build_comm_audit_command_result", None))
+    assert callable(getattr(cmdcat, "build_sci_menu_command_result", None))
+    assert callable(getattr(cmdcat, "build_sci_selection_result", None))
+    assert callable(getattr(cmdcat, "resolve_renderer_map_command", None))
+    assert callable(getattr(cmdcat, "apply_profile_switch_state", None))
+    assert callable(getattr(cmdcat, "apply_basic_command_state", None))
+    assert callable(getattr(cmdcat, "is_basic_command_supported", None))
+
+
+def test_output_rules_registry_and_state_snapshot_fallback_imports_work_without_src_on_syspath(monkeypatch):
+    src_str = str(SRC.resolve())
+    filtered = [p for p in sys.path if str(Path(p).resolve()) != src_str] if sys.path else []
+    monkeypatch.setattr(sys, "path", filtered)
+    mod = load_fix_module()
+
+    rr = getattr(mod, "_output_rules_registry", None)
+    ss = getattr(mod, "_output_state_snapshot", None)
+    assert rr is not None
+    assert callable(getattr(rr, "qc_probe_is_complete", None))
+    assert ss is not None
+    snap_cls = getattr(ss, "OutputStateSnapshot", None)
+    assert snap_cls is not None
+    assert callable(getattr(snap_cls, "from_runtime_state", None))
+
+
+def test_output_resolver_dispatcher_and_routing_runtime_fallback_imports_work_without_src_on_syspath(monkeypatch):
+    src_str = str(SRC.resolve())
+    filtered = [p for p in sys.path if str(Path(p).resolve()) != src_str] if sys.path else []
+    monkeypatch.setattr(sys, "path", filtered)
+    mod = load_fix_module()
+
+    resolver = getattr(mod, "_output_resolver", None)
+    dispatcher = getattr(mod, "_output_dispatcher", None)
+    runtime = getattr(mod, "_output_routing_runtime", None)
+    assert resolver is not None
+    assert callable(getattr(resolver, "resolve_input", None))
+    assert callable(getattr(resolver, "normalize_route_shape", None))
+    assert callable(getattr(resolver, "contract_route_shape", None))
+    assert dispatcher is not None
+    assert callable(getattr(dispatcher, "route_kind", None))
+    assert callable(getattr(dispatcher, "is_command_route", None))
+    assert callable(getattr(dispatcher, "route_meta", None))
+    assert callable(getattr(dispatcher, "route_contract_ok", None))
+    assert callable(getattr(dispatcher, "route_audit_payload", None))
+    assert runtime is not None
+    assert callable(getattr(runtime, "resolve_route_context", None))
+    assert callable(getattr(runtime, "route_contract_ok", None))
+    assert callable(getattr(runtime, "route_audit_payload", None))
+
+
+def test_output_pipeline_fallback_imports_work_without_src_on_syspath(monkeypatch):
+    src_str = str(SRC.resolve())
+    filtered = [p for p in sys.path if str(Path(p).resolve()) != src_str] if sys.path else []
+    monkeypatch.setattr(sys, "path", filtered)
+    mod = load_fix_module()
+
+    pipe = getattr(mod, "_output_pipeline", None)
+    assert pipe is not None
+    assert callable(getattr(pipe, "post_render_normalization", None))
+    assert callable(getattr(pipe, "normalize_post_render_html", None))
+    assert callable(getattr(pipe, "normalize_self_debunking_postprocess_text", None))
+    assert callable(getattr(pipe, "resolve_hide_verification_route_lines", None))
+    assert callable(getattr(pipe, "apply_verification_route_display_policy", None))
+    seam = getattr(mod, "_output_self_debunking_runtime_seam", None)
+    assert seam is not None
+    assert callable(getattr(seam, "apply_self_debunking_text_postprocess", None))
+    assert callable(getattr(seam, "apply_post_render_normalization", None))
+    qc_stage = getattr(mod, "_output_post_render_qc_stage", None)
+    assert qc_stage is not None
+    assert callable(getattr(qc_stage, "ensure_qc_footer_html_consistency_html_stage", None))
+    assert callable(getattr(qc_stage, "finalize_qc_footer_html_stage", None))
+    render_end_stage = getattr(mod, "_output_final_html_runtime_stage", None)
+    assert render_end_stage is not None
+    assert callable(getattr(render_end_stage, "finalize_render_end_html_stage", None))
+    render_body_stage = getattr(mod, "_output_render_body_runtime_stage", None)
+    assert render_body_stage is not None
+    assert callable(getattr(render_body_stage, "render_final_html_body_stage", None))
+    route_render_stage = getattr(mod, "_output_route_render_runtime_stage", None)
+    assert route_render_stage is not None
+    assert callable(getattr(route_render_stage, "render_command_html_stage", None))
+    assert callable(getattr(route_render_stage, "render_comm_inactive_html_stage", None))
+    csc_mid_stage = getattr(mod, "_output_csc_mid_runtime_stage", None)
+    assert csc_mid_stage is not None
+    assert callable(getattr(csc_mid_stage, "build_csc_refiner_meta_stage", None))
+    assert callable(getattr(csc_mid_stage, "build_alerts_and_header_stage", None))
+    assert callable(getattr(csc_mid_stage, "apply_pre_render_policy_strict_gate_stage", None))
+    assert callable(getattr(csc_mid_stage, "apply_pre_render_policy_strict_gate_runtime_chain_stage", None))
+    assert callable(getattr(csc_mid_stage, "apply_pre_render_policy_strict_gate_ultimate_fallback_stage", None))
+    assert callable(getattr(csc_mid_stage, "build_pre_render_policy_strict_gate_runtime_bundle", None))
+    assert callable(getattr(csc_mid_stage, "build_pre_render_policy_strict_gate_runtime_passthrough_out", None))
+    assert callable(getattr(csc_mid_stage, "apply_pre_render_policy_strict_gate_runtime_dispatch_stage", None))
+    assert callable(getattr(csc_mid_stage, "apply_pre_render_policy_strict_gate_runtime_ultimate_fallback_from_bundle_stage", None))
+    assert callable(getattr(csc_mid_stage, "normalize_pre_render_policy_strict_gate_stage_out", None))
+
+
+def test_output_verification_route_policy_renderer_fallback_imports_work_without_src_on_syspath(monkeypatch):
+    src_str = str(SRC.resolve())
+    filtered = [p for p in sys.path if str(Path(p).resolve()) != src_str] if sys.path else []
+    monkeypatch.setattr(sys, "path", filtered)
+    mod = load_fix_module()
+
+    vr_policy = getattr(mod, "_output_verification_route_policy_renderer", None)
+    assert vr_policy is not None
+    assert callable(getattr(vr_policy, "is_verification_route_marker_line", None))
+    assert callable(getattr(vr_policy, "strip_verification_route_display_lines", None))
+    assert callable(getattr(vr_policy, "resolve_hide_verification_route_lines", None))
+    assert callable(getattr(vr_policy, "apply_verification_route_display_policy", None))
+
+
+def test_output_pipeline_post_render_normalization_order_and_color_policy():
+    mod = load_fix_module()
+    pipe = getattr(mod, "_output_pipeline", None)
+    assert pipe is not None
+
+    calls = []
+
+    def _mark(name):
+        def _fn(text, **_kwargs):
+            calls.append(name)
+            return f"{text}|{name}"
+        return _fn
+
+    out = pipe.post_render_normalization(
+        "X",
+        answer_lang="de",
+        color="off",
+        ensure_self_debunking_box_html_fn=_mark("box"),
+        sanitize_self_debunking_markdown_in_html_fn=_mark("sanitize"),
+        normalize_hash_subheadings_in_html_fn=_mark("hash"),
+        strip_internal_scaffolding_status_html_fn=_mark("strip_status"),
+        html_number_self_debunking_fn=_mark("number"),
+        strip_color_markers_for_color_off_html_fn=_mark("strip_color"),
+    )
+    assert out.startswith("X|box|sanitize|hash|strip_status|number|sanitize|box")
+    assert out.endswith("|strip_color")
+    assert calls == ["box", "sanitize", "hash", "strip_status", "number", "sanitize", "box", "strip_color"]
+
+    calls = []
+    out_on = pipe.post_render_normalization(
+        "Y",
+        answer_lang="en",
+        color="on",
+        ensure_self_debunking_box_html_fn=_mark("box"),
+        sanitize_self_debunking_markdown_in_html_fn=_mark("sanitize"),
+        normalize_hash_subheadings_in_html_fn=_mark("hash"),
+        strip_internal_scaffolding_status_html_fn=_mark("strip_status"),
+        html_number_self_debunking_fn=_mark("number"),
+        strip_color_markers_for_color_off_html_fn=_mark("strip_color"),
+    )
+    assert out_on.startswith("Y|box|sanitize|hash|strip_status|number|sanitize|box")
+    assert not out_on.endswith("|strip_color")
+    assert calls == ["box", "sanitize", "hash", "strip_status", "number", "sanitize", "box"]
+
+
+def test_output_pipeline_self_debunking_postprocess_order_and_fail_soft():
+    mod = load_fix_module()
+    pipe = getattr(mod, "_output_pipeline", None)
+    assert pipe is not None
+
+    calls = []
+
+    def _mark(name, *, fail=False):
+        def _fn(text):
+            calls.append(name)
+            if fail:
+                raise RuntimeError(name)
+            return f"{text}|{name}"
+        return _fn
+
+    out = pipe.normalize_self_debunking_postprocess_text(
+        "X",
+        normalize_inline_self_debunking_header_fn=_mark("inline"),
+        enforce_self_debunking_contract_fn=_mark("enforce"),
+        normalize_self_debunking_numbering_text_fn=_mark("number"),
+        dedupe_self_debunking_sections_fn=_mark("dedupe"),
+    )
+    assert out == "X|inline|enforce|number|dedupe"
+    assert calls == ["inline", "enforce", "number", "dedupe"]
+
+    calls = []
+    out_fail_soft = pipe.normalize_self_debunking_postprocess_text(
+        "Y",
+        normalize_inline_self_debunking_header_fn=_mark("inline"),
+        enforce_self_debunking_contract_fn=_mark("enforce", fail=True),
+        normalize_self_debunking_numbering_text_fn=_mark("number"),
+        dedupe_self_debunking_sections_fn=_mark("dedupe"),
+    )
+    assert out_fail_soft == "Y|inline|number|dedupe"
+    assert calls == ["inline", "enforce", "number", "dedupe"]
+
+
+def test_output_pipeline_verification_route_display_policy_is_centralized_and_provider_aware():
+    mod = load_fix_module()
+    pipe = getattr(mod, "_output_pipeline", None)
+    assert pipe is not None
+
+    raw = (
+        "Antwortblock\n"
+        "Verification Route:\n"
+        "Source: TRAIN (general background knowledge)\n"
+        "Self-Debunking:\n"
+        "1. Weakness: x\n"
+    )
+
+    # Default remains visible.
+    out_default = pipe.apply_verification_route_display_policy(
+        raw,
+        config={},
+        provider="gemini",
+        strip_verification_route_display_lines_fn=lambda txt: "STRIPPED",
+    )
+    assert out_default == raw
+
+    # Provider override wins for the selected provider.
+    out_provider = pipe.apply_verification_route_display_policy(
+        raw,
+        config={"providers": {"openrouter": {"hide_verification_route_lines": True}}},
+        provider="openrouter",
+        strip_verification_route_display_lines_fn=lambda txt: "STRIPPED",
+    )
+    assert out_provider == "STRIPPED"
+
+    out_other_provider = pipe.apply_verification_route_display_policy(
+        raw,
+        config={"providers": {"openrouter": {"hide_verification_route_lines": True}}},
+        provider="gemini",
+        strip_verification_route_display_lines_fn=lambda txt: "STRIPPED",
+    )
+    assert out_other_provider == raw
+
+    # Root fallback supports string toggles.
+    out_root = pipe.apply_verification_route_display_policy(
+        raw,
+        config={"hide_verification_route_lines": "on"},
+        provider="gemini",
+        strip_verification_route_display_lines_fn=lambda txt: "STRIPPED",
+    )
+    assert out_root == "STRIPPED"
+
+
+def test_apply_self_debunking_text_postprocess_seam_prefers_pipeline(monkeypatch):
+    mod = load_fix_module()
+    stub_pipe = types.SimpleNamespace(
+        normalize_self_debunking_postprocess_text=lambda txt, **kwargs: "PIPE_SD_TEXT"
+    )
+    monkeypatch.setattr(mod, "_output_pipeline", stub_pipe, raising=False)
+
+    out = mod.apply_self_debunking_text_postprocess_seam(
+        "RAW",
+        gov_mgr=mod.gov,
+        profile_name="Standard",
+        is_command=False,
+        lang="de",
+    )
+    assert out == "PIPE_SD_TEXT"
+
+
+def test_apply_post_render_normalization_seam_prefers_pipeline(monkeypatch):
+    mod = load_fix_module()
+    stub_pipe = types.SimpleNamespace(
+        post_render_normalization=lambda html_body, **kwargs: "PIPE_HTML_NORM"
+    )
+    monkeypatch.setattr(mod, "_output_pipeline", stub_pipe, raising=False)
+
+    out = mod.apply_post_render_normalization_seam(
+        "<p>X</p>",
+        answer_lang="de",
+        color="off",
+    )
+    assert out == "PIPE_HTML_NORM"
+
+
+def test_output_header_renderer_status_line_sci_pending_modes_and_color_policy():
+    mod = load_fix_module()
+    h = getattr(mod, "_output_header_renderer", None)
+    assert h is not None
+
+    line_pending = h.build_active_profile_status_line(
+        profile="Expert",
+        sci_variant="",
+        overlay="Strict",
+        control_layer="on",
+        qc="on",
+        cgi="on",
+        color="on",
+        sci_pending=True,
+        off_label="off",
+        pending_label="PENDING",
+        pending_mode="when_pending_and_unset",
+        uppercase_sci_non_off=False,
+        color_force_off_profiles=(),
+    )
+    assert "SCI: PENDING" in line_pending
+
+    line_a = h.build_active_profile_status_line(
+        profile="Expert",
+        sci_variant="A",
+        overlay="Strict",
+        control_layer="on",
+        qc="on",
+        cgi="on",
+        color="on",
+        sci_pending=True,
+        off_label="off",
+        pending_label="PENDING",
+        pending_mode="when_pending_and_unset",
+        uppercase_sci_non_off=False,
+        color_force_off_profiles=(),
+    )
+    assert "SCI: A" in line_a
+
+    line_sandbox = h.build_active_profile_status_line(
+        profile="Sandbox",
+        sci_variant="B",
+        overlay="Explore",
+        control_layer="on",
+        qc="on",
+        cgi="on",
+        color="on",
+        sci_pending=False,
+        off_label="off",
+        pending_label="PENDING",
+        pending_mode="when_pending_and_unset",
+        uppercase_sci_non_off=False,
+        color_force_off_profiles=(),
+    )
+    assert line_sandbox.endswith("Color: on")
+
+
+def test_status_line_prefers_modular_header_builder(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    def _builder(**kwargs):
+        return "STATUS-LINE-FROM-MODULE"
+
+    monkeypatch.setattr(
+        mod,
+        "_output_header_renderer",
+        types.SimpleNamespace(build_active_profile_status_line=_builder),
+        raising=False,
+    )
+
+    line = api._status_line(
+        sysname="Comm-SCI-Control",
+        ver="20.2.5",
+        profile="Expert",
+        sci="off",
+        overlay="Strict",
+        ctl="on",
+        qc="on",
+        cgi="on",
+        color="on",
+    )
+    assert line == "STATUS-LINE-FROM-MODULE"
+
+
+def test_wrapper_build_active_profile_header_line_pending_mode_when_variant_unset():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    line_pending = api._build_active_profile_header_line(
+        profile="Expert",
+        sci_variant="",
+        overlay="Strict",
+        control_layer="on",
+        qc="on",
+        cgi="on",
+        color="on",
+        sci_pending=True,
+        off_label="off",
+        pending_label="PENDING",
+        pending_mode="when_pending_and_unset",
+        uppercase_sci_non_off=False,
+        color_force_off_profiles=(),
+    )
+    assert "SCI: PENDING" in line_pending
+
+    line_variant = api._build_active_profile_header_line(
+        profile="Expert",
+        sci_variant="A",
+        overlay="Strict",
+        control_layer="on",
+        qc="on",
+        cgi="on",
+        color="on",
+        sci_pending=True,
+        off_label="off",
+        pending_label="PENDING",
+        pending_mode="when_pending_and_unset",
+        uppercase_sci_non_off=False,
+        color_force_off_profiles=(),
+    )
+    assert "SCI: A" in line_variant
+
+
+def test_state_reminder_line_keeps_color_on_for_sandbox_profile():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.active_profile = "Sandbox"
+    api.gov_state.color = "on"
+    line = api._state_reminder_line()
+    assert "Profile=Sandbox" in line
+    assert "Color=on" in line
+
+
+def test_state_reminder_line_prefers_output_state_snapshot_module_when_available(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    # Deliberately conflicting runtime state to verify delegation to snapshot module.
+    api.gov_state.active_profile = "Standard"
+    api.gov_state.color = "off"
+    api.gov_state.overlay = ""
+    api.gov_state.sci_active = False
+    api.gov_state.sci_variant = ""
+    api.gov_state.comm_active = False
+
+    class _Snap:
+        comm_active = True
+        active_profile = "Briefing"
+        sci_variant = "A"
+        sci_pending = False
+        sci_active = True
+        overlay = "Strict"
+        color = "on"
+        control_layer = "on"
+        qc = "on"
+        cgi = "on"
+        anchor_auto = True
+        user_turns = 3
+        dynamic_nudge = ""
+        language_policy_mode = "production"
+
+    class _SnapCls:
+        @staticmethod
+        def from_runtime_state(_):
+            return _Snap()
+
+    monkeypatch.setattr(
+        mod,
+        "_output_state_snapshot",
+        types.SimpleNamespace(OutputStateSnapshot=_SnapCls),
+        raising=False,
+    )
+
+    line = api._state_reminder_line()
+    assert "Profile=Briefing" in line
+    assert "Overlay=Strict" in line
+    assert "SCI=A" in line
+    assert "Color=on" in line
+    assert "Comm=on" in line
+
+
+def test_apply_csc_strict_sandbox_respects_color_on_in_header_and_markers():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    api.gov_state.comm_active = True
+    api.gov_state.active_profile = "Sandbox"
+    api.gov_state.color = "on"
+    api.gov_state.overlay = "Strict"
+    api.gov_state.sci_active = False
+    api.gov_state.sci_variant = ""
+
+    raw = (
+        "[GREEN] 🟢 Zeit ist eine Ordnungsdimension.\n\n"
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · "
+        "Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)\n"
+    )
+    html_out, _meta = api._apply_csc_strict(raw_response=raw, user_raw="Was ist Zeit?", is_command=False)
+    plain = re.sub(r"<[^>]+>", " ", str(html_out or ""))
+    assert "Active profile: Sandbox" in plain
+    assert "Color: on" in plain
+    html_s = str(html_out or "")
+    assert (
+        ("signal-dot-marker" in html_s)
+        or ("#137333" in html_s)
+        or ("#2e7d32" in html_s)
+        or ("[GREEN]" in plain)
+    )
+
+
+def test_wrapper_build_comm_status_line_pending_and_off():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    pending_line = api._build_comm_status_line(
+        comm="on",
+        profile="Expert",
+        sci_variant="",
+        overlay="Strict",
+        control_layer="on",
+        qc="on",
+        cgi="on",
+        color="on",
+        language_policy="production",
+        sci_pending=True,
+    )
+    assert "SCI: PENDING" in pending_line
+
+    off_line = api._build_comm_status_line(
+        comm="on",
+        profile="Expert",
+        sci_variant="off",
+        overlay="Strict",
+        control_layer="on",
+        qc="on",
+        cgi="on",
+        color="on",
+        language_policy="production",
+        sci_pending=False,
+    )
+    assert "SCI: OFF" in off_line
+
+
+def test_route_context_uses_modular_resolver_and_dispatcher(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    def _resolve_input(raw_txt, state, api_instance, gov_manager=None, route_input_fn=None):
+        return {
+            "kind": "command",
+            "canonical_cmd": "Comm State",
+            "standalone_only_violation": True,
+        }
+
+    dispatcher = types.SimpleNamespace(
+        route_kind=lambda route: "command",
+        is_command_route=lambda route: True,
+        is_sci_selection_route=lambda route: False,
+        is_error_route=lambda route: False,
+        is_noop_route=lambda route: False,
+        route_audit_payload=lambda route: {
+            "kind": "command",
+            "is_command": True,
+            "is_sci_selection": False,
+        },
+    )
+
+    monkeypatch.setattr(
+        mod,
+        "_output_resolver",
+        types.SimpleNamespace(resolve_input=_resolve_input),
+        raising=False,
+    )
+    monkeypatch.setattr(mod, "_output_dispatcher", dispatcher, raising=False)
+
+    route, meta = api._resolve_route_context("Comm State")
+    assert route.get("canonical_cmd") == "Comm State"
+    assert meta.get("kind") == "command"
+    assert meta.get("is_command") is True
+    assert meta.get("is_error") is False
+    assert meta.get("is_noop") is False
+
+    payload = api._route_audit_payload(route, meta)
+    assert payload.get("kind") == "command"
+    assert payload.get("is_command") is True
+    assert payload.get("standalone_only_violation") is True
+
+
+def test_route_methods_delegate_to_output_routing_runtime_when_available(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    route_expected = {"kind": "chat", "query_text": "delegated", "standalone_only_violation": True}
+    meta_expected = {
+        "kind": "chat",
+        "is_command": False,
+        "is_sci_selection": False,
+        "is_error": False,
+        "is_noop": False,
+        "standalone_only_violation": True,
+    }
+    payload_expected = {
+        "kind": "chat",
+        "is_command": False,
+        "is_sci_selection": False,
+        "standalone_only_violation": True,
+    }
+    calls = {"resolve": 0, "contract": 0, "audit": 0}
+
+    def _resolve(raw_txt, state, api_instance, **kwargs):
+        calls["resolve"] += 1
+        assert raw_txt == "hello"
+        assert state is api.gov_state
+        assert api_instance is api
+        assert kwargs.get("output_resolver_mod") is getattr(mod, "_output_resolver", None)
+        assert kwargs.get("output_dispatcher_mod") is getattr(mod, "_output_dispatcher", None)
+        return route_expected, meta_expected
+
+    def _contract(route, **kwargs):
+        calls["contract"] += 1
+        assert route == route_expected
+        assert kwargs.get("local_contract_fn") is mod.contract_route_shape
+        return True
+
+    def _audit(route, route_meta=None, **kwargs):
+        calls["audit"] += 1
+        assert route == route_expected
+        assert route_meta == meta_expected
+        assert kwargs.get("output_dispatcher_mod") is getattr(mod, "_output_dispatcher", None)
+        return payload_expected
+
+    runtime = types.SimpleNamespace(
+        resolve_route_context=_resolve,
+        route_contract_ok=_contract,
+        route_audit_payload=_audit,
+    )
+    monkeypatch.setattr(mod, "_output_routing_runtime", runtime, raising=False)
+
+    route, meta = api._resolve_route_context("hello")
+    assert route == route_expected
+    assert meta == meta_expected
+    assert api._route_contract_ok(route) is True
+    payload = api._route_audit_payload(route, meta)
+    assert payload == payload_expected
+    assert calls == {"resolve": 1, "contract": 1, "audit": 1}
+
+
+def test_resolve_route_context_normalizes_chat_txt_to_query_text(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    resolver = getattr(mod, "_output_resolver", None)
+    assert resolver is not None
+
+    monkeypatch.setattr(
+        mod,
+        "_output_resolver",
+        types.SimpleNamespace(
+            resolve_input=lambda *args, **kwargs: {"kind": "chat", "txt": "hello"},
+            normalize_route_shape=resolver.normalize_route_shape,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(mod, "_output_dispatcher", None, raising=False)
+
+    route, meta = api._resolve_route_context("hello")
+    assert route.get("kind") == "chat"
+    assert route.get("query_text") == "hello"
+    assert meta.get("kind") == "chat"
+    assert meta.get("is_command") is False
+
+
+def test_route_contract_ok_prefers_modular_resolver_contract(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    route = {"kind": "chat", "query_text": "x"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_resolver",
+        types.SimpleNamespace(contract_route_shape=lambda r: False),
+        raising=False,
+    )
+    assert api._route_contract_ok(route) is False
+
+    monkeypatch.setattr(mod, "_output_resolver", None, raising=False)
+    assert api._route_contract_ok(route) is True
+
+
+def test_route_contract_ok_prefers_dispatcher_when_available(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    route = {"kind": "chat", "query_text": "x"}
+
+    monkeypatch.setattr(
+        mod,
+        "_output_dispatcher",
+        types.SimpleNamespace(route_contract_ok=lambda _r, contract_route_shape_fn=None: False),
+        raising=False,
+    )
+    assert api._route_contract_ok(route) is False
+
+    monkeypatch.setattr(
+        mod,
+        "_output_dispatcher",
+        types.SimpleNamespace(route_contract_ok=lambda _r, contract_route_shape_fn=None: True),
+        raising=False,
+    )
+    assert api._route_contract_ok(route) is True
+
+
+def test_output_resolver_matches_legacy_command_route_shape():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    resolver = getattr(mod, "_output_resolver", None)
+    assert resolver is not None
+
+    api = mod.Api()
+    route_legacy = mod.route_input("Comm State", api.gov_state, api, gov_manager=mod.gov)
+    route_new = resolver.resolve_input(
+        "Comm State",
+        api.gov_state,
+        api,
+        gov_manager=mod.gov,
+        route_input_fn=mod.route_input,
+    )
+    assert route_new == resolver.normalize_route_shape(route_legacy, raw_txt="Comm State")
+    assert route_new.get("kind") == "command"
+    assert route_new.get("canonical_cmd") == "Comm State"
+
+
+def test_output_dispatcher_route_audit_payload_contract():
+    mod = load_fix_module()
+    dispatcher = getattr(mod, "_output_dispatcher", None)
+    assert dispatcher is not None
+
+    payload = dispatcher.route_audit_payload(
+        {
+            "kind": "chat",
+            "query_text": "A",
+            "is_sci_selection": True,
+            "standalone_only_violation": True,
+        }
+    )
+    assert payload.get("kind") == "chat"
+    assert payload.get("is_command") is False
+    assert payload.get("is_sci_selection") is True
+    assert payload.get("standalone_only_violation") is True
+
+
+def test_output_rules_registry_qc_probe_is_complete_contract():
+    mod = load_fix_module()
+    rr = getattr(mod, "_output_rules_registry", None)
+    assert rr is not None
+    fn = getattr(rr, "qc_probe_is_complete", None)
+    assert callable(fn)
+
+    assert bool(fn("QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)")) is True
+    assert bool(fn("QC-Matrix: Klarheit 3 (Δ0) · Kuerze 2 (Δ0) · Evidenz 2 (Δ0) · Empathie 2 (Δ0) · Konsistenz 3 (Δ0) · Neutralitaet 3 (Δ0)")) is True
+    assert bool(fn("QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0)")) is False
+
+
+def test_render_ts_footer_html_is_deterministic_wrapper_output():
+    mod = load_fix_module()
+    ts = "10.03.2026 12:34:56 CET (UTC+01:00)"
+    out = mod._render_ts_footer_html(ts)
+    assert out == '<div class="ts-footer">Response at 10.03.2026 12:34:56 CET (UTC+01:00)</div>'
+
+
+def test_qc_footer_helper_functions_delegate_to_output_footer_renderer(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubFooterRenderer:
+        def ensure_qc_footer_html_consistency(self, **kwargs):
+            return f"QC-GUARD::{kwargs.get('profile_name')}::{kwargs.get('raw_for_render')}"
+
+        def annotate_qc_matrix_tooltips_html(self, html_text, **kwargs):
+            return f"QC-TIP::{html_text}::{kwargs.get('lang')}"
+
+    monkeypatch.setattr(mod, "_output_footer_renderer", _StubFooterRenderer())
+
+    out_guard = mod.ensure_qc_footer_html_consistency_html_stage(
+        final_html_body="<p>a</p>",
+        raw_for_render="RAW",
+        profile_name="Expert",
+        gov_mgr=object(),
+        overrides={"clarity": 2},
+        qc_footer_for_profile_fn=lambda _p: "QC-Matrix: Clarity 2 (Δ0)",
+        ensure_qc_footer_present_fn=lambda txt, _g, _p, _o: txt,
+        enforce_qc_footer_deltas_fn=lambda txt, _c, _p: txt,
+        ensure_qc_footer_is_last_fn=lambda txt: txt,
+        qc_probe_is_complete_fn=lambda _probe: True,
+    )
+    assert out_guard == "QC-GUARD::Expert::RAW"
+    assert mod.annotate_qc_matrix_tooltips_html("<p>b</p>", lang="en") == "QC-TIP::<p>b</p>::en"
+
+
+def test_qc_footer_helper_functions_prefer_post_render_qc_stage_module(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubQcStage:
+        def ensure_qc_footer_html_consistency_html_stage(self, **kwargs):
+            return f"QC-STAGE-GUARD::{kwargs.get('profile_name')}::{kwargs.get('raw_for_render')}"
+
+    monkeypatch.setattr(mod, "_output_post_render_qc_stage", _StubQcStage())
+
+    out_guard = mod.ensure_qc_footer_html_consistency_html_stage(
+        final_html_body="<p>a</p>",
+        raw_for_render="RAW",
+        profile_name="Expert",
+        gov_mgr=object(),
+        overrides={"clarity": 2},
+        qc_footer_for_profile_fn=lambda _p: "QC-Matrix: Clarity 2 (Δ0)",
+        ensure_qc_footer_present_fn=lambda txt, _g, _p, _o: txt,
+        enforce_qc_footer_deltas_fn=lambda txt, _c, _p: txt,
+        ensure_qc_footer_is_last_fn=lambda txt: txt,
+        qc_probe_is_complete_fn=lambda _probe: True,
+    )
+    assert out_guard == "QC-STAGE-GUARD::Expert::RAW"
+
+
+def test_qc_footer_finalize_helper_uses_central_guard_then_tooltip_sequence(monkeypatch):
+    mod = load_fix_module()
+    calls = []
+
+    class _StubFooterRenderer:
+        def ensure_qc_footer_html_consistency(self, **kwargs):
+            calls.append(("guard", kwargs.get("profile_name")))
+            return f"QC-GUARD::{kwargs.get('profile_name')}::{kwargs.get('raw_for_render')}"
+
+        def annotate_qc_matrix_tooltips_html(self, html_text, **kwargs):
+            calls.append(("tips", kwargs.get("lang")))
+            return f"QC-TIP::{html_text}::{kwargs.get('lang')}"
+
+        def finalize_qc_footer_html(self, **kwargs):
+            calls.append(("finalize", kwargs.get("profile_name")))
+            return "UNUSED-FINALIZE-PATH"
+
+    monkeypatch.setattr(mod, "_output_footer_renderer", _StubFooterRenderer())
+
+    out = mod.finalize_qc_footer_html_stage(
+        final_html_body="<p>a</p>",
+        raw_for_render="RAW",
+        profile_name="Expert",
+        gov_mgr=object(),
+        overrides={"clarity": 2},
+        qc_footer_for_profile_fn=lambda _p: "QC-Matrix: Clarity 2 (Δ0)",
+        ensure_qc_footer_present_fn=lambda txt, _g, _p, _o: txt,
+        enforce_qc_footer_deltas_fn=lambda txt, _c, _p: txt,
+        ensure_qc_footer_is_last_fn=lambda txt: txt,
+        qc_probe_is_complete_fn=lambda _probe: True,
+        lang="en",
+    )
+    assert out == "QC-TIP::QC-GUARD::Expert::RAW::en"
+    assert calls == [("guard", "Expert"), ("tips", "en")]
+
+
+def test_qc_footer_finalize_helper_prefers_post_render_qc_stage_module(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubQcStage:
+        def finalize_qc_footer_html_stage(self, **kwargs):
+            return f"QC-STAGE-FINAL::{kwargs.get('profile_name')}::{kwargs.get('lang')}"
+
+    monkeypatch.setattr(mod, "_output_post_render_qc_stage", _StubQcStage())
+
+    out = mod.finalize_qc_footer_html_stage(
+        final_html_body="<p>a</p>",
+        raw_for_render="RAW",
+        profile_name="Expert",
+        gov_mgr=object(),
+        overrides={"clarity": 2},
+        qc_footer_for_profile_fn=lambda _p: "QC-Matrix: Clarity 2 (Δ0)",
+        ensure_qc_footer_present_fn=lambda txt, _g, _p, _o: txt,
+        enforce_qc_footer_deltas_fn=lambda txt, _c, _p: txt,
+        ensure_qc_footer_is_last_fn=lambda txt: txt,
+        qc_probe_is_complete_fn=lambda _probe: True,
+        lang="en",
+    )
+    assert out == "QC-STAGE-FINAL::Expert::en"
+
+
+def test_qc_footer_finalize_helper_uses_local_sequence_when_renderer_entrypoint_missing(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_footer_renderer", None)
+
+    calls = []
+
+    def _guard(**kwargs):
+        calls.append(("guard", kwargs.get("profile_name")))
+        return "GUARDED"
+
+    def _tips(html_text, **kwargs):
+        calls.append(("tips", kwargs.get("lang")))
+        return f"TIPPED::{html_text}"
+
+    monkeypatch.setattr(mod, "ensure_qc_footer_html_consistency_html_stage", _guard)
+    monkeypatch.setattr(mod, "annotate_qc_matrix_tooltips_html", _tips)
+
+    out = mod.finalize_qc_footer_html_stage(
+        final_html_body="<p>a</p>",
+        raw_for_render="RAW",
+        profile_name="Standard",
+        gov_mgr=object(),
+        overrides={},
+        qc_footer_for_profile_fn=lambda _p: "QC-Matrix: Clarity 2 (Δ0)",
+        ensure_qc_footer_present_fn=lambda txt, _g, _p, _o: txt,
+        enforce_qc_footer_deltas_fn=lambda txt, _c, _p: txt,
+        ensure_qc_footer_is_last_fn=lambda txt: txt,
+        qc_probe_is_complete_fn=None,
+        lang="de",
+    )
+    assert out == "TIPPED::GUARDED"
+    assert calls == [("guard", "Standard"), ("tips", "de")]
+
+
+def test_qc_footer_helper_functions_are_fail_soft_when_renderer_unavailable(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_footer_renderer", None)
+
+    src = "<p>qc</p>"
+    out_guard = mod.ensure_qc_footer_html_consistency_html_stage(
+        final_html_body=src,
+        raw_for_render="RAW",
+        profile_name="Standard",
+        gov_mgr=object(),
+        overrides={},
+        qc_footer_for_profile_fn=lambda _p: "",
+        ensure_qc_footer_present_fn=lambda txt, _g, _p, _o: txt,
+        enforce_qc_footer_deltas_fn=lambda txt, _c, _p: txt,
+        ensure_qc_footer_is_last_fn=lambda txt: txt,
+        qc_probe_is_complete_fn=None,
+    )
+    assert out_guard == src
+    assert mod.annotate_qc_matrix_tooltips_html(src, lang="de") == src
+
+
+def test_csc_mid_refiner_helper_prefers_runtime_stage_module(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+
+    class _StubCscMidStage:
+        def build_csc_refiner_meta_stage(self, **kwargs):
+            return {
+                "csc_meta": {"applied": True, "trigger": kwargs.get("profile_name")},
+                "threshold_multiplier": 7,
+            }
+
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", _StubCscMidStage())
+    csc_meta, mult = api._build_csc_refiner_meta_stage(
+        raw_response="RAW",
+        user_raw="USER",
+        profile_name="Expert",
+        overlay_name="Strict",
+        refiner_obj=None,
+    )
+    assert mult == 7
+    assert csc_meta == {"applied": True, "trigger": "Expert"}
+
+
+def test_csc_mid_alerts_header_helper_prefers_runtime_stage_module(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+
+    class _StubCscMidStage:
+        def build_alerts_and_header_stage(self, **_kwargs):
+            return {"raw_response": "RAW-AH", "alert_html": "<div>ALERT</div>", "header": "HDR"}
+
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", _StubCscMidStage())
+    raw_out, alert_html, header = api._build_csc_alerts_and_header_stage(
+        raw_response="RAW",
+        profile_name="Standard",
+        overlay_name="off",
+        csc_meta=None,
+        refiner_obj=None,
+    )
+    assert raw_out == "RAW-AH"
+    assert alert_html == "<div>ALERT</div>"
+    assert header == "HDR"
+
+
+def test_csc_mid_pre_render_helper_prefers_runtime_stage_module(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    class _StubCscMidStage:
+        def apply_pre_render_policy_strict_gate_runtime_dispatch_stage(self, **kwargs):
+            assert kwargs.get("header") == "HDR"
+            bundle = kwargs.get("runtime_bundle")
+            assert isinstance(bundle, dict)
+            assert bundle.get("output_pipeline_mod") is getattr(mod, "_output_pipeline", None)
+            assert isinstance(bundle.get("verification_route_config"), dict)
+            assert bundle.get("verification_route_provider") in ("gemini", "openrouter", "huggingface")
+            assert isinstance(bundle.get("hooks"), dict)
+            return {
+                "blocked": False,
+                "alert_html": "ALERT-OUT",
+                "raw_for_render": "RAW-OUT",
+                "raw_response": "RESP-OUT",
+            }
+
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", _StubCscMidStage())
+    out = api._apply_csc_pre_render_policy_strict_gate_stage(
+        raw_response="RESP-IN",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="ALERT-IN",
+    )
+    assert out == {
+        "blocked": False,
+        "blocked_response": None,
+        "strict_meta": None,
+        "alert_html": "ALERT-OUT",
+        "raw_for_render": "RAW-OUT",
+        "raw_response": "RESP-OUT",
+    }
+
+
+def test_csc_mid_pre_render_helper_prefers_runtime_dispatch_stage_module(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    calls = []
+
+    class _StubCscMidStage:
+        def build_pre_render_policy_strict_gate_runtime_bundle(self, **_kwargs):
+            calls.append("build_bundle")
+            return {"bundle_marker": "D16", "hooks": {}}
+
+        def apply_pre_render_policy_strict_gate_runtime_dispatch_stage(self, **kwargs):
+            calls.append("dispatch")
+            assert kwargs.get("runtime_bundle", {}).get("bundle_marker") == "D16"
+            assert kwargs.get("header") == "HDR"
+            return {
+                "blocked": False,
+                "blocked_response": None,
+                "strict_meta": None,
+                "alert_html": "ALERT-DISPATCH",
+                "raw_for_render": "RAW-DISPATCH",
+                "raw_response": "RESP-DISPATCH",
+            }
+
+        def apply_pre_render_policy_strict_gate_runtime_chain_stage(self, **_kwargs):
+            raise AssertionError("dispatch entry should be used before legacy chain path")
+
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", _StubCscMidStage())
+    out = api._apply_csc_pre_render_policy_strict_gate_stage(
+        raw_response="RESP-IN",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="ALERT-IN",
+    )
+    assert out == {
+        "blocked": False,
+        "blocked_response": None,
+        "strict_meta": None,
+        "alert_html": "ALERT-DISPATCH",
+        "raw_for_render": "RAW-DISPATCH",
+        "raw_response": "RESP-DISPATCH",
+    }
+    assert calls == ["build_bundle", "dispatch"]
+
+
+def test_csc_mid_pre_render_helper_prefers_runtime_bundle_factory_and_bundle_fallback_dispatch(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    calls = []
+
+    class _StubCscMidStage:
+        def build_pre_render_policy_strict_gate_runtime_bundle(self, **kwargs):
+            calls.append("build_bundle")
+            assert kwargs.get("gov_mgr") is mod.gov
+            assert kwargs.get("runtime_state") is api.gov_state
+            assert kwargs.get("validator_obj") is getattr(api, "validator", None)
+            assert kwargs.get("app_obj") is api
+            hook_scope = kwargs.get("hook_scope")
+            assert isinstance(hook_scope, dict)
+            assert callable(hook_scope.get("evaluate_strict_enforcement"))
+            assert kwargs.get("hook_overrides") in (None, {})
+            return {"bundle_marker": "B42", "hooks": {}}
+
+        def apply_pre_render_policy_strict_gate_runtime_dispatch_stage(self, **kwargs):
+            calls.append("dispatch")
+            assert kwargs.get("runtime_bundle", {}).get("bundle_marker") == "B42"
+            return {
+                "blocked": False,
+                "alert_html": "ALERT-BUNDLE-ULT",
+                "raw_for_render": "RAW-BUNDLE-ULT",
+                "raw_response": "RESP-BUNDLE-ULT",
+            }
+
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", _StubCscMidStage())
+    out = api._apply_csc_pre_render_policy_strict_gate_stage(
+        raw_response="RESP-IN",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="ALERT-IN",
+    )
+    assert out == {
+        "blocked": False,
+        "blocked_response": None,
+        "strict_meta": None,
+        "alert_html": "ALERT-BUNDLE-ULT",
+        "raw_for_render": "RAW-BUNDLE-ULT",
+        "raw_response": "RESP-BUNDLE-ULT",
+    }
+    assert calls == ["build_bundle", "dispatch"]
+
+
+def test_strict_gate_runtime_bundle_scope_hooks_keep_chain_and_ultimate_fallback_in_sync():
+    mod = load_fix_module()
+    stage = getattr(mod, "_output_csc_mid_runtime_stage", None)
+    assert stage is not None
+
+    strict_calls = []
+
+    def _strict_eval(**kwargs):
+        strict_calls.append(str(kwargs.get("raw_for_render") or ""))
+        return {"blocked": False, "strict_banner_html": "<b>STRICT</b>"}
+
+    class _AppStub:
+        def _append_system_message(self, *_args, **_kwargs):
+            return None
+
+        def _get_enforcement_settings(self):
+            return {"enabled": True, "policy": "strict_warn"}
+
+        def _render_sci_trace_as_html_runtime(self, text):
+            return str(text or "")
+
+        def _hide_verification_route_lines_in_chat(self):
+            return False
+
+    class _GovStub:
+        def normalize_qc_overrides(self, overrides):
+            return dict(overrides or {})
+
+        def get_effective_qc_corridor(self, *_args, **_kwargs):
+            return {}
+
+    runtime_state = types.SimpleNamespace(
+        qc_overrides={},
+        sci_active=False,
+        sci_variant="",
+        sci_pending=False,
+        answer_language="de",
+    )
+    bundle = stage.build_pre_render_policy_strict_gate_runtime_bundle(
+        gov_mgr=_GovStub(),
+        runtime_state=runtime_state,
+        validator_obj=object(),
+        output_pipeline_mod=None,
+        verification_route_config={},
+        verification_route_provider="gemini",
+        app_obj=_AppStub(),
+        hook_scope={
+            "evaluate_strict_enforcement": _strict_eval,
+            "sanitize_html": lambda txt: f"SAN::{txt}",
+            "unwrap_accidental_full_text_codefence": lambda txt: str(txt or ""),
+            "strip_pathological_repetition_display_noise": lambda txt, lang="de": str(txt or ""),
+        },
+    )
+    hooks = bundle.get("hooks", {})
+    assert callable(hooks.get("evaluate_strict_enforcement_fn"))
+    assert callable(hooks.get("append_system_message_fn"))
+    assert callable(hooks.get("get_enforcement_settings_fn"))
+
+    chain_out = stage.apply_pre_render_policy_strict_gate_runtime_chain_stage(
+        raw_response="BODY",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="ALERT",
+        runtime_bundle=bundle,
+    )
+    assert isinstance(chain_out, dict)
+    assert str(chain_out.get("alert_html") or "").startswith("<b>STRICT</b>")
+    assert str(chain_out.get("raw_for_render") or "").startswith("HDR\n\n")
+
+    ultimate_out = stage.apply_pre_render_policy_strict_gate_runtime_ultimate_fallback_from_bundle_stage(
+        raw_response="BODY",
+        user_raw="USER",
+        profile_name="Standard",
+        header="HDR",
+        alert_html="ALERT",
+        runtime_bundle=bundle,
+    )
+    assert isinstance(ultimate_out, dict)
+    assert str(ultimate_out.get("alert_html") or "").startswith("<b>STRICT</b>")
+    assert str(ultimate_out.get("raw_for_render") or "").startswith("HDR\n\n")
+    assert strict_calls == ["HDR\n\nBODY", "HDR\n\nBODY"]
+
+
+def test_strict_gate_runtime_dispatch_stage_returns_normalized_payload_with_passthrough_fallback():
+    mod = load_fix_module()
+    stage = getattr(mod, "_output_csc_mid_runtime_stage", None)
+    assert stage is not None
+
+    runtime_state = types.SimpleNamespace(
+        qc_overrides={},
+        sci_active=False,
+        sci_variant="",
+        sci_pending=False,
+        answer_language="de",
+    )
+    bundle = stage.build_pre_render_policy_strict_gate_runtime_bundle(
+        gov_mgr=types.SimpleNamespace(
+            normalize_qc_overrides=lambda overrides: dict(overrides or {}),
+            get_effective_qc_corridor=lambda *_args, **_kwargs: {},
+        ),
+        runtime_state=runtime_state,
+        validator_obj=object(),
+        output_pipeline_mod=None,
+        verification_route_config={},
+        verification_route_provider="gemini",
+        app_obj=types.SimpleNamespace(
+            _append_system_message=lambda *_args, **_kwargs: None,
+            _get_enforcement_settings=lambda: {"enabled": False},
+            _render_sci_trace_as_html_runtime=lambda txt: str(txt or ""),
+            _hide_verification_route_lines_in_chat=lambda: False,
+        ),
+        hook_scope={
+            "evaluate_strict_enforcement": lambda **_kwargs: {"blocked": False, "strict_banner_html": ""},
+            "sanitize_html": lambda txt: str(txt or ""),
+            "unwrap_accidental_full_text_codefence": lambda txt: str(txt or ""),
+            "strip_pathological_repetition_display_noise": lambda txt, lang="de": str(txt or ""),
+        },
+    )
+
+    out = stage.apply_pre_render_policy_strict_gate_runtime_dispatch_stage(
+        raw_response="BODY",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="ALERT",
+        runtime_bundle=bundle,
+    )
+    assert isinstance(out, dict)
+    assert out.get("blocked") is False
+    assert str(out.get("raw_for_render") or "").startswith("HDR\n\n")
+    assert str(out.get("raw_response") or "") == "BODY"
+
+    passthrough = stage.build_pre_render_policy_strict_gate_runtime_passthrough_out(
+        raw_response="BODY",
+        header="HDR",
+        alert_html="ALERT",
+    )
+    assert passthrough == {
+        "blocked": False,
+        "blocked_response": None,
+        "strict_meta": None,
+        "alert_html": "ALERT",
+        "raw_for_render": "HDR\n\nBODY",
+        "raw_response": "BODY",
+    }
+
+
+def test_csc_mid_pre_render_helper_uses_runtime_fallback_stage_when_primary_unavailable(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+
+    class _StubCscMidStage:
+        def apply_pre_render_policy_strict_gate_runtime_dispatch_stage(self, **kwargs):
+            assert kwargs.get("header") == "HDR"
+            bundle = kwargs.get("runtime_bundle")
+            assert isinstance(bundle, dict)
+            assert bundle.get("output_pipeline_mod") is getattr(mod, "_output_pipeline", None)
+            assert isinstance(bundle.get("verification_route_config"), dict)
+            assert bundle.get("verification_route_provider") in ("gemini", "openrouter", "huggingface")
+            assert isinstance(bundle.get("hooks"), dict)
+            return {
+                "blocked": False,
+                "alert_html": "ALERT-FB",
+                "raw_for_render": "RAW-FB",
+                "raw_response": "RESP-FB",
+            }
+
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", _StubCscMidStage())
+    out = api._apply_csc_pre_render_policy_strict_gate_stage(
+        raw_response="RESP-IN",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="ALERT-IN",
+    )
+    assert out == {
+        "blocked": False,
+        "blocked_response": None,
+        "strict_meta": None,
+        "alert_html": "ALERT-FB",
+        "raw_for_render": "RAW-FB",
+        "raw_response": "RESP-FB",
+    }
+
+
+def test_csc_mid_pre_render_helper_uses_runtime_ultimate_fallback_stage_when_needed(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    calls = []
+
+    class _StubCscMidStage:
+        def apply_pre_render_policy_strict_gate_runtime_dispatch_stage(self, **kwargs):
+            calls.append("dispatch")
+            assert kwargs.get("header") == "HDR"
+            bundle = kwargs.get("runtime_bundle")
+            assert isinstance(bundle, dict)
+            assert bundle.get("output_pipeline_mod") is getattr(mod, "_output_pipeline", None)
+            assert isinstance(bundle.get("verification_route_config"), dict)
+            assert bundle.get("verification_route_provider") in ("gemini", "openrouter", "huggingface")
+            assert isinstance(bundle.get("hooks"), dict)
+            # Simuliert Dispatch-Ergebnis nach interner Chain/Fallback-Aufloesung im Stage-Modul.
+            return {
+                "blocked": False,
+                "alert_html": "ALERT-ULT",
+                "raw_for_render": "RAW-ULT",
+                "raw_response": "RESP-ULT",
+            }
+
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", _StubCscMidStage())
+    out = api._apply_csc_pre_render_policy_strict_gate_stage(
+        raw_response="RESP-IN",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="ALERT-IN",
+    )
+    assert out == {
+        "blocked": False,
+        "blocked_response": None,
+        "strict_meta": None,
+        "alert_html": "ALERT-ULT",
+        "raw_for_render": "RAW-ULT",
+        "raw_response": "RESP-ULT",
+    }
+    assert calls == ["dispatch"]
+
+
+def test_csc_mid_pre_render_helper_emergency_brake_is_thin_and_deterministic(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", None)
+    monkeypatch.setattr(mod, "_load_optional_module_with_file_fallback", lambda *_args, **_kwargs: None)
+
+    out = api._apply_csc_pre_render_policy_strict_gate_stage(
+        raw_response="BODY",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="<a>ALERT</a>",
+    )
+    assert out == {
+        "blocked": False,
+        "blocked_response": None,
+        "strict_meta": None,
+        "alert_html": "<a>ALERT</a>",
+        "raw_for_render": "HDR\n\nBODY",
+        "raw_response": "BODY",
+    }
+
+
+def test_csc_mid_refiner_helper_fallback_when_stage_missing_returns_safe_defaults(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", None)
+
+    csc_meta, mult = api._build_csc_refiner_meta_stage(
+        raw_response="RAW",
+        user_raw="USER",
+        profile_name="Standard",
+        overlay_name="Explore",
+        refiner_obj=None,
+    )
+    assert csc_meta is None
+    assert mult == 2
+
+
+def test_csc_mid_alerts_header_helper_fallback_when_stage_missing_is_thin_and_deterministic(monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", None)
+    api.gov_state.dynamic_one_shot_active = True
+
+    raw_out, alert_html, header = api._build_csc_alerts_and_header_stage(
+        raw_response="RAW",
+        profile_name="Standard",
+        overlay_name="off",
+        csc_meta={"message": "CSC: visible"},
+        refiner_obj=None,
+    )
+    assert raw_out == "RAW"
+    assert alert_html == ""
+    assert "Active profile: Standard" in header
+    assert "Dynamic: one-shot (active)" in header
+    assert "CSC: visible" in header
+
+
+def test_csc_mid_pre_render_helper_fallback_when_stage_missing_applies_strict_banner(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", None)
+    monkeypatch.setattr(api, "_get_enforcement_settings", lambda: {"enabled": True, "policy": "strict_warn"})
+    monkeypatch.setattr(
+        mod,
+        "evaluate_strict_enforcement",
+        lambda **_kwargs: {"blocked": False, "strict_banner_html": "<warn>STRICT</warn>"},
+    )
+
+    out = api._apply_csc_pre_render_policy_strict_gate_stage(
+        raw_response="BODY",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="<a>ALERT</a>",
+    )
+    assert out["blocked"] is False
+    assert out["alert_html"].startswith("<warn>STRICT</warn><a>ALERT</a>")
+    assert out["raw_for_render"].startswith("HDR\n\nBODY")
+
+
+def test_csc_mid_pre_render_helper_fallback_when_stage_missing_supports_blocked_path(monkeypatch):
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    monkeypatch.setattr(mod, "_output_csc_mid_runtime_stage", None)
+    monkeypatch.setattr(api, "_get_enforcement_settings", lambda: {"enabled": True, "policy": "strict_block"})
+    monkeypatch.setattr(
+        mod,
+        "evaluate_strict_enforcement",
+        lambda **_kwargs: {"blocked": True, "blocked_html": "<b>BLOCKED</b>", "meta": {"strict": "blocked"}},
+    )
+    monkeypatch.setattr(mod, "sanitize_html", lambda html_text: f"SAN::{html_text}")
+
+    out = api._apply_csc_pre_render_policy_strict_gate_stage(
+        raw_response="BODY",
+        user_raw="USER",
+        profile_name="Standard",
+        is_command=False,
+        ctx={"sci_pending": False},
+        header="HDR",
+        alert_html="",
+    )
+    assert out["blocked"] is True
+    assert out["strict_meta"] == {"strict": "blocked"}
+    assert out["blocked_response"] == {"html": "SAN::<b>BLOCKED</b>", "text": "", "csc": None}
+
+
+def test_render_body_helper_prefers_runtime_stage_module(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubRenderBodyStage:
+        def render_final_html_body_stage(self, **kwargs):
+            return (
+                f"RAW-STAGE::{kwargs.get('color_mode')}",
+                f"HTML-STAGE::{kwargs.get('answer_lang')}",
+            )
+
+    monkeypatch.setattr(mod, "_output_render_body_runtime_stage", _StubRenderBodyStage())
+    out_raw, out_html = mod.render_final_html_body_stage(
+        raw_for_render="RAW",
+        color_mode="on",
+        answer_lang="de",
+        ui_lang_fallback="en",
+    )
+    assert out_raw == "RAW-STAGE::on"
+    assert out_html == "HTML-STAGE::de"
+
+
+def test_render_body_helper_local_fallback_runs_text_and_html_pipeline(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_render_body_runtime_stage", None)
+    monkeypatch.setattr(mod, "_rendering_pipeline_v192", None)
+    monkeypatch.setattr(mod, "auto_embed_image_urls", lambda txt: f"{txt}|IMG")
+    monkeypatch.setattr(mod, "apply_color_spans", lambda txt, enabled=True: f"{txt}|COLOR")
+    monkeypatch.setattr(mod, "strip_color_markers_for_color_off_text", lambda txt: f"{txt}|STRIP")
+    monkeypatch.setattr(mod, "normalize_markdown_list_spacing", lambda txt: f"{txt}|SPACE")
+    monkeypatch.setattr(mod, "normalize_known_markdown_control_headings", lambda txt: f"{txt}|HEAD")
+    monkeypatch.setattr(mod, "sanitize_html", lambda html_text: f"SAN::{html_text}")
+    monkeypatch.setattr(mod, "html_number_self_debunking", lambda html_text, lang="en": f"NUM[{lang}]::{html_text}")
+    monkeypatch.setattr(
+        mod,
+        "apply_post_render_normalization_seam",
+        lambda html_body, answer_lang="de", color="off": f"POST[{answer_lang}/{color}]::{html_body}",
+    )
+    monkeypatch.setattr(
+        mod,
+        "markdown",
+        types.SimpleNamespace(markdown=lambda txt, extensions=None: f"<md>{txt}</md>"),
+    )
+
+    out_raw, out_html = mod.render_final_html_body_stage(
+        raw_for_render="RAW",
+        color_mode="off",
+        answer_lang="de",
+        ui_lang_fallback="en",
+    )
+    assert out_raw == "RAW|IMG|STRIP|SPACE|HEAD"
+    assert out_html == "POST[de/off]::NUM[de]::SAN::<md>RAW|IMG|STRIP|SPACE|HEAD</md>"
+
+
+def test_route_render_command_helper_prefers_runtime_stage_module(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubRouteRenderStage:
+        def render_command_html_stage(self, **kwargs):
+            return (f"CMD-STAGE::{kwargs.get('ui_lang')}::{kwargs.get('color_mode')}", None)
+
+    monkeypatch.setattr(mod, "_output_route_render_runtime_stage", _StubRouteRenderStage())
+    out_html, out_meta = mod.render_command_html_stage(
+        raw_response="RAW",
+        color_mode="on",
+        ui_lang="de",
+        comm_active=True,
+    )
+    assert out_html == "CMD-STAGE::de::on"
+    assert out_meta is None
+
+
+def test_route_render_comm_inactive_helper_prefers_runtime_stage_module(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubRouteRenderStage:
+        def render_comm_inactive_html_stage(self, **kwargs):
+            return (f"OFF-STAGE::{kwargs.get('ui_lang')}::{kwargs.get('color_mode')}", {"normalization": {"render_ok": True}})
+
+    monkeypatch.setattr(mod, "_output_route_render_runtime_stage", _StubRouteRenderStage())
+    out_html, out_meta = mod.render_comm_inactive_html_stage(
+        raw_response="RAW",
+        color_mode="off",
+        ui_lang="en",
+    )
+    assert out_html == "OFF-STAGE::en::off"
+    assert out_meta == {"normalization": {"render_ok": True}}
+
+
+def test_route_render_command_helper_local_fallback_runs_markdown_path(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_route_render_runtime_stage", None)
+    monkeypatch.setattr(mod, "_rendering_pipeline_v192", None)
+    monkeypatch.setattr(mod, "unwrap_accidental_full_text_codefence", lambda txt: f"{txt}|U")
+    monkeypatch.setattr(mod, "normalize_known_markdown_control_headings", lambda txt: f"{txt}|H")
+    monkeypatch.setattr(mod, "strip_color_markers_for_color_off_text", lambda txt: f"{txt}|S")
+    monkeypatch.setattr(mod, "strip_color_markers_for_color_off_html", lambda html_text: f"{html_text}|HS")
+    monkeypatch.setattr(mod, "sanitize_html", lambda html_text: f"SAN::{html_text}")
+    monkeypatch.setattr(
+        mod,
+        "markdown",
+        types.SimpleNamespace(markdown=lambda txt, extensions=None: f"<md>{txt}</md>"),
+    )
+
+    out_html, out_meta = mod.render_command_html_stage(
+        raw_response="RAW",
+        color_mode="off",
+        ui_lang="de",
+        comm_active=False,
+    )
+    assert out_meta is None
+    assert out_html == "SAN::<md>RAW|U|H|S</md>|HS"
+
+
+def test_route_render_comm_inactive_helper_local_fallback_returns_normalization_meta(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_route_render_runtime_stage", None)
+    monkeypatch.setattr(mod, "_rendering_pipeline_v192", None)
+    monkeypatch.setattr(mod, "unwrap_accidental_full_text_codefence", lambda txt: f"{txt}|U")
+    monkeypatch.setattr(mod, "normalize_known_markdown_control_headings", lambda txt: f"{txt}|H")
+    monkeypatch.setattr(mod, "strip_governance_scaffolding_when_comm_inactive", lambda txt: f"{txt}|G")
+    monkeypatch.setattr(mod, "strip_color_markers_for_color_off_text", lambda txt: f"{txt}|S")
+    monkeypatch.setattr(mod, "strip_color_markers_for_color_off_html", lambda html_text: f"{html_text}|HS")
+    monkeypatch.setattr(mod, "sanitize_html", lambda html_text: f"SAN::{html_text}")
+    monkeypatch.setattr(mod, "_build_render_normalization_summary", lambda raw, html_text: {"raw": raw, "html": html_text})
+    monkeypatch.setattr(mod, "_looks_like_rendered_html_runtime", lambda _html_text: False)
+    monkeypatch.setattr(
+        mod,
+        "markdown",
+        types.SimpleNamespace(markdown=lambda txt, extensions=None: f"<md>{txt}</md>"),
+    )
+
+    out_html, out_meta = mod.render_comm_inactive_html_stage(
+        raw_response="RAW",
+        color_mode="off",
+        ui_lang="en",
+    )
+    assert out_html == "SAN::<md>RAW|U|H|G|S</md>|HS|HS"
+    assert out_meta == {
+        "normalization": {
+            "raw": "RAW|U|H|G",
+            "html": "SAN::<md>RAW|U|H|G|S</md>|HS|HS",
+            "render_ok": False,
+            "render_fallback": True,
+        }
+    }
+
+
+def test_render_end_finalize_helper_prefers_runtime_stage_module(monkeypatch):
+    mod = load_fix_module()
+
+    class _StubRenderEndStage:
+        def finalize_render_end_html_stage(self, **kwargs):
+            return (
+                f"RENDER-END::{kwargs.get('answer_lang')}::{kwargs.get('final_html_body')}",
+                {"stage": True},
+            )
+
+    monkeypatch.setattr(mod, "_output_final_html_runtime_stage", _StubRenderEndStage())
+    out_html, out_meta = mod.finalize_render_end_html_stage(
+        alert_html="<div>alert</div>",
+        final_html_body="<p>a</p>",
+        raw_for_render="RAW",
+        raw_original="ORIG",
+        raw_response="RESP",
+        csc_meta={"existing": 1},
+        answer_lang="en",
+    )
+    assert out_html == "RENDER-END::en::<p>a</p>"
+    assert out_meta == {"stage": True}
+
+
+def test_render_end_finalize_helper_local_fallback_render_ok(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_final_html_runtime_stage", None)
+    monkeypatch.setattr(mod, "_build_render_normalization_summary", lambda raw, html: {"raw_len": len(str(raw or ""))})
+    monkeypatch.setattr(mod, "_looks_like_rendered_html_runtime", lambda _html: True)
+    monkeypatch.setattr(mod, "_detect_probable_truncation", lambda _raw, _html: (False, ""))
+    monkeypatch.setattr(mod, "_format_response_timestamp", lambda: "TS")
+    monkeypatch.setattr(mod, "_render_ts_footer_html", lambda ts: f"<ts>{ts}</ts>")
+
+    out_html, out_meta = mod.finalize_render_end_html_stage(
+        alert_html="<div>alert</div>",
+        final_html_body="<p>a</p>",
+        raw_for_render="RAW",
+        raw_original="ORIG",
+        raw_response="RESP",
+        csc_meta=None,
+        answer_lang="de",
+    )
+    assert out_html == "<div>alert</div><p>a</p><ts>TS</ts>"
+    assert out_meta == {"normalization": {"raw_len": 3, "render_ok": True, "render_fallback": False}}
+
+
+def test_render_end_finalize_helper_local_fallback_render_broken_with_truncation_note(monkeypatch):
+    mod = load_fix_module()
+    monkeypatch.setattr(mod, "_output_final_html_runtime_stage", None)
+    monkeypatch.setattr(mod, "_build_render_normalization_summary", lambda _raw, _html: {"boxed": True})
+    monkeypatch.setattr(mod, "_looks_like_rendered_html_runtime", lambda _html: False)
+    monkeypatch.setattr(mod, "_detect_probable_truncation", lambda _raw, _html: (True, "TRUNC"))
+    monkeypatch.setattr(
+        mod,
+        "_control_layer_alert_html",
+        lambda msg, **_kwargs: f"<warn>{msg}</warn>",
+    )
+    monkeypatch.setattr(mod, "_format_response_timestamp", lambda: "TS")
+    monkeypatch.setattr(mod, "_render_ts_footer_html", lambda ts: f"<ts>{ts}</ts>")
+
+    out_html, out_meta = mod.finalize_render_end_html_stage(
+        alert_html="<div>alert</div>",
+        final_html_body="<broken",
+        raw_for_render="RAW",
+        raw_original="R<AW>",
+        raw_response="RESP",
+        csc_meta=None,
+        answer_lang="de",
+    )
+    assert out_html.startswith("<warn>TRUNC Bitte gegenprüfen oder Antwort neu generieren.</warn><div>alert</div>")
+    assert "<b>Render fallback</b>: showing raw model output." in out_html
+    assert "R&lt;AW&gt;" in out_html
+    assert out_html.endswith("<ts>TS</ts>")
+    assert out_meta == {
+        "normalization": {"boxed": True, "render_ok": False, "render_fallback": True},
+        "probable_truncation": True,
+    }
+
+
+def test_ensure_self_debunking_box_html_handles_realistic_leak_fragment():
+    mod = load_fix_module()
+    html_in = (
+        "<p><strong>Definitionen und Perspektiven:</strong>\n"
+        "*   <strong>Physikalische Definition:</strong> In der Physik ist Zeit ...</p>\n"
+        "<ul>\n"
+        "<li><p><strong>Heidegger:</strong> Text.\n"
+        "<strong>Self-Debunking:</strong></p></li>\n"
+        "<li><p>1. <strong>Schwäche</strong>: Punkt eins."
+        "<br><strong>Warum das wichtig ist</strong>: A.</p></li>\n"
+        "<li><p>2. <strong>Schwäche</strong>: Punkt zwei."
+        "<br><strong>Warum das wichtig ist</strong>: B.</p></li>\n"
+        "</ul>\n"
+        "<p>QC-Matrix: Clarity 3 (Δ0)</p>"
+    )
+    out = mod.ensure_self_debunking_box_html(html_in, lang="de")
+    assert 'class="self-debunking"' in out
+    assert "<strong>Self-Debunking:</strong>" not in out
+    assert "<ol>" in out and "<li>" in out
+    assert "<p>QC-Matrix: Clarity 3 (Δ0)</p>" in out
+
+
+def test_html_number_self_debunking_does_not_split_vereinfachungen_word():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen.</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "Vereinfachungen enthalten" in out
+    assert "Vereinfachung</strong>: en" not in out
+
+
+def test_html_number_self_debunking_canonicalizes_unsicherheit_labels_to_schwaeche():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<p>Unsicherheit: U1 - Datenlücke im Debunking.</p>'
+        '<li><p><strong>Unsicherheit</strong>: U1 - Zweiter Punkt.</p></li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "<strong>Unsicherheit</strong>:" not in out
+    assert "Unsicherheit: U1" not in out
+    assert "<strong>Schwäche</strong>:" in out
+    assert "<li>" in out
+
+
 def test_html_number_self_debunking_non_ol_handles_lowercase_labels_with_space_before_colon():
     mod = load_fix_module()
     html_in = (
@@ -5275,6 +9885,56 @@ def test_html_number_self_debunking_ol_handles_sibling_p_secondary_labels_and_mi
     assert "<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test." in out
 
 
+def test_html_number_self_debunking_ol_merges_trailing_secondary_paras_before_empty_ol_tail():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: Punkt eins.'
+        '<br><strong>Warum das wichtig ist</strong>: Relevanz eins.'
+        '<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Check eins.</li>'
+        '<li><strong>Schwäche</strong>: Punkt zwei.</li>'
+        '</ol>'
+        '<p><strong>Warum das wichtig ist</strong>: Relevanz zwei.</p>'
+        '<p><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Check zwei.</p>'
+        '<ol></ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert re.search(
+        r"(?is)<li[^>]*>\s*<strong>\s*Schwäche\s*</strong>\s*:\s*Punkt zwei\."
+        r"\s*<br>\s*<strong>\s*Warum das wichtig ist\s*</strong>\s*:\s*Relevanz zwei\."
+        r"\s*<br>\s*<strong>\s*Was würde verifizieren/falsifizieren \(nächster Check\)\s*</strong>\s*:\s*Check zwei\.\s*</li>",
+        out,
+    )
+    assert "<ol></ol>" not in out
+    assert "</ol></ol>" not in out
+
+
+def test_html_number_self_debunking_en_merges_why_this_is_important_rows_inside_ol():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Self-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Weakness</strong>: The answer may contain simplifications.</li>'
+        '<p>Why this is important Simplifications can obscure edge cases.</p>'
+        '<p><strong>What would verify/falsify (next check)</strong>: Check assumptions against primary sources.</p>'
+        '<li><strong>Weakness</strong>: The answer may omit uncertainty limits. '
+        'Why this is important : Missing restrictions can overstate validity.'
+        '<br><strong>What would verify/falsify (next check)</strong>: Add a strong counterexample.</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="en")
+    assert "<p>Why this is important" not in out
+    assert "Why this is important :" not in out
+    assert "<strong>Why it matters</strong>:" in out
+    assert "<br><strong>Why it matters</strong>: Simplifications can obscure edge cases." in out
+    assert "<br><strong>Why it matters</strong>: Missing restrictions can overstate validity." in out
+
+
 def test_html_number_self_debunking_ol_repairs_fragmented_markdown_and_color_noise():
     mod = load_fix_module()
     html_in = (
@@ -5303,6 +9963,353 @@ def test_html_number_self_debunking_ol_repairs_fragmented_markdown_and_color_noi
     assert "🟡" not in out
     assert "<p>*</p>" not in out
     assert "*Schwäche" not in out
+
+
+def test_html_number_self_debunking_ol_strips_color_marker_sentence_rows_inside_items():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Self-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Weakness</strong>: Base weakness.'
+        '<br><strong>Why it matters</strong>: Relevance one.'
+        '<br><strong>What would verify/falsify (next check)</strong>: Check one.'
+        '<br>🔴 Eine Hyperantithesis blendet Gegenargumente aus.'
+        '<br><span class="signal-dot-marker"><span style="color:#c62828; font-weight:600;">🔴</span></span> Diese radikale Perspektive kann zu Fehlgewichtungen führen.'
+        '</li>'
+        '<li><strong>Weakness</strong>: Second weakness.'
+        '<br><strong>Why it matters</strong>: Relevance two.'
+        '<br><strong>What would verify/falsify (next check)</strong>: Check two.</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="en")
+    assert "Eine Hyperantithesis blendet Gegenargumente aus." not in out
+    assert "Diese radikale Perspektive kann zu Fehlgewichtungen führen." not in out
+    assert "signal-dot-marker" not in out
+    assert out.count("<li") == 2
+    assert "<strong>Why it matters</strong>:" in out
+    assert "<strong>What would verify/falsify (next check)</strong>:" in out
+
+
+def test_html_number_self_debunking_en_repairs_broken_strong_colon_artifact():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Self-Debunking:</div>'
+        '<ol>'
+        '<li>'
+        '<strong>Weakness</strong>: Simplification.'
+        '<br><strong>Why it matters</strong>:<strong>: Counterexamples are missing.'
+        '<br><strong>What would verify/falsify (next check)</strong>: Compare primary sources.'
+        '</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="en")
+    assert ":<strong>:" not in out
+    assert "<strong>Why it matters</strong>: Counterexamples are missing." in out
+
+
+def test_html_number_self_debunking_ol_keeps_primary_label_inline_without_br_break():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: Punkt eins bleibt inline.'
+        '<br><strong>Warum das wichtig ist</strong>: Relevanz eins.'
+        '<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Check eins.</li>'
+        '<li><strong>Schwäche</strong>:<br>Die zweite Schwäche startet fälschlich in neuer Zeile.'
+        '<br><strong>Warum das wichtig ist</strong>: Relevanz zwei.'
+        '<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Check zwei.</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "<strong>Schwäche</strong>:<br>" not in out
+    assert re.search(
+        r"(?is)<strong>\s*Schwäche\s*</strong>:\s+Die zweite Schwäche startet fälschlich in neuer Zeile\.",
+        out,
+    )
+
+
+def test_html_number_self_debunking_ol_repairs_orphan_paragraph_and_prefixes_missing_primary_labels():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<p>Die Definition von Zeit ist komplex und nicht abschließend geklärt.</p>'
+        '<li><p>Die Relativität der Zeit ist schwer zu fassen.</p></li>'
+        '<li>Es ist unklar, ob Zeit vor dem Urknall existierte. (U1)</li>'
+        '<p>Verification Route:</p>'
+        '<p>Source: TRAIN</p>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "<ol><p>" not in out and "<ol>\n<p>" not in out
+    assert out.count("<strong>Schwäche</strong>:") >= 2
+    assert mod.detect_self_debunking_numbered_html(out) is True
+
+
+def test_html_number_self_debunking_ol_drops_verification_route_rows_and_repairs_trailing_md_star_labels():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: Punkt eins.'
+        '<br>Warum das wichtig ist**: Relevanz eins.'
+        '<br>Was würde verifizieren/falsifizieren (nächster Check)**: Check eins.</li>'
+        '<li><strong>Schwäche</strong>: Punkt zwei.'
+        '<br>Verification Route:'
+        '<br>Source: TRAIN (Allgemeines Hintergrundwissen)'
+        '<br>Warum das wichtig ist**: Relevanz zwei.'
+        '<br>Was würde verifizieren/falsifizieren (nächster Check)**: Check zwei.</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "Verification Route" not in out
+    assert "Source: TRAIN" not in out
+    assert "Warum das wichtig ist**:" not in out
+    assert "Was würde verifizieren/falsifizieren (nächster Check)**:" not in out
+    assert "<strong>Warum das wichtig ist</strong>:" in out
+    assert "<strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:" in out
+
+
+def test_html_number_self_debunking_repairs_duplicate_primary_label_and_orphan_star_paragraph():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>:<strong>1. Schwäche</strong></li>'
+        '<p>*: Die Antwort kann Vereinfachungen enthalten.</p>'
+        '<p><strong>Warum das wichtig ist</strong>: Relevanz.</p>'
+        '<p><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test.</p>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert "<strong>1. Schwäche</strong>" not in out
+    assert "<p>*:" not in out
+    assert "<strong>Schwäche</strong>:" in out
+    assert "<br><strong>Warum das wichtig ist</strong>:" in out
+    assert "<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:" in out
+
+
+def test_html_number_self_debunking_ol_drops_uncertainty_tail_li_when_two_points_exist():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: Punkt eins.<br><strong>Warum das wichtig ist</strong>: Relevanz.</li>'
+        '<li><strong>Schwäche</strong>: Punkt zwei.<br><strong>Warum das wichtig ist</strong>: Relevanz.</li>'
+        '<li><strong>Schwäche</strong>: U1 – Data gap. Needed: Source/current context from the user or external verification.</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert out.count("<li") == 2
+    assert "Data gap. Needed:" not in out
+    assert re.search(r"(?i)<li[^>]*>\\s*<strong>Schwäche</strong>:\\s*U1\\b", out) is None
+
+
+def test_html_number_self_debunking_ol_strips_embedded_uncertainty_tail_fragments():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: Punkt eins. Schwäche: U1 – Data gap. Needed: Source/current context from the user or external verification.<br><strong>Warum das wichtig ist</strong>: Relevanz.</li>'
+        '<li><strong>Schwäche</strong>: Punkt zwei. Schwäche: U1 – Data gap. Needed: Source/current context from the user or external verification.<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Test.</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert out.count("<li") == 2
+    assert "Data gap. Needed:" not in out
+    assert re.search(r"(?i)\bU1\b", out) is None
+    assert "Punkt eins." in out
+    assert "Punkt zwei." in out
+
+
+def test_html_number_self_debunking_ol_adds_missing_secondary_fields_to_all_items():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: Die Antwort kann Vereinfachungen enthalten.</li>'
+        '<li><strong>Schwäche</strong>: Die Antwort kann wichtige Gegenpositionen auslassen.</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    assert out.count("<li") == 2
+    assert out.count("<strong>Warum das wichtig ist</strong>:") >= 2
+    assert out.count("<strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>:") >= 2
+    assert "Ohne Begründung bleibt die Aussage schwer einzuordnen." not in out
+    assert "Eine Primärquelle oder ein Gegenbeispiel gezielt prüfen." not in out
+
+
+def test_html_number_self_debunking_repairs_leading_secondary_duplicate_pair_in_first_item():
+    mod = load_fix_module()
+    html_in = (
+        '<div class="self-debunking">'
+        '<div>Selbst-Debunking:</div>'
+        '<ol>'
+        '<li><strong>Schwäche</strong>: '
+        '<strong>Warum das wichtig ist</strong>: Die benannte Schwäche kann Reichweite, Präzision oder Belastbarkeit der Aussage einschränken.'
+        '<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Den betroffenen Punkt mit Primärquelle, Gegenbeispiel oder Zusatzkontext gezielt nachprüfen.'
+        '<br>Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen.'
+        '<br><strong>Warum das wichtig ist</strong>: Vereinfachungen können Randfälle oder alternative Deutungen verdecken.'
+        '<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Die zentralen Annahmen explizit machen und gegen Primärquellen/Definitionen prüfen.'
+        '</li>'
+        '<li><strong>Schwäche</strong>: Die Antwort kann wichtige Gegenpositionen oder Unsicherheitsgrenzen auslassen.'
+        '<br><strong>Warum das wichtig ist</strong>: Fehlende Einschränkungen können die Gültigkeit überdehnen oder Sicherheit vortäuschen.'
+        '<br><strong>Was würde verifizieren/falsifizieren (nächster Check)</strong>: Mindestens ein starkes Gegenbeispiel ergänzen und prüfen, ob die Kernaussagen bestehen bleiben.'
+        '</li>'
+        '</ol>'
+        '</div>'
+    )
+    out = mod.html_number_self_debunking(html_in, lang="de")
+    m_first = re.search(r"(?is)<li[^>]*>(.*?)</li>", out)
+    assert m_first is not None
+    first_li = str(m_first.group(1) or "")
+    assert "Die Antwort kann Vereinfachungen enthalten oder stillschweigende Annahmen machen." in first_li
+    assert "Die benannte Schwäche kann Reichweite, Präzision oder Belastbarkeit der Aussage einschränken." not in first_li
+    assert first_li.count("Warum das wichtig ist") == 1
+    assert first_li.count("Was würde verifizieren/falsifizieren (nächster Check)") == 1
+    assert re.search(
+        r"(?is)^\s*<strong>\s*Schwäche\s*</strong>\s*:\s*(?:<br\s*/?>\s*)*<strong>\s*Warum das wichtig ist\s*</strong>\s*:",
+        first_li,
+    ) is None
+
+
+def test_output_footer_renderer_normalizes_bold_qc_footer_to_plain_line():
+    mod = load_fix_module()
+    footer = getattr(mod, "_output_footer_renderer", None)
+    assert footer is not None
+
+    raw_qc = (
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · "
+        "Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)"
+    )
+    html_in = (
+        "<p>Antwortsatz.</p>"
+        "<p><strong>QC-Matrix:</strong> Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · "
+        "Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)</p>"
+    )
+
+    class _GovStub:
+        def normalize_qc_overrides(self, ov):
+            return ov
+        def get_effective_qc_corridor(self, profile_name, overrides):
+            return {}
+
+    out = footer.ensure_qc_footer_html_consistency(
+        final_html_body=html_in,
+        raw_for_render=raw_qc,
+        profile_name="Standard",
+        gov_mgr=_GovStub(),
+        overrides={},
+        qc_footer_for_profile_fn=lambda _p: raw_qc,
+        ensure_qc_footer_present_fn=lambda txt, _g, _p, _o: txt,
+        enforce_qc_footer_deltas_fn=lambda txt, _c, _p: txt,
+        ensure_qc_footer_is_last_fn=lambda txt: txt,
+        qc_probe_is_complete_fn=lambda _probe: True,
+    )
+    assert "<strong>QC-Matrix:" not in out
+    assert out.count("QC-Matrix:") == 1
+
+
+def test_output_footer_renderer_falls_back_to_profile_qc_when_raw_and_rebuild_missing():
+    mod = load_fix_module()
+    footer = getattr(mod, "_output_footer_renderer", None)
+    assert footer is not None
+
+    profile_qc = (
+        "QC-Matrix: Clarity 3 (Δ0) · Brevity 2 (Δ0) · Evidence 2 (Δ0) · "
+        "Empathy 2 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)"
+    )
+    html_in = (
+        "<p>Antwortsatz.</p>"
+        "<div class='self-debunking'>Self-Debunking:</div>"
+        "<div class='ts-footer'>Response at 12.03.2026 20:07:06 CET (UTC+01:00)</div>"
+    )
+
+    class _GovStub:
+        def normalize_qc_overrides(self, ov):
+            return ov
+
+        def get_effective_qc_corridor(self, profile_name, overrides):
+            return {}
+
+    out = footer.ensure_qc_footer_html_consistency(
+        final_html_body=html_in,
+        raw_for_render="Antwort ohne QC-Matrix",
+        profile_name="Expert",
+        gov_mgr=_GovStub(),
+        overrides={},
+        qc_footer_for_profile_fn=lambda _p: profile_qc,
+        ensure_qc_footer_present_fn=lambda txt, _g, _p, _o: txt,
+        enforce_qc_footer_deltas_fn=lambda txt, _c, _p: txt,
+        ensure_qc_footer_is_last_fn=lambda txt: txt,
+        qc_probe_is_complete_fn=None,
+    )
+    plain = re.sub(r"<[^>]+>", " ", out)
+    plain = re.sub(r"\s+", " ", plain).strip()
+    assert "QC-Matrix:" in plain
+    assert "Clarity 3 (Δ0)" in plain
+    assert out.count("QC-Matrix:") == 1
+
+
+def test_output_footer_renderer_annotates_qc_dimension_tooltips_and_keeps_footer_order():
+    mod = load_fix_module()
+    footer = getattr(mod, "_output_footer_renderer", None)
+    assert footer is not None
+    fn = getattr(footer, "annotate_qc_matrix_tooltips_html", None)
+    assert callable(fn)
+
+    html_in = (
+        "<div class='sci-trace'>SCI Trace</div>"
+        "<div class='self-debunking'>Selbst-Debunking:</div>"
+        "<p>QC-Matrix: Clarity 3 (Δ0) · Brevity 0 (Δ0) · Evidence 3 (Δ0) · "
+        "Empathy 3 (Δ0) · Consistency 3 (Δ0) · Neutrality 3 (Δ0)</p>"
+        "<div class='ts-footer'>Response at 11.03.2026 21:02:27 CET (UTC+01:00)</div>"
+    )
+    out = fn(html_in, lang="de")
+    assert out.count('class="qc-dim-tip"') == 6
+    assert out.count("data-u-title=") >= 6
+    assert re.search(r'class="qc-dim-tip"[^>]*>Clarity 3 \(Δ0\)</span>', out)
+    assert re.search(r'class="qc-dim-tip"[^>]*>Brevity 0 \(Δ0\)</span>', out)
+    assert re.search(r'class="qc-dim-tip"[^>]*>Evidence 3 \(Δ0\)</span>', out)
+    assert re.search(r'class="qc-dim-tip"[^>]*>Empathy 3 \(Δ0\)</span>', out)
+    assert re.search(r'class="qc-dim-tip"[^>]*>Consistency 3 \(Δ0\)</span>', out)
+    assert re.search(r'class="qc-dim-tip"[^>]*>Neutrality 3 \(Δ0\)</span>', out)
+    assert out.find("SCI Trace") < out.find("Selbst-Debunking:")
+    assert out.find("Selbst-Debunking:") < out.find("QC-Matrix:")
+    assert out.find("QC-Matrix:") < out.find("Response at")
+
+    out2 = fn(out, lang="de")
+    assert out2.count('class="qc-dim-tip"') == 6
+
+
+def test_self_debunking_en_next_step_label_is_linebroken_and_bold():
+    mod = load_fix_module()
+    raw = (
+        "Self-Debunking:\n"
+        "1. Weakness: A compact claim. Next step: Validate against edge-cases.\n"
+        "QC-Matrix: Clarity 3 (Δ0)\n"
+    )
+    out = mod.normalize_self_debunking_field_linebreaks(raw, lang="en")
+    out = mod.bold_self_debunking_labels(out, "en")
+    assert "\n   **Next step**: Validate against edge-cases." in out
 
 
 def test_detect_probable_truncation_flags_abrupt_cut():
@@ -5500,6 +10507,28 @@ def test_manual_test_monitor_state_mutators_update_state_and_emit_js_calls():
     assert any(c.startswith('mtmSetHeader(') for c in calls)
 
 
+def test_save_manual_test_report_actual_test_overwrites_stable_filename(tmp_path, monkeypatch):
+    mod = load_fix_module()
+    api = mod.Api()
+
+    monkeypatch.setattr(mod, "LOGS_DIR", str(tmp_path / "Logs"), raising=False)
+    monkeypatch.setattr(mod, "_StorageService", None, raising=False)
+    api.storage_service = None
+
+    r1 = api.save_manual_test_report({"scenario": "actual_test", "summary": {"status": "PASS", "fails": 0}})
+    r2 = api.save_manual_test_report({"scenario": "actual_test", "summary": {"status": "FAIL", "fails": 3}})
+
+    assert isinstance(r1, dict) and isinstance(r2, dict)
+    assert r1.get("ok") is True and r2.get("ok") is True
+    assert r1.get("overwritten") is True and r2.get("overwritten") is True
+    assert r1.get("path") == r2.get("path")
+    assert str(r2.get("path") or "").endswith("ManualTest_ACTUAL-TEST.json")
+
+    payload = json.loads(Path(str(r2["path"])).read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    assert ((payload.get("summary") or {}).get("fails")) == 3
+
+
 def test_manual_test_main_chat_append_emits_expected_js_calls():
     mod = load_fix_module()
     api = mod.Api()
@@ -5588,6 +10617,50 @@ def test_panel_action_export_routes_to_export():
     assert out.get("chat_path") == "/tmp/chat.json"
     assert out.get("audit_path") == "/tmp/audit.json"
     assert calls == [True]
+
+
+def test_panel_action_preview_export_file_routes_to_preview():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    calls = []
+
+    def _preview(path, max_chars=0):
+        calls.append((path, max_chars))
+        return {
+            "ok": True,
+            "kind": "audit",
+            "relative_path": "Logs/Audit/Audit_demo.json",
+            "preview": "{\"ok\": true}",
+            "truncated": False,
+        }
+
+    api.preview_export_file = _preview  # type: ignore[assignment]
+    out = api.panel_action("preview_export_file", {"path": "/tmp/Audit_demo.json", "max_chars": 1234})
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    assert out.get("relative_path") == "Logs/Audit/Audit_demo.json"
+    assert calls == [("/tmp/Audit_demo.json", 1234)]
+
+
+def test_panel_action_open_export_preview_routes_to_window_open():
+    mod = load_fix_module()
+    _prime_module_gov(mod)
+    api = mod.Api()
+    api.gov_state.comm_active = True
+    calls = []
+
+    def _open(path, max_chars=0):
+        calls.append((path, max_chars))
+        return {"ok": True, "relative_path": "Logs/Audit/Audit_demo.json", "kind": "audit", "truncated": False}
+
+    api.open_export_preview = _open  # type: ignore[assignment]
+    out = api.panel_action("open_export_preview", {"path": "/tmp/Audit_demo.json", "max_chars": 1234})
+    assert isinstance(out, dict)
+    assert out.get("ok") is True
+    assert out.get("relative_path") == "Logs/Audit/Audit_demo.json"
+    assert calls == [("/tmp/Audit_demo.json", 1234)]
 
 
 def test_panel_action_blocks_stale_rule_actions_when_comm_off():

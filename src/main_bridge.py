@@ -49,6 +49,12 @@ class MainBridge:
     def submit_cgi_feedback(self, clarity, insight, efficiency, mode="repeat"):
         return self._api.submit_cgi_feedback(clarity, insight, efficiency, mode)
 
+    def preview_export_file(self, path, max_chars=8000):
+        return self._api.preview_export_file(path, max_chars)
+
+    def open_export_preview(self, path, max_chars=0):
+        return self._api.open_export_preview(path, max_chars)
+
     def get_input_history(self, max_entries=200):
         return self._api.get_input_history(max_entries)
 

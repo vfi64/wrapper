@@ -42,3 +42,7 @@ jobs:
           GEMINI_API_KEY: ""
         run: |
           python -m pytest -q tests
+
+      - name: Quality Gate (Render Contracts)
+        run: |
+          python scripts/quality_gate.py --mode replay

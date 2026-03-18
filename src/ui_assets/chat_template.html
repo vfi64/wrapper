@@ -180,7 +180,7 @@
     </div>
     <div>
        <button id="helpBtn" class="menu-btn" onclick="openHelpModal()">❓ HELP</button>
-       <button class="menu-btn" onclick="window.pywebview.api.export()">💾 EXPORT</button>
+       <button class="menu-btn" onclick="exportLogs()">💾 EXPORT</button>
        <button class="menu-btn" onclick="window.pywebview.api.settings()">⚙️ PANEL</button>
        <button class="exit-btn" onclick="openExitConfirm()">❌ EXIT</button>
     </div>
@@ -307,6 +307,128 @@
       return (''+s).replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   }
 
+  function _fileName(path){
+      const raw = String(path || '').trim();
+      if(!raw) return '';
+      const parts = raw.split(/[\\/]/);
+      return String(parts.pop() || raw);
+  }
+
+  function _displayExportPath(path){
+      const raw = String(path || '').trim();
+      if(!raw) return '';
+      const norm = raw.replace(/\\/g, '/');
+      const i = norm.toLowerCase().lastIndexOf('/logs/');
+      if(i >= 0){
+          return norm.slice(i + 1);
+      }
+      if(norm.toLowerCase().startsWith('logs/')){
+          return norm;
+      }
+      return _fileName(norm) || norm;
+  }
+
+  function _fileLink(path){
+      const raw = String(path || '').trim();
+      if(!raw) return '';
+      const label = _displayExportPath(raw);
+      return (
+          `<a href="#" class="export-file-link" data-export-path="${escHtml(raw)}"` +
+          ` onclick="return openExportFileFromAnchor(this);"><code>${escHtml(label)}</code></a>`
+      );
+  }
+
+  function _renderExportCard(title, bodyHtml){
+      return (
+          "<div style='border:1px solid #bbb; background:#f7f7f7; padding:10px; border-radius:10px; margin:8px 0;'>"
+          + `<b>${escHtml(String(title || 'Export'))}</b><br>`
+          + String(bodyHtml || '')
+          + "</div>"
+      );
+  }
+
+  function _renderExportNotice(chatPath, auditPath){
+      const rows = [];
+      if(String(chatPath || '').trim()){
+          rows.push(`Chat: ${_fileLink(chatPath)}`);
+      }
+      if(String(auditPath || '').trim()){
+          rows.push(`Audit: ${_fileLink(auditPath)}`);
+      }
+      if(!rows.length){
+          rows.push('Export abgeschlossen.');
+      }
+      return _renderExportCard('Export', rows.join('<br>'));
+  }
+
+  async function _openExportPreviewViaApi(api, raw){
+      if(api && api.open_export_preview){
+          return await api.open_export_preview(raw, 0);
+      }
+      if(api && api.panel_action){
+          const pa = await api.panel_action('open_export_preview', {path: raw, max_chars: 0});
+          if(pa && typeof pa === 'object'){
+              if(pa.result && typeof pa.result === 'object'){
+                  return pa.result;
+              }
+              return pa;
+          }
+      }
+      return null;
+  }
+
+  function openExportFileFromAnchor(anchor){
+      try{
+          const path = String(anchor && anchor.getAttribute ? (anchor.getAttribute('data-export-path') || '') : '').trim();
+          if(path){
+              openExportFile(path);
+          }
+      } catch(e){}
+      return false;
+  }
+
+  async function openExportFile(path){
+      const raw = String(path || '').trim();
+      if(!raw) return false;
+      try{
+          const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+          if(!api){
+              addMsg('bot', _renderExportCard('Datei-Vorschau', "<span style='color:#b91c1c'>Datei-Vorschau ist nicht verfügbar.</span>"), false, null);
+              return false;
+          }
+          const res = await _openExportPreviewViaApi(api, raw);
+          if(!res || res.ok === false){
+              const err = String((res && res.error) ? res.error : 'preview_failed');
+              addMsg('bot', _renderExportCard('Datei-Vorschau', `<span style='color:#b91c1c'>Datei-Vorschau fehlgeschlagen: ${escHtml(err)}</span>`), false, null);
+              return false;
+          }
+          return true;
+      } catch(e){
+          const msg = String((e && e.message) ? e.message : e);
+          addMsg('bot', _renderExportCard('Datei-Vorschau', `<span style='color:#b91c1c'>Datei-Vorschau fehlgeschlagen: ${escHtml(msg)}</span>`), false, null);
+          return false;
+      }
+  }
+
+  async function exportLogs(){
+      try{
+          const res = await window.pywebview.api.export();
+          let chatPath = '';
+          let auditPath = '';
+          if(Array.isArray(res)){
+              chatPath = String(res[0] || '');
+              auditPath = String(res[1] || '');
+          } else if(res && typeof res === 'object'){
+              chatPath = String(res.chat_path || '');
+              auditPath = String(res.audit_path || '');
+          }
+          addMsg('bot', _renderExportNotice(chatPath, auditPath), false, null);
+      } catch(e){
+          const msg = String((e && e.message) ? e.message : e);
+          addMsg('bot', _renderExportCard('Export', `<span style='color:#b91c1c'>Export Fehler: ${escHtml(msg)}</span>`), false, null);
+      }
+  }
+
   function _helpLinkifyText(raw){
       const src = String(raw || '').trim();
       if(!src) return '';
@@ -319,7 +441,7 @@
           const tok = String(m[0] || '');
           let href = '';
           if(tok === 'LICENSE'){
-              href = 'https://github.com/vfi64/Comm-SCI-Control-private/blob/main/LICENSE';
+              href = 'https://github.com/vfi64/wrapper/blob/main/LICENSE';
           } else if(tok.startsWith('http://') || tok.startsWith('https://')){
               href = tok;
           } else {
@@ -577,19 +699,59 @@
       return `${base}\n${vTxt} ${dTxt}\n${hdr}\n${rows}`;
   }
 
+  function _restoreProtectedQcDimTips(src, blocks){
+      let out = String(src || '');
+      (blocks || []).forEach((block, idx) => {
+          out = out.replace(`__QC_DIM_TIP_PROTECT_${idx}__`, block);
+      });
+      return out;
+  }
+
   function _decorateQcMatrixTooltips(root, answerLang){
       if(!root) return;
       const src = String(root.innerHTML || '');
-      if(src.indexOf('QC-Matrix:') < 0) return;
-      if(src.indexOf('qc-dim-tip') >= 0) return;
-      const re = /(Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality|Klarheit|Kürze|Kuerze|Evidenz|Empathie|Konsistenz|Neutralität|Neutralitaet)\s+([0-3])\s*\(\s*Δ\s*([+\-−]?\d+)\s*\)/g;
-      const out = src.replace(re, (full, label, value, delta) => {
+      if(!src) return;
+      const qcMarker = /(?:QC(?:\s*-\s*Matrix)?\s*:)/i;
+      if(!qcMarker.test(src)) return;
+
+      const protectedBlocks = [];
+      const stage = src.replace(
+          /<span\b[^>]*\bclass\s*=\s*(?:"[^"]*\bqc-dim-tip\b[^"]*"|'[^']*\bqc-dim-tip\b[^']*')[^>]*>[\s\S]*?<\/span>/gi,
+          (block) => {
+              const token = `__QC_DIM_TIP_PROTECT_${protectedBlocks.length}__`;
+              protectedBlocks.push(block);
+              return token;
+          },
+      );
+
+      let marker = null;
+      const markerRe = /(?:QC(?:\s*-\s*Matrix)?\s*:)/gi;
+      for(let m = markerRe.exec(stage); m; m = markerRe.exec(stage)){
+          marker = m;
+      }
+      if(!marker){
+          if(protectedBlocks.length) root.innerHTML = _restoreProtectedQcDimTips(stage, protectedBlocks);
+          return;
+      }
+
+      const start = marker.index;
+      const prefix = stage.slice(0, start);
+      const suffix = stage.slice(start);
+      const ws = '(?:\\s|&nbsp;|&#160;|&#xA0;|&#xa0;)';
+      const dim = '(Clarity|Brevity|Evidence|Empathy|Consistency|Neutrality|Klarheit|Kürze|Kuerze|Evidenz|Empathie|Konsistenz|Neutralität|Neutralitaet)';
+      const deltaSym = '(?:Δ|∆|&Delta;|&#916;|&#x394;|&#x0394;)';
+      const re = new RegExp(`${dim}${ws}+([0-3])${ws}*\\(${ws}*${deltaSym}${ws}*([+\\-−]?\\d+)${ws}*\\)`, 'gi');
+      let changed = false;
+      const decorated = suffix.replace(re, (full, label, value, delta) => {
           const key = _qcDimKey(label);
           if(!key) return full;
           const tip = _qcDimTipText(key, value, delta, answerLang);
+          changed = true;
           return `<span class="qc-dim-tip" data-u-title="${escHtml(tip)}">${full}</span>`;
       });
-      if(out !== src) root.innerHTML = out;
+      if(!changed && protectedBlocks.length === 0) return;
+      const out = changed ? (prefix + decorated) : stage;
+      root.innerHTML = _restoreProtectedQcDimTips(out, protectedBlocks);
   }
 
   function _normalizeCustomTooltipTargets(root){
@@ -606,6 +768,11 @@
               }
           } catch(e) {}
       });
+  }
+
+  function _applyResponseTooltips(root, answerLang){
+      _decorateQcMatrixTooltips(root, answerLang);
+      _normalizeCustomTooltipTargets(root);
   }
 
   async function submitCgi(widgetId, mode){
@@ -669,17 +836,26 @@
   function addMsg(role, text, qc=false, csc=null, opts={}) {
       const d = document.createElement('div');
       d.className = 'msg ' + role;
-      const copyTip = escHtml(_copyTip((opts && opts.answerLang) ? opts.answerLang : ''));
+      const answerLang = (opts && opts.answerLang) ? opts.answerLang : '';
+      const copyTip = escHtml(_copyTip(answerLang));
       let html = `<button class="copy-btn" onclick="copyToClipboard(this)" data-u-title="${copyTip}">📋</button>`;
       if(role === 'bot') html += renderCscBlock(csc);
       html += text;
-      if(qc && role === 'bot') html += _buildCgiWidgetHtml((opts && opts.answerLang) ? opts.answerLang : '');
+      if(qc && role === 'bot') html += _buildCgiWidgetHtml(answerLang);
       d.innerHTML = html;
-      _decorateQcMatrixTooltips(d, (opts && opts.answerLang) ? opts.answerLang : '');
-      _normalizeCustomTooltipTargets(d);
+      _applyResponseTooltips(d, answerLang);
       document.getElementById('chat').appendChild(d);
       document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
-      if(window.MathJax) MathJax.typesetPromise();
+      try {
+          requestAnimationFrame(() => {
+              _applyResponseTooltips(d, answerLang);
+          });
+      } catch(e) {}
+      if(window.MathJax){
+          MathJax.typesetPromise().then(() => {
+              try { _applyResponseTooltips(d, answerLang); } catch(e) {}
+          }).catch(() => {});
+      }
   }
 
   function copyToClipboard(btn) {

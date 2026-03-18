@@ -9,6 +9,13 @@ Reproduzierbarer GUI-Testlauf fuer Release-/Aenderungspruefungen mit Fokus auf:
 - Antwortformatierung (Color, SCI, Self-Debunking)
 - QC-Matrix / Footer / Export / Audit
 
+## Verbindliche Entwicklungsregel (ACTUAL-TEST)
+- Nach jedem relevanten Code-Patch muss der in-App `ACTUAL-TEST`-Flow im UI-Szenario mitgepflegt werden.
+- Neue oder geaenderte Logikpfade muessen als konkrete Checks im ACTUAL-TEST landen (nicht nur als externer Einmal-Report).
+- Bei Aenderungen am Panel-Szenario immer beide Quellen synchron halten:
+  - `src/ui_assets/panel.html`
+  - Embedded-Mirror in `src/Comm-SCI-Control-App.py`
+
 ## Vorbereitung
 
 ```bash

@@ -16,7 +16,7 @@ from intents import (
     ToggleComm,
     ToggleSCI,
 )
-from state import WrapperState
+from state import WrapperState, resolve_profile_color_default
 
 
 @dataclass(frozen=True)
@@ -65,6 +65,7 @@ def _apply_comm_start_defaults(state: WrapperState, data: Dict[str, Any]) -> Wra
     if _profile_exists(data, default_profile):
         new_state.active_profile = default_profile
         new_state.overlay = _profile_overlay(data, default_profile)
+        new_state.color = resolve_profile_color_default(data, default_profile, fallback=new_state.color)
         new_state.sci_pending_turns = 0
         if default_profile not in {"Expert", "Sparring"}:
             new_state.sci_active = False
@@ -162,6 +163,7 @@ def apply_intent(state: WrapperState, intent: Intent, ruleset_data: Dict[str, An
     if isinstance(intent, SelectProfile):
         if _profile_exists(data, intent.profile):
             new_state.active_profile = intent.profile
+            new_state.color = resolve_profile_color_default(data, intent.profile, fallback=new_state.color)
             new_state.qc_overrides = {}
             new_state.sci_pending_turns = 0
             if intent.profile not in {"Expert", "Sparring"}:

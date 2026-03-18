@@ -4,7 +4,7 @@ Deterministic Python runtime for Comm-SCI governance workflows.
 
 Current app version line: **1.0.x (current: 1.0.11)**  
 Latest wrapper release: **https://github.com/vfi64/wrapper/releases/latest**  
-Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.2.2.json`**
+Default ruleset loaded on startup: **`JSON/Comm-SCI-v20.2.5.json`**
 
 ## Positioning
 
@@ -16,7 +16,7 @@ The wrapper exists because a ruleset without technical execution can remain an a
 
 ## Why this wrapper exists
 
-Comm-SCI-Control defines normative governance behavior. The wrapper line focuses on operational enforcement and repeatability: command contracts, SCI state handling, QC/verification contracts, and panel-auditable runtime behavior.
+Comm-SCI-Control defines normative governance behavior. The private wrapper line focuses on operational enforcement and repeatability: command contracts, SCI state handling, QC/verification contracts, and panel-auditable runtime behavior.
 
 ## Practical orientation
 
@@ -35,7 +35,7 @@ See detailed pages:
 
 ## What This Repository Is
 
-This repository contains the development line of the Python wrapper/runtime that executes Comm-SCI governance deterministically.
+This repository contains the private development line of the Python wrapper/runtime that executes Comm-SCI governance deterministically.
 It is the implementation counterpart to the public ruleset repository.
 
 - Public ruleset reference: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
@@ -117,7 +117,7 @@ bash scripts/setup_venv.sh --dry-run
 bash scripts/setup_venv.sh --python python3.12 --venv .venc --extras local-dev
 ```
 
-2. Dry-run sync from source repo to local `vfi64/wrapper` clone:
+2. Dry-run sync from private repo to local `vfi64/wrapper` clone:
 
 ```bash
 bash scripts/sync_to_wrapper_local.sh --target /path/to/wrapper
@@ -160,6 +160,12 @@ python -m pytest -q tests/test_app_bootstrap.py
 python -m pytest -q tests/test_app.py -k "panel_asset_static_selftest or panel_runtime_selftest_payload_ok_rejects_loaded_without_dynamic_sections or panel_action_accepts_panel_bootstrap_selftest_callback or on_panel_closed_ignores_stale_close_after_fallback_recreate"
 ```
 
+Contract gate for Self-Debunking/uncertainty rendering (recommended on every change):
+
+```bash
+python scripts/quality_gate.py --mode all
+```
+
 ## Repository layout (complete top-level list, versioned entries)
 
 ```text
@@ -198,8 +204,10 @@ Note: local artifacts such as `.git/`, `.venc/`, `.pytest_cache/`, or `.DS_Store
 | `src/ui_assets/` | External UI assets (panel/chat/manual-test monitor) with S7 fallback support. |
 | `tests/test_app.py` | Main regression/contract tests for runtime and panel behavior. |
 | `tests/test_app_bootstrap.py` | Targeted S8 tests for bootstrap/window lifecycle sequencing and guards. |
+| `tests/test_render_contract_replay.py` | Replay contract gate for self-debunking/uncertainty rendering (incl. status-line marker checks). |
 | `scripts/setup_venv.sh` | Reproducible local setup (`.venc`, `pip install -e ".[local-dev]"`). |
 | `scripts/run_local_tests.sh` | Local test runner with venv detection/creation. |
+| `scripts/quality_gate.py` | Executable contract-gate entry point (`core`/`replay`/`all`). |
 | `pyproject.toml` | Packaging/install config and base pytest settings. |
 | `requirements.txt` | Compatibility/reference dependency list for runtime. |
 | `MODULARIZATION.md` | S0-S8 roadmap and acceptance criteria. |

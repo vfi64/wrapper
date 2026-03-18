@@ -15,6 +15,21 @@ def _norm_overlay(value: str) -> str:
     return v
 
 
+def _norm_color(value: str, *, fallback: str = "on") -> str:
+    v = (value or "").strip().lower()
+    if v in {"on", "off"}:
+        return v
+    fb = (fallback or "on").strip().lower()
+    if fb in {"on", "off"}:
+        return fb
+    return "on"
+
+
+def _norm_color_or_empty(value: Any) -> str:
+    v = str(value or "").strip().lower()
+    return v if v in {"on", "off"} else ""
+
+
 def _default_overlay_from_ruleset(ruleset: Dict[str, Any], profile: str) -> str:
     try:
         profiles = (ruleset.get("profiles") or {}) if isinstance(ruleset, dict) else {}
@@ -47,6 +62,56 @@ def _norm_language_policy_mode(value: str) -> str:
     if mode in {"production", "benchmark"}:
         return mode
     return "production"
+
+
+def resolve_profile_color_default(
+    ruleset: Optional[Dict[str, Any]],
+    profile: str,
+    *,
+    fallback: str = "on",
+) -> str:
+    """Resolve color default for a profile from the active ruleset (deterministic)."""
+    data = ruleset if isinstance(ruleset, dict) else {}
+    profile_name = str(profile or "").strip()
+
+    if profile_name:
+        try:
+            profiles = data.get("profiles") or {}
+            if isinstance(profiles, dict):
+                p = profiles.get(profile_name) or {}
+                if isinstance(p, dict):
+                    v = _norm_color_or_empty(p.get("color_default"))
+                    if v:
+                        return v
+        except Exception:
+            pass
+
+    if profile_name:
+        try:
+            command_model = data.get("command_model") or {}
+            color_sync = command_model.get("color_state_sync") if isinstance(command_model, dict) else {}
+            defaults = color_sync.get("defaults") if isinstance(color_sync, dict) else {}
+            if isinstance(defaults, dict):
+                v = _norm_color_or_empty(defaults.get(profile_name))
+                if v:
+                    return v
+        except Exception:
+            pass
+
+    if profile_name:
+        try:
+            contracts = data.get("contracts") or {}
+            evidence_linker = contracts.get("evidence_linker") if isinstance(contracts, dict) else {}
+            activation = evidence_linker.get("activation") if isinstance(evidence_linker, dict) else {}
+            exceptions = activation.get("exceptions") if isinstance(activation, dict) else []
+            if isinstance(exceptions, list):
+                ex = {str(x).strip().lower() for x in exceptions if str(x).strip()}
+                if profile_name.lower() in ex:
+                    return "off"
+        except Exception:
+            pass
+
+    return _norm_color(fallback, fallback="on")
 
 
 @dataclass

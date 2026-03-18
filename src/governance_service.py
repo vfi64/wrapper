@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+try:
+    from state import resolve_profile_color_default as _resolve_profile_color_default  # type: ignore
+except Exception:
+    _resolve_profile_color_default = None  # type: ignore
+
 
 NormalizeHeadingsFn = Callable[[str], str]
 EnforceSelfDebunkingFn = Callable[..., str]
@@ -11,6 +16,7 @@ NormalizeSelfDebunkingNumberingFn = Callable[..., str]
 EnforceQcFooterFn = Callable[[str, Any, str], str]
 EnsureQcFooterPresentFn = Callable[[str, Any, str], str]
 NormalizeEvidenceTagsFn = Callable[[str], str]
+StripEmptyCitationPlaceholdersFn = Callable[[str], str]
 StateResetFn = Callable[[Any], None]
 
 
@@ -29,7 +35,30 @@ class GovernanceService:
     enforce_qc_footer_fn: Optional[EnforceQcFooterFn] = None
     ensure_qc_footer_present_fn: Optional[EnsureQcFooterPresentFn] = None
     normalize_evidence_tags_fn: Optional[NormalizeEvidenceTagsFn] = None
+    strip_empty_citation_placeholders_fn: Optional[StripEmptyCitationPlaceholdersFn] = None
     apply_comm_stop_fn: Optional[StateResetFn] = None
+
+    @staticmethod
+    def _profile_color_default(data: Any, profile_name: str, *, fallback: str = "on") -> str:
+        fb = str(fallback or "on").strip().lower()
+        if fb not in {"on", "off"}:
+            fb = "on"
+        prof = str(profile_name or "").strip()
+        rules = data if isinstance(data, dict) else {}
+        try:
+            if _resolve_profile_color_default is not None:
+                return str(_resolve_profile_color_default(rules, prof, fallback=fb))
+        except Exception:
+            pass
+        try:
+            profiles = rules.get("profiles") or {}
+            p = (profiles.get(prof) or {}) if isinstance(profiles, dict) else {}
+            raw = str((p.get("color_default") if isinstance(p, dict) else "") or "").strip().lower()
+            if raw in {"on", "off"}:
+                return raw
+        except Exception:
+            pass
+        return fb
 
     def normalize_headings(self, text: str) -> str:
         if not self.normalize_headings_fn:
@@ -99,6 +128,11 @@ class GovernanceService:
                 out = self.normalize_evidence_tags_fn(out)
             except Exception:
                 pass
+        if self.strip_empty_citation_placeholders_fn:
+            try:
+                out = self.strip_empty_citation_placeholders_fn(out)
+            except Exception:
+                pass
 
         if governance_enabled:
             out = self.enforce_self_debunking(
@@ -123,10 +157,19 @@ class GovernanceService:
         profile_name: str,
         *,
         keep_sci_profiles: tuple[str, ...] = ("Expert", "Sparring"),
+        ruleset_data: Any = None,
     ) -> None:
         """Apply deterministic reset rules for explicit profile switches."""
         try:
             state.active_profile = profile_name
+        except Exception:
+            pass
+        try:
+            state.color = self._profile_color_default(
+                ruleset_data,
+                profile_name,
+                fallback=str(getattr(state, "color", "on") or "on"),
+            )
         except Exception:
             pass
         try:
@@ -235,6 +278,18 @@ class GovernanceService:
             except Exception:
                 pass
             return True
+        if token.startswith("Profile "):
+            pname = token.split(" ", 1)[1].strip()
+            profiles = data.get("profiles") or {}
+            if isinstance(profiles, dict) and pname in profiles:
+                self.apply_profile_switch_resets(
+                    state,
+                    pname,
+                    keep_sci_profiles=("Expert", "Sparring"),
+                    ruleset_data=data,
+                )
+                return True
+            return False
         if token == "Comm Stop":
             self.apply_comm_stop_resets(state)
             return True
@@ -245,6 +300,11 @@ class GovernanceService:
                 profiles = (data.get("profiles") or {}) if isinstance(data, dict) else {}
                 if isinstance(profiles, dict) and default_prof in profiles:
                     state.active_profile = default_prof
+                    state.color = self._profile_color_default(
+                        data,
+                        default_prof,
+                        fallback=str(getattr(state, "color", "on") or "on"),
+                    )
                     state.sci_pending_turns = 0
                     if default_prof not in ("Expert", "Sparring"):
                         state.sci_active = False

@@ -50,6 +50,26 @@ def test_controller_dispatch_intent_applies_profile_switch_effect():
     assert state.active_profile == "Expert"
 
 
+def test_controller_dispatch_profile_switch_applies_profile_color_default_and_color_command_overrides():
+    ruleset = {
+        "profiles": {
+            "Standard": {"mode_overlay": "Strict", "color_default": "on"},
+            "Sandbox": {"mode_overlay": "Explore", "color_default": "off"},
+        },
+    }
+    state = WrapperState(active_profile="Standard", color="on")
+
+    out = dispatch(cmd="Profile Sandbox", runtime_state=state, ruleset_data=ruleset)
+    assert out.applied is True
+    assert "profile_switch" in out.effects
+    assert state.active_profile == "Sandbox"
+    assert state.color == "off"
+
+    out2 = dispatch(cmd="Color on", runtime_state=state, ruleset_data=ruleset)
+    assert out2.applied is True
+    assert state.color == "on"
+
+
 def test_controller_dispatch_intent_process_model_response_reports_enforcement_effect():
     state = WrapperState(enforcement_policy="strict_warn", enforcement_enabled=True)
     intent = ProcessModelResponse(

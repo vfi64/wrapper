@@ -179,6 +179,22 @@ class UIController:
                 mode = payload.get("mode", "")
                 return _ok(fn(str(mode or "")))
 
+            if action_s == "set_hide_verification_route_lines":
+                fn = getattr(app, "set_hide_verification_route_lines", None)
+                if not callable(fn):
+                    return _err("set_hide_verification_route_lines unavailable")
+                enabled = payload.get("enabled", None)
+                if bool(payload.get("clear", False)):
+                    enabled = None
+                scope = payload.get("scope", "provider")
+                provider = payload.get("provider", "")
+                res = fn(enabled, scope=str(scope or "provider"), provider=str(provider or ""))
+                if isinstance(res, dict):
+                    if bool(res.get("ok", True)):
+                        return _ok(res, **res)
+                    return _err(str(res.get("error", "set_hide_verification_route_lines_failed")))
+                return _ok({"ok": True})
+
             if action_s == "refresh_models":
                 fn_refresh = getattr(app, "refresh_models", None)
                 if not callable(fn_refresh):

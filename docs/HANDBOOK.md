@@ -5,7 +5,7 @@ Runtime default ruleset: `JSON/Comm-SCI-v20.2.2.json`
 
 ## 1. Purpose
 
-This repository contains the runtime implementation of Comm-SCI governance.
+This repository contains the private runtime implementation of Comm-SCI governance.
 The public ruleset defines normative behavior; this wrapper enforces it operationally:
 
 - deterministic command routing
@@ -21,7 +21,7 @@ The wrapper is intentionally strict on command tokens and fail-soft on optional 
 - Public ruleset and concepts: [vfi64/Comm-SCI-Control](https://github.com/vfi64/Comm-SCI-Control)
 - Runtime implementation: [vfi64/wrapper](https://github.com/vfi64/wrapper)
 - Public wrapper website: [vfi64.github.io/wrapper](https://vfi64.github.io/wrapper/)
-- This repository: staging and integration track for wrapper changes
+- This private repository: staging and integration track for wrapper changes
 
 Practical rule:
 JSON is the governance source, wrapper is the execution source.

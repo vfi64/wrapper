@@ -11,7 +11,7 @@
       "api_key_env": "OPENROUTER_API_KEY",
       "api_key_plain": "",
       "api_key_enc": "",
-      "default_model": "anthropic/claude-sonnet-4.6",
+      "default_model": "openrouter/test-model",
       "app_referrer": "",
       "app_title": "Comm-SCI Desktop"
     },
@@ -19,7 +19,7 @@
       "default_model": "meta-llama/Llama-3.3-70B-Instruct"
     }
   },
-  "answer_language": "en",
+  "answer_language": "de",
   "language_policy_mode": "production",
   "rate_limit_enabled": true,
   "rate_limit_per_minute": 30,

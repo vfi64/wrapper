@@ -18,3 +18,7 @@ if [[ ! -x "$PY_BIN" ]]; then
 fi
 
 "$PY_BIN" -m pytest -q tests "$@"
+
+if [[ "${QUALITY_GATE:-1}" != "0" ]]; then
+  "$PY_BIN" scripts/quality_gate.py --mode replay
+fi

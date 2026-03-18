@@ -101,6 +101,9 @@ should_skip() {
     Config/*models_cache.json) return 0 ;;
     Logs/*) return 0 ;;
     docs/proposals/*) return 0 ;;
+    # Private-repo handover docs/scripts: do not sync to public wrapper clone.
+    docs/INSTALL_SYNC.md|docs/INSTALL_SYNC.de.md) return 0 ;;
+    scripts/publicize_wrapper_context_local.sh) return 0 ;;
   esac
   return 1
 }
